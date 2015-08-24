@@ -34,13 +34,16 @@ On any generic Linux with python 2.7 installed, download this repository.
 The following tags should be added to gateway instances:
 
 |Tag name |Tag value |Comment|
+|--------|---------|-------|
 |x-chkp-management|The name of the management server as it appears in the configuraiton file|Mandatory|
 |x-chkp-template|A name of a template as it appears in the configuration file|Mandatory|
-|x-chkp-ip-address|The main IP address of the gateway or "private" or "public"|private|public|Only in AWS, Mandatory|
+|x-chkp-ip-address|The main IP address of the gateway or "private" or "public"|Only in AWS, Mandatory|
 |x-chkp-interfaces|"NET-NAME-FOR-eth0:NET-NAME-FOR-eth1:..." a list of the neutron networks that are attached to each of the gateway interfaces|Only in OpenStack, Mandatory for gateways with more than one interface|
 
 Optionally, in AWS, network interface objects (ENI) can optionally have the following tags:
+
 |Tag name |Tag value|
+|--------|---------|
 |x-chkp-topology|one of "external" or "internal"|
 |x-chkp-anti-spoofing|"true" or "false"|
 
