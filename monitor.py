@@ -203,7 +203,7 @@ class AWS(Controller):
             else:
                 topology = 'internal'
 
-        return {
+        interface = {
             'name': 'eth' + eni['attachment']['deviceIndex'],
             'ipv4-address': eni['privateIpAddress'],
             'ipv4-mask-length':
@@ -212,6 +212,14 @@ class AWS(Controller):
             'anti-spoofing': anti_spoofing,
             'topology': topology
         }
+
+        if topology == 'internal':
+            result['topology-settings'] = {
+                'ip-address-behind-this-interface':
+                    'network defined by the interface ip and net mask'
+            }
+
+        return interface
 
     def get_instances(self):
         ec2_instances = self.retrieve_instances()
