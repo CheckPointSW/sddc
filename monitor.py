@@ -749,7 +749,7 @@ def sync(controller, management, gateways, state):
         except Exception:
             log('%s' % traceback.format_exc())
             try:
-                set_state(state, name, 'RESETING')
+                set_state(state, name, 'RESETTING')
                 management.delete_gateway(name)
             except Exception:
                 log('%s' % traceback.format_exc())
