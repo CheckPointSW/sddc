@@ -215,7 +215,7 @@ class AWS(Controller):
         }
 
         if topology == 'internal':
-            result['topology-settings'] = {
+            interface['topology-settings'] = {
                 'ip-address-behind-this-interface':
                     'network defined by the interface ip and net mask'
             }
