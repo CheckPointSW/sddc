@@ -6,22 +6,26 @@ Tools for integration with the Software Defined Data Center (SDDC).
 # Monitor
 
 The monitor.py script works in conjucntion with:
-- A Check Point R80 SmartCenter Server (the management)
-- One or more cloud environments such as AWS or OpenStack (controllers)
+
+* A Check Point R80 SmartCenter Server (the management)
+* One or more cloud environments such as AWS or OpenStack (controllers)
 
 The script will:
-- Create gateway objects in the management as these are launched in the cloud
-- Initialize secure internal communication between the instance and the management
-- Install a security policy
+
+* Create gateway objects in the management as these are launched in the cloud
+* Initialize secure internal communication between the instance and the management
+* Install a security policy
 
 
 The script uses specific tags (AWS) or metadata (OpenStack) in order to:
-- Identify that an instance is as a Check Point gateway that should belong to the management
-- Indicate which security policy and other settings should be applied to the gateway
+
+* Identify that an instance is as a Check Point gateway that should belong to the management
+* Indicate which security policy and other settings should be applied to the gateway
 
 In addition the script:
-- Will delete the corresponding gateway object upon the instance termination.
-- Exposes a simple web page providing information about the status of the provisioning of the gateways
+
+* Will delete the corresponding gateway object upon the instance termination.
+* Exposes a simple web page providing information about the status of the provisioning of the gateways
 
 ## Installation
 
