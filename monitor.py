@@ -17,6 +17,7 @@
 import StringIO
 import argparse
 import base64
+import collections
 import contextlib
 import datetime
 import hashlib
@@ -819,9 +820,10 @@ def main(argv=None):
 
     if args.config[0] == '@':
         with open(args.config[1:]) as f:
-            conf = json.load(f)
+            conf = json.load(f, object_pairs_hook=collections.OrderedDict)
     else:
-        conf = json.loads(args.config)
+        conf = json.loads(args.config,
+                          object_pairs_hook=collections.OrderedDict)
 
     for t in conf['templates']:
         Template(t, **conf['templates'][t])
