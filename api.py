@@ -46,6 +46,7 @@ API_VERSIONS = {
     'ec2': '2015-04-15',
     'elasticloadbalancing': '2012-06-01',
     'iam': '2010-05-08',
+    'monitoring': '2010-08-01',
     's3': '2006-03-01',
 }
 
