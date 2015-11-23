@@ -69,7 +69,18 @@ def main(argv):
             'Disk Free Space (%)': 'Percent',
             'Disk Total Free Space (Bytes)': 'Bytes',
             'Disk Available Free Space (Bytes)': 'Bytes',
-            'Disk Total Space (Bytes)': 'Bytes'}]
+            'Disk Total Space (Bytes)': 'Bytes'}],
+        ['all', 'vpn', {
+            'Encrypted packets': 'Count',
+            'Decrypted packets': 'Count',
+            'Encryption errors': 'Count',
+            'Decryption errors': 'Count',
+            'IKE current SAs': 'Count',
+            'IKE no response from peer (initiator errors)': 'Count',
+            'IPsec current Inbound SAs': 'Count',
+            'IPsec current Outbound SAs': 'Count',
+            'IPsec number of VPN-1 peers': 'Count',
+            'IPsec number of VPN-1 RA peers': 'Count'}]
     ]
 
     for source in sources:
