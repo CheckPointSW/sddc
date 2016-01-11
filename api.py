@@ -104,11 +104,6 @@ def http(method, url, body, req_headers=None):
     for line in lines[1:]:
         key, sep, value = line.partition(':')
         headers[key.strip().lower()] = value.strip()
-    try:
-        out = out.decode('utf-8')
-        headers['_decoded'] = True
-    except:
-        pass
     return headers, out
 
 
