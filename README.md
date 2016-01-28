@@ -150,6 +150,26 @@ In reference to the above configuration:
 				* password: The password associated with the user
 				* b64password: The base64 encoded password (for additional obscurity)
 
+## AWS IAM role
+
+If you are using a IAM role profile, you need to provide it with the following permissions:
+
+	{
+	  "Version": "2012-10-17",
+	  "Statement": [
+	    {
+		  "Action": [
+		    "ec2:DescribeNetworkInterfaces",
+		    "ec2:DescribeSubnets",
+		    "ec2:DescribeInstances"
+		  ],
+		  "Effect": "Allow",
+		  "Resource": "*"
+		}
+	  ]
+	}
+
+
 ## Running:
 	./monitor.py --port 80 @conf.json
 
