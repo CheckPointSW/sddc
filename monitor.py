@@ -32,6 +32,7 @@ import sys
 import time
 import traceback
 import urlparse
+import xml.dom.minidom
 
 import api
 
@@ -39,13 +40,20 @@ TAG = 'managed-virtual-gateway'
 WEB_DIR = os.path.dirname(sys.argv[0]) + '/web'
 STATE_FILE = WEB_DIR + '/gateways.json'
 
+conf = {}
+
 
 def log(msg):
     sys.stderr.write(msg)
 
 
+def debug(msg):
+    if conf.get('debug'):
+        log(msg)
+
+
 def dump(obj):
-    log('%s\n' % json.dumps(obj, indent=2))
+    debug('%s\n' % json.dumps(obj, indent=2))
 
 
 # avoid printing sensitive data
@@ -501,8 +509,6 @@ class Management(object):
             self.password = options['password']
         if 'surrogates' in options:
             self.surrogates = set(options['surrogates'])
-        # FIXME: remove this when the API stabilizes
-        self.query = options.get('query', 'show-')
         self.sid = None
         self.targets = {}
 
@@ -513,12 +519,15 @@ class Management(object):
         if command == 'login':
             c = '+'
         elif command == 'logout':
+            if not self.sid:
+                return None
             c = '-'
         else:
             if not self.sid:
                 self.__enter__()
             c = '.'
         log(c)
+        debug('%s\n' % command)
         headers = {'content-type': 'application/json'}
         if command != 'login':
             headers['x-chkp-sid'] = self.sid
@@ -527,9 +536,13 @@ class Management(object):
         while True:
             if offset:
                 body['offset'] = offset
+            debug('request body\n')
+            dump(body)
             resp_headers, resp_body = http(
                 'POST', 'https://%s/web_api/%s' % (self.host, command),
                 self.fingerprint, headers, json.dumps(body))
+            dump(resp_headers)
+            debug('%s\n' % resp_body)
             if resp_headers['_status'] != 200:
                 if not silent:
                     log('\n%s\n' % command)
@@ -544,17 +557,36 @@ class Management(object):
                 raise Exception('failed API call: %s%s' % (command, msg))
             if resp_body:
                 payload = json.loads(resp_body)
+            if payload.get('task-id'):
+                # FIXME: it takes some time for the task to appear
+                time.sleep(2)
+                while True:
+                    task = self('show-task',
+                                {'task-id': payload['task-id']})['tasks'][0]
+                    if task['status'] != 'INPROGRESS':
+                        break
+                    log('_')
+                    time.sleep(2)
+                if task['status'] == 'FAILED':
+                    # FIXME: what about partial success and warnings
+                    msg = task['task-details'][0]['stagesInfo'][0][
+                        'messages'][0]['message']
+                    raise Exception('%s failed: %s' % (command, msg))
+
             if publish and (
-                    command.startswith('set-') or command.startswith('add-') or
-                    command.startswith('delete-')):
+                    command.startswith('set-') or
+                    command.startswith('add-') or
+                    command.startswith('delete-') or
+                    command.startswith('install-')):
                 self('publish', {})
+            if command == 'logout':
+                self.sid = None
             if not aggregate:
                 return payload
             objects += payload[aggregate]
             if payload['total'] == 0 or payload['total'] <= payload['to']:
                 return objects
             offset = payload['to']
-        return None
 
     def __enter__(self):
         # FIXME: if the polling period is longer than the session timeout
@@ -573,12 +605,11 @@ class Management(object):
             if self.sid:
                 self('discard', {})
                 self('logout', {})
-            self.sid = None
         except Exception:
             log('%s' % traceback.format_exc())
 
     def get_gateways(self):
-        objects = self(self.query + 'simple-gateways', {}, aggregate='objects')
+        objects = self('show-simple-gateways', {}, aggregate='objects')
         gateways = {}
         for name in (o['name'] for o in objects):
             try:
@@ -607,9 +638,52 @@ class Management(object):
                         '|'.join([str(t['name']) for t in gw['tags']]),
                          self.targets.get(gw['name'], '-')])
 
+    def dbedit(self, cmds, update=True):
+        cmds = cmds[:]
+        if update:
+            cmds.append('update_all')
+        cmds.append('')
+        p = subprocess.Popen(
+            ['dbedit', '-local', '-f', '/dev/fd/0'],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        out, err = p.communicate('\n'.join(cmds))
+        return out, err
+
+    def set_proxy(self, name, proxy_ports):
+        gw = self('show-simple-gateway', {'name': name})
+        tags = [t['name'] for t in gw['tags']]
+        path = 'network_objects %s' % name
+        try:
+            if not proxy_ports:
+                self.dbedit(['modify %s proxy_on_gw_enabled false' % path])
+                return
+            out, err = self.dbedit(['printxml %s' % path],
+                                   update=False)
+            doc = xml.dom.minidom.parseString(out)
+            port_count = len(
+                doc.getElementsByTagName(
+                    'proxy_on_gw_settings')[0].getElementsByTagName(
+                        'ports')[0].getElementsByTagName(
+                            'unnamed_element'))
+            for i in xrange(port_count):
+                self.dbedit(['rmbyindex %s 0' % path])
+            cmds = [
+                'modify %s proxy_on_gw_enabled true' % path,
+                'modify %s proxy_on_gw_settings:interfaces_type all_interfaces'
+                % path,
+                'modify %s proxy_on_gw_settings:tarnsparent_mode false' % path]
+            for port in proxy_ports:
+                cmds.append('addelement %s proxy_on_gw_settings:ports %s' %
+                            (path, port))
+            self.dbedit(cmds)
+        finally:
+            self('set-simple-gateway', {
+                'name': name, 'tags': tags})
+
     def update_targets(self):
         """map instance name to a policy where it is an install target"""
-        policy_summaries = self(self.query + 'packages', {},
+        policy_summaries = self('show-packages', {},
                                 aggregate='packages')
         targets = {}
         for summary in policy_summaries:
@@ -638,21 +712,8 @@ class Management(object):
             'installation-targets': {'add': name}})
         self.targets[name] = policy
 
-        task_id = self('install-policy', {
-            'policy-package': policy, 'targets': name})['task-id']
-        time.sleep(2)  # FIXME: it takes some time for the task to appear
-        while True:
-            task = self('show-task', {'task-id': task_id})['tasks'][0]
-            if task['status'] != 'INPROGRESS':
-                break
-            log('_')
-            time.sleep(10)
-
-        if task['status'] == 'FAILED':
-            # FIXME: what about success with warnings and partial success
-            msg = task['task-details'][0]['stagesInfo'][0][
-                'messages'][0]['message']
-            raise Exception('policy installation failed: %s' % msg)
+        self('install-policy', {
+            'policy-package': policy, 'targets': name})
 
         self('set-simple-gateway', {
             'name': name, 'tags': {'add': self.INSTALLED}})
@@ -671,6 +732,7 @@ class Management(object):
     def add_gateway(self, instance, exists):
         log('\n%s: %s' % ('updating' if exists else 'creating', instance.name))
         simple_gateway = Template.get_dict(instance.template)
+        proxy_ports = simple_gateway.pop('proxy-ports', None)
         policy = simple_gateway.pop('policy')
         # FIXME: network info is not updated once the gateway exists
         if not exists:
@@ -697,6 +759,7 @@ class Management(object):
                     log('\nfreeing: %s' % ip_address)
                     self.surrogates.add(ip_address)
                 raise
+        self.set_proxy(instance.name, proxy_ports)
         self.set_policy(instance.name, policy)
 
 
@@ -811,11 +874,14 @@ def web_server(port):
 
 
 def main(argv=None):
+    global conf
+
     parser = argparse.ArgumentParser(prog=argv[0] if argv else None)
     parser.add_argument('config', metavar='CONFIG',
                         help='@JSON-FILE or a literal json expression')
     parser.add_argument('-p', '--port', metavar='PORT', default='0',
                         help='Listening port for the web server')
+    parser.add_argument('-d', '--debug', dest='debug', action='store_true')
     args = parser.parse_args(argv[1:] if argv else None)
 
     if args.config[0] == '@':
@@ -824,6 +890,9 @@ def main(argv=None):
     else:
         conf = json.loads(args.config,
                           object_pairs_hook=collections.OrderedDict)
+
+    if args.debug:
+        conf['debug'] = True
 
     for t in conf['templates']:
         Template(t, **conf['templates'][t])
