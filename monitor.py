@@ -623,7 +623,7 @@ class Management(object):
                     continue
                 else:
                     raise
-            if TAG not in (t['name'] for t in gw['tags']):
+            if TAG not in self.get_gateway_tags(gw):
                 continue
             gateways[gw['name']] = gw
             if hasattr(self, 'surrogates'):
@@ -633,9 +633,34 @@ class Management(object):
             log('\navailable surrogates: ' + ', '.join(list(self.surrogates)))
         return gateways
 
+    def get_gateway_tags(self, gw):
+        tags = []
+        comments = gw.get('comments', '')
+        match = re.match(r'.*\{tags=([^}]*)\}.*$', comments)
+        if match and match.group(1):
+            tags = match.group(1).split('|')
+        return tags
+
+    def put_gateway_tags(self, gw, tags):
+        comments = gw.get('comments', '')
+        match = re.match(r'([^{]*)(\{tags=[^}]*\})?(.*)$', comments)
+        gw['comments'] = match.group(1) + (
+            '{tags=%s}' % '|'.join(tags)) + match.group(3)
+
+    def add_gateway_tags(self, name, tags):
+        gw = self('show-simple-gateway', {'name': name})
+        tag_list = self.get_gateway_tags(gw)
+        tag_set = set(tag_list)
+        for t in tags:
+            if t not in tag_set:
+                tag_list.append(t)
+                tag_set.add(t)
+        self.put_gateway_tags(gw, tag_list)
+        self('set-simple-gateway', {'name': name, 'comments': gw['comments']})
+
     def gw2str(self, gw):
         return ' '.join([gw['name'],
-                        '|'.join([str(t['name']) for t in gw['tags']]),
+                        '|'.join(self.get_gateway_tags(gw)),
                          self.targets.get(gw['name'], '-')])
 
     def dbedit(self, cmds, update=True):
@@ -651,35 +676,28 @@ class Management(object):
         return out, err
 
     def set_proxy(self, name, proxy_ports):
-        gw = self('show-simple-gateway', {'name': name})
-        tags = [t['name'] for t in gw['tags']]
         path = 'network_objects %s' % name
-        try:
-            if not proxy_ports:
-                self.dbedit(['modify %s proxy_on_gw_enabled false' % path])
-                return
-            out, err = self.dbedit(['printxml %s' % path],
-                                   update=False)
-            doc = xml.dom.minidom.parseString(out)
-            port_count = len(
-                doc.getElementsByTagName(
-                    'proxy_on_gw_settings')[0].getElementsByTagName(
-                        'ports')[0].getElementsByTagName(
-                            'unnamed_element'))
-            for i in xrange(port_count):
-                self.dbedit(['rmbyindex %s 0' % path])
-            cmds = [
-                'modify %s proxy_on_gw_enabled true' % path,
-                'modify %s proxy_on_gw_settings:interfaces_type all_interfaces'
-                % path,
-                'modify %s proxy_on_gw_settings:tarnsparent_mode false' % path]
-            for port in proxy_ports:
-                cmds.append('addelement %s proxy_on_gw_settings:ports %s' %
-                            (path, port))
-            self.dbedit(cmds)
-        finally:
-            self('set-simple-gateway', {
-                'name': name, 'tags': tags})
+        if not proxy_ports:
+            self.dbedit(['modify %s proxy_on_gw_enabled false' % path])
+            return
+        out, err = self.dbedit(['printxml %s' % path], update=False)
+        doc = xml.dom.minidom.parseString(out)
+        port_count = len(
+            doc.getElementsByTagName(
+                'proxy_on_gw_settings')[0].getElementsByTagName(
+                    'ports')[0].getElementsByTagName(
+                        'unnamed_element'))
+        for i in xrange(port_count):
+            self.dbedit(['rmbyindex %s 0' % path])
+        cmds = [
+            'modify %s proxy_on_gw_enabled true' % path,
+            'modify %s proxy_on_gw_settings:interfaces_type all_interfaces'
+            % path,
+            'modify %s proxy_on_gw_settings:tarnsparent_mode false' % path]
+        for port in proxy_ports:
+            cmds.append('addelement %s proxy_on_gw_settings:ports %s' %
+                        (path, port))
+        self.dbedit(cmds)
 
     def update_targets(self):
         """map instance name to a policy where it is an install target"""
@@ -715,8 +733,7 @@ class Management(object):
         self('install-policy', {
             'policy-package': policy, 'targets': name})
 
-        self('set-simple-gateway', {
-            'name': name, 'tags': {'add': self.INSTALLED}})
+        self.add_gateway_tags(name, [self.INSTALLED])
 
     def delete_gateway(self, name):
         log('\ndeleting: %s' % name)
@@ -732,6 +749,7 @@ class Management(object):
     def add_gateway(self, instance, exists):
         log('\n%s: %s' % ('updating' if exists else 'creating', instance.name))
         simple_gateway = Template.get_dict(instance.template)
+        tags = simple_gateway.pop('tags', [])
         proxy_ports = simple_gateway.pop('proxy-ports', None)
         policy = simple_gateway.pop('policy')
         # FIXME: network info is not updated once the gateway exists
@@ -750,8 +768,8 @@ class Management(object):
             simple_gateway['interfaces'] = instance.interfaces
             if len(simple_gateway['interfaces']) == 1:
                 simple_gateway['interfaces'][0]['anti-spoofing'] = False
-            simple_gateway['tags'] = simple_gateway.get(
-                'tags', []) + [TAG, instance.template]
+            self.put_gateway_tags(
+                simple_gateway, tags + [TAG, instance.template])
             try:
                 self('add-simple-gateway', simple_gateway)
             except:
@@ -805,7 +823,7 @@ def sync(controller, management, gateways, state):
     for name in set(instances):
         exists = name in gateways
         if exists and management.INSTALLED in (
-                t['name'] for t in gateways[name]['tags']):
+                management.get_gateway_tags(gateways[name])):
             set_state(state, name, 'COMPLETE')
             continue
 
