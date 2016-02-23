@@ -688,7 +688,7 @@ class Management(object):
                     'ports')[0].getElementsByTagName(
                         'unnamed_element'))
         for i in xrange(port_count):
-            self.dbedit(['rmbyindex %s 0' % path])
+            self.dbedit(['rmbyindex %s proxy_on_gw_settings:ports 0' % path])
         cmds = [
             'modify %s proxy_on_gw_enabled true' % path,
             'modify %s proxy_on_gw_settings:interfaces_type all_interfaces'
