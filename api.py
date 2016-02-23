@@ -18,6 +18,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -48,6 +49,15 @@ API_VERSIONS = {
     'iam': '2010-05-08',
     'monitoring': '2010-08-01',
     's3': '2006-03-01',
+    'sns': '2010-03-31',
+}
+
+API_TARGETS = {
+    'dynamodb': ('DynamoDB_20120810', '1.0'),
+    'marketplacecommerceanalytics':
+        ('MarketplaceCommerceAnalytics20150701', '1.1'),
+    'logs': ('Logs_20140328', '1.1'),
+    'events': ('AWSEvents', '1.1'),
 }
 
 
@@ -86,6 +96,8 @@ def http(method, url, body, req_headers=None):
         body = None
     cmd.append(url)
     debug(repr(cmd) + '\n')
+    if body and not isinstance(body, file):
+        debug(repr(body[:65536]) + ('...' if len(body) > 65536 else '') + '\n')
     p = subprocess.Popen(cmd, stdin=stdin, stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE)
     out, err = p.communicate(body)
@@ -153,7 +165,7 @@ def as_list(obj, key):
 
 
 def get_ec2_tags(obj):
-    tags = {}
+    tags = collections.OrderedDict()
     for t in as_list(obj['tagSet'], 'item'):
         tags[t['key']] = t['value']
     return tags
@@ -162,7 +174,7 @@ def get_ec2_tags(obj):
 def listify(obj, key):
     if not isinstance(obj, dict):
         return obj
-    listified = {}
+    listified = collections.OrderedDict()
     for k, v in obj.items():
         if k == key:
             if not isinstance(v, list):
@@ -189,7 +201,7 @@ class AWS(object):
 
         self.creds = {}
 
-        if key_file == 'IAM':
+        if key_file == 'IAM' or os.environ.get('AWS_KEY_FILE') == 'IAM':
             url = META_DATA + '/iam/security-credentials/'
             self.creds['role'] = http('GET', url, '')[1]
             return
@@ -240,7 +252,7 @@ AWS_SESSION_TOKEN - (optional)
         self.creds['tstamp'] = time.time()
 
     def get_url(self, service, region, method, url, payload, expiration=30,
-                auth_headers=None):
+                header_list=None):
 
         self.refresh_credentials()
 
@@ -261,28 +273,51 @@ AWS_SESSION_TOKEN - (optional)
             service = 's3'
         else:
             host = service + '.' + region
+        signing_name = os.environ.get(
+            'AWS_SIGNING_NAME_' + service.replace('.', '_'), service)
         suffix = '.amazonaws.com'
         if region.startswith('cn-'):
             suffix += '.cn'
         host += suffix
         url = 'https://' + host + url_parts.path
 
-        scope = '/'.join([now[:8], region, service, 'aws4_request'])
+        scope = '/'.join([now[:8], region, signing_name, 'aws4_request'])
 
         if service.endswith('s3') and (
-                method != 'GET' or auth_headers is None):
+                method == 'PUT' or header_list is None):
             hashed_payload = 'UNSIGNED-PAYLOAD'
         else:
             if isinstance(payload, file):
                 raise Exception('cannot sign streaming payload')
             hashed_payload = hashlib.sha256(payload).hexdigest()
 
+        headers = collections.OrderedDict()
+        if header_list:
+            for h in header_list:
+                name, colon, value = h.partition(':')
+                headers[name.strip()] = value.strip()
+        headers['Host'] = host
         query = query.copy()
-        if 'Version' not in query:
+        content_type = query.pop('Content-Type', None)
+        if 'Version' not in query and service in API_VERSIONS:
             query['Version'] = API_VERSIONS[service]
-        headers = {'Host': host}
+        if 'Version' not in query:
+            target = query.pop('X-Amz-Target', None)
+            if target is None and 'Action' in query:
+                if service not in API_TARGETS:
+                    raise Exception(
+                        'cannot find version or target prefix for "%s"' % (
+                            service))
+                target_prefix, json_version = API_TARGETS[service]
+                target = '%s.%s' % (target_prefix, query.pop('Action'))
+                if content_type is None:
+                    content_type = 'application/x-amz-json-%s' % json_version
+            if target is not None:
+                headers['X-Amz-Target'] = target
+        if content_type is not None:
+            headers['Content-Type'] = content_type
         credential = self.creds['access_key'] + '/' + scope
-        if auth_headers is None:
+        if header_list is None:
             query['X-Amz-Algorithm'] = ALGORITHM
             query['X-Amz-Credential'] = credential
             query['X-Amz-Date'] = now
@@ -309,28 +344,31 @@ AWS_SESSION_TOKEN - (optional)
                          canonical_headers, signed_headers, hashed_payload])
         signature = sign(
             calculate_key(self.creds['secret_key'], now[:8], region,
-                          service),
+                          signing_name),
             '\n'.join([ALGORITHM, now, scope,
                        hashlib.sha256(req).hexdigest()]),
             hex=True)
-        if auth_headers is None:
+        if header_list is None:
             query_string += '&X-Amz-Signature=' + signature
         else:
-            auth_headers += ['%s: %s' % (k, v) for k, v in headers.items()]
-            auth_headers += [
+            del header_list[:]
+            header_list += ['%s: %s' % (k, v) for k, v in headers.items()]
+            header_list += [
                 'Authorization: %s %s' % (ALGORITHM, ', '.join([
                     'Credential=%s' % credential,
                     'SignedHeaders=%s' % signed_headers,
                     'Signature=%s' % signature]))]
-        return url + '?' + query_string
+        if query_string:
+            query_string = '?' + query_string
+        return url + query_string
 
     def request(self, service, region, method, url, payload):
-        auth_headers = None
-        if method == 'GET':
-            auth_headers = []
+        req_headers = None
+        if method in {'GET', 'POST'}:
+            req_headers = []
         url = self.get_url(service, region, method, url, payload,
-                           auth_headers=auth_headers)
-        headers, body = http(method, url, payload, auth_headers)
+                           header_list=req_headers)
+        headers, body = http(method, url, payload, req_headers)
         ct = headers.get('content-type')
         if method == 'HEAD':
             body = None
@@ -344,6 +382,15 @@ AWS_SESSION_TOKEN - (optional)
             except:
                 if ct is not None:
                     raise
+        elif body and ct in {'application/x-amz-json-1.0',
+                             'application/x-amz-json-1.1',
+                             'application/json'}:
+            try:
+                body = json.loads(
+                    body, object_pairs_hook=collections.OrderedDict)
+                headers['_parsed'] = True
+            except:
+                raise
         return headers, body
 
 
@@ -366,24 +413,44 @@ def main(argv):
             argv[2] == '--' and len(argv) % 2 != 1):
         log("""Usage: %s
 
-SERVICE[@REGION] METHOD URL [BODY]
+SERVICE[@REGION][:LIST-MEMBER] METHOD URL [BODY]
 
-SERVICE[@REGION] -- KEY VALUE ...
+SERVICE[@REGION][:LIST-MEMBER] -- KEY VALUE ...
 """ % argv[0])
         sys.exit(1)
     os.environ['AWS_NO_DOT'] = 'true'
     init()
-    service_region = argv[1]
-    service, s, region = service_region.partition('@')
+    service_region_member = argv[1]
+    service, region, member = re.match(
+        r'([^@:]+)(@[^:]*)?(:.*)?$', service_region_member).groups()
+    if region:
+        region = region[1:]
     if not region:
-        region = 'us-east-1'
+        region = os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')
+    if member:
+        member = member[1:]
     method = argv[2]
     if method == '--':
         query = []
-        for i in xrange(3, len(argv), 2):
-            query.append((argv[i], argv[i + 1]))
-        headers, body = request(service, region, 'GET',
-                                '/?' + urllib.urlencode(query), '')
+        if service in API_TARGETS:
+            method = 'POST'
+            payload = collections.OrderedDict()
+            for i in xrange(3, len(argv), 2):
+                val = argv[i + 1]
+                if argv[i] == 'Action':
+                    query.append((argv[i], val))
+                else:
+                    if val.startswith('json:'):
+                        val = json.loads(val[5:])
+                    payload[argv[i]] = val
+            payload = json.dumps(payload)
+        else:
+            method = 'GET'
+            for i in xrange(3, len(argv), 2):
+                query.append((argv[i], argv[i + 1]))
+            payload = ''
+        headers, body = request(service, region, method,
+                                '/?' + urllib.urlencode(query), payload)
     else:
         url = argv[3]
         data = ''
@@ -402,10 +469,12 @@ SERVICE[@REGION] -- KEY VALUE ...
             headers, body = request(service, region, method, url, data)
     try:
         if headers.get('_parsed'):
+            if member:
+                body = listify(body, member)
             body = json.dumps(body, indent=2) + '\n'
     except:
         log(repr(headers) + '\n')
-        log(body + '\n')
+        log(repr(body) + '\n')
         raise
     log(json.dumps(headers, indent=2) + '\n')
     sys.stdout.write(body)
