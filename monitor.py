@@ -24,6 +24,7 @@ import hashlib
 import httplib
 import json
 import os
+import os.path
 import re
 import socket
 import ssl
@@ -39,6 +40,10 @@ import api
 TAG = 'managed-virtual-gateway'
 WEB_DIR = os.path.dirname(sys.argv[0]) + '/web'
 STATE_FILE = WEB_DIR + '/gateways.json'
+
+if os.path.isfile('/etc/cp-release'):
+    os.environ['AWS_CA_BUNDLE'] = os.environ['CPDIR'] + '/conf/ca-bundle.crt'
+    os.environ['AWS_CURL'] = 'curl_cli'
 
 conf = {}
 
