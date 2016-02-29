@@ -66,6 +66,7 @@ The script takes a configuration file in JSON format
 	    "templates": {
 	        "BASE-TEMPLATE-NAME": {
 	            "one-time-password": "STRING",
+                    "version": "R77.30",
 	            ...  // optional attributes of a simple-gateway web_api object
 	        },
 	        "TEMPLATE1-NAME": {
