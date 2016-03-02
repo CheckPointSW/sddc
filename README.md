@@ -82,13 +82,13 @@ The script takes a configuration file in JSON format
 	        }
 	    },
 	    "controllers": {
-	        "AWS-ACCOUNT": {
+	        "AWS-PROD": {
 	            "class": "AWS",
 	            "access-key": "AWS-ACCESS-KEY",
 	            "secret-key": "AWS-SECRET-KEY",
 	            "regions": ["us-east-1", "us-west-2"]
 	        },
-	        "OPENSTACK-ACCOUNT": {
+	        "OPENSTACK-DEVTEST": {
 	            "class": "OpenStack",
 	            "scheme": "https",
 	            "host": "IP-ADDRESS-OR-HOST-NAME:KEYSTONE-PORT",
