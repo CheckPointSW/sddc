@@ -26,6 +26,7 @@ import json
 import os
 import os.path
 import re
+import signal
 import socket
 import ssl
 import subprocess
@@ -139,7 +140,7 @@ class Instance(object):
     def __str__(self):
         return ' '.join([
             self.name, self.ip_address, json.dumps(self.interfaces),
-            self.template])
+            self.template, json.dumps(getattr(self, 'load_balancers'))])
 
 
 class Controller(object):
@@ -183,6 +184,52 @@ class AWS(Controller):
                 interfaces[region][i['networkInterfaceId']] = i
         return interfaces
 
+    def retrieve_elbs(self, subnets):
+        elbs = {}
+        for region in self.regions:
+            elbs[region] = {}
+            untagged_elbs = {}
+            headers, body = self.aws.request(
+                'elasticloadbalancing', region, 'GET',
+                '/?Action=DescribeLoadBalancers', '')
+            elb_list = api.listify(body['DescribeLoadBalancersResult'][
+                'LoadBalancerDescriptions'], 'member')
+            for elb in elb_list:
+                vpc = elb['VPCId']
+                elbs[region][vpc] = elbs[region].get(vpc, {})
+                untagged_elbs[vpc] = untagged_elbs.get(vpc, {})
+                headers, body = self.aws.request(
+                    'elasticloadbalancing', region, 'GET',
+                    '/?Action=DescribeTags&LoadBalancerNames.member.1=' +
+                    elb['LoadBalancerName'], '')
+                elb['Tags'] = collections.OrderedDict()
+                for t in api.listify(
+                        body['DescribeTagsResult']['TagDescriptions'],
+                        'member')[0]['Tags']:
+                    elb['Tags'][t['Key']] = t['Value']
+                template = elb['Tags'].get('x-chkp-template')
+                if template is not None:
+                    if template not in elbs[region][vpc]:
+                        elbs[region][vpc][template] = {}
+                    elbs[region][vpc][template][elb['DNSName']] = {}
+                for listener in elb['ListenerDescriptions']:
+                    if template is not None:
+                        elbs[region][vpc][template][elb['DNSName']][
+                            listener['Listener']['LoadBalancerPort']] = {
+                                'protocol': listener['Listener']['Protocol']}
+                    else:
+                        untagged_elbs[vpc][listener['Listener'][
+                            'InstancePort']] = [subnets[region][s]['cidrBlock']
+                                                for s in elb['Subnets']]
+            for vpc in elbs[region]:
+                for template in elbs[region][vpc]:
+                    for dns_name in elbs[region][vpc][template]:
+                        for port in elbs[region][vpc][template][dns_name]:
+                            # FIXME: sort subnets by AZ
+                            elbs[region][vpc][template][dns_name][port][
+                                'subnets'] = untagged_elbs[vpc].get(port, [])
+        return elbs
+
     def retrieve_instances(self):
         instances = {}
         for region in self.regions:
@@ -209,8 +256,8 @@ class AWS(Controller):
     def get_topology(self, eni, subnets):
         tags = api.get_ec2_tags(eni)
         topology = tags.get('x-chkp-topology', '').lower()
-        anti_spoofing = (tags.get('x-chkp-anti-spoofing', 'true').lower()
-                         == 'true')
+        anti_spoofing = (tags.get('x-chkp-anti-spoofing', 'true').lower() ==
+                         'true')
         if not topology:
             if eni.get('association', {}).get('publicIp'):
                 topology = 'external'
@@ -239,6 +286,7 @@ class AWS(Controller):
         ec2_instances = self.retrieve_instances()
         enis = self.retrieve_interfaces()
         subnets = self.retrieve_subnets()
+        elbs = self.retrieve_elbs(subnets)
         instances = []
         for region in self.regions:
             for instance in ec2_instances[region]:
@@ -266,9 +314,13 @@ class AWS(Controller):
                         enis[region][interface['networkInterfaceId']],
                         subnets[region]))
 
-                instances.append(Instance(
+                instance_obj = Instance(
                     instance_name, ip_address, interfaces,
-                    tags['x-chkp-template']))
+                    tags['x-chkp-template'])
+                # FIXME: keep only the subnets in the instance AZ
+                instance_obj.load_balancers = elbs[region].get(
+                    instance['vpcId'], {}).get(instance_obj.template)
+                instances.append(instance_obj)
         return instances
 
 
@@ -502,7 +554,14 @@ def http(method, url, fingerprint, headers, body):
 
 
 class Management(object):
-    INSTALLED = '__installed__'
+    IN_PROGRESS = 'in progress'
+    FAILED = 'failed'
+    TEMPLATE_PREFIX = '__template__'
+    GENERATION_PREFIX = '__generation__'
+    LOAD_BALANCER_PREFIX = '__load_balancer__'
+    MONITOR_PREFIX = '__monitor__-'
+    DUMMY_PREFIX = MONITOR_PREFIX + 'dummy-'
+    SECTION = MONITOR_PREFIX + 'section'
 
     def __init__(self, **options):
         self.host = options['host']
@@ -512,10 +571,23 @@ class Management(object):
             self.password = base64.b64decode(options['b64password'])
         else:
             self.password = options['password']
-        if 'surrogates' in options:
-            self.surrogates = set(options['surrogates'])
         self.sid = None
         self.targets = {}
+        self.dummy_group_uid = self.get_uid(self.DUMMY_PREFIX + 'group')
+        if not self.dummy_group_uid:
+            dummy_host_uid = self.get_uid(self.DUMMY_PREFIX + 'host')
+            if not dummy_host_uid:
+                dummy_host_uid = self('add-host', {
+                    'name': self.DUMMY_PREFIX + 'host',
+                    'ip-address': '169.254.1.1'})['uid']
+            self.dummy_group_uid = self('add-group', {
+                'name': self.DUMMY_PREFIX + 'group',
+                'members': dummy_host_uid})['uid']
+        self.protocol_map = {
+            'HTTP': self('show-generic-object', {
+                'uid': self.get_uid('http')})['protoType'],
+            'HTTPS': self('show-generic-object', {
+                'uid': self.get_uid('https')})['protoType']}
 
     def __call__(self, command, body, login=True, publish=True,
                  aggregate=None, silent=False):
@@ -527,6 +599,8 @@ class Management(object):
             if not self.sid:
                 return None
             c = '-'
+        elif command == 'publish':
+            c = '|'
         else:
             if not self.sid:
                 self.__enter__()
@@ -541,13 +615,17 @@ class Management(object):
         while True:
             if offset:
                 body['offset'] = offset
+            if aggregate:
+                body['limit'] = 500
             debug('request body\n')
-            dump(body)
+            if command != 'login':
+                dump(body)
             resp_headers, resp_body = http(
                 'POST', 'https://%s/web_api/%s' % (self.host, command),
                 self.fingerprint, headers, json.dumps(body))
             dump(resp_headers)
-            debug('%s\n' % resp_body)
+            if command != 'login':
+                debug('%s\n' % resp_body)
             if resp_headers['_status'] != 200:
                 if not silent:
                     log('\n%s\n' % command)
@@ -568,21 +646,26 @@ class Management(object):
                 while True:
                     task = self('show-task',
                                 {'task-id': payload['task-id']})['tasks'][0]
-                    if task['status'] != 'INPROGRESS':
+                    if task['status'] != self.IN_PROGRESS:
                         break
                     log('_')
                     time.sleep(2)
-                if task['status'] == 'FAILED':
+                if task['status'] == self.FAILED:
+                    task = self('show-task',
+                                {'task-id': payload['task-id'],
+                                 'details-level': 'full'})['tasks'][0]
                     # FIXME: what about partial success and warnings
-                    msg = task['task-details'][0]['stagesInfo'][0][
-                        'messages'][0]['message']
-                    raise Exception('%s failed: %s' % (command, msg))
+                    msgs = []
+                    for msg in task[
+                            'task-details'][0]['stagesInfo'][0]['messages']:
+                        msgs.append('%s: %s' % (msg['type'], msg['message']))
+                    raise Exception(
+                        '%s failed:\n%s' % (command, '\n'.join(msgs)))
 
             if publish and (
                     command.startswith('set-') or
                     command.startswith('add-') or
-                    command.startswith('delete-') or
-                    command.startswith('install-')):
+                    command.startswith('delete-')):
                 self('publish', {})
             if command == 'logout':
                 self.sid = None
@@ -613,29 +696,29 @@ class Management(object):
         except Exception:
             log('%s' % traceback.format_exc())
 
+    def get_gateway(self, name):
+        try:
+            gw = self('show-simple-gateway', {'name': name}, silent=True)
+        except Exception:
+            # FIXME: remove when all gateways are able to show
+            if str(sys.exc_info()[1]).endswith(
+                    'Runtime error: Unmarshalling Error: Unable to ' +
+                    'create an instance of com.checkpoint.management.' +
+                    'dlecommon.ngm_api.CpmiOwned '):
+                return None
+            else:
+                raise
+        if TAG not in self.get_gateway_tags(gw):
+            return None
+        return gw
+
     def get_gateways(self):
         objects = self('show-simple-gateways', {}, aggregate='objects')
         gateways = {}
         for name in (o['name'] for o in objects):
-            try:
-                gw = self('show-simple-gateway', {'name': name}, silent=True)
-            except Exception:
-                # FIXME: remove when all gateways are able to show
-                if str(sys.exc_info()[1]).endswith(
-                        'Runtime error: Unmarshalling Error: Unable to ' +
-                        'create an instance of com.checkpoint.management.' +
-                        'dlecommon.ngm_api.CpmiOwned '):
-                    continue
-                else:
-                    raise
-            if TAG not in self.get_gateway_tags(gw):
-                continue
-            gateways[gw['name']] = gw
-            if hasattr(self, 'surrogates'):
-                if 'ipv4-address' in gw:
-                    self.surrogates.discard(gw['ipv4-address'])
-        if hasattr(self, 'surrogates'):
-            log('\navailable surrogates: ' + ', '.join(list(self.surrogates)))
+            gw = self.get_gateway(name)
+            if gw:
+                gateways[gw['name']] = gw
         return gateways
 
     def get_gateway_tags(self, gw):
@@ -652,15 +735,25 @@ class Management(object):
         gw['comments'] = match.group(1) + (
             '{tags=%s}' % '|'.join(tags)) + match.group(3)
 
-    def add_gateway_tags(self, name, tags):
-        gw = self('show-simple-gateway', {'name': name})
-        tag_list = self.get_gateway_tags(gw)
-        tag_set = set(tag_list)
-        for t in tags:
-            if t not in tag_set:
-                tag_list.append(t)
-                tag_set.add(t)
-        self.put_gateway_tags(gw, tag_list)
+    def get_gateway_tag_value(self, gw, prefix, default=None):
+        for tag in self.get_gateway_tags(gw):
+            if tag.startswith(prefix):
+                return tag[len(prefix):]
+        return default
+
+    def set_gateway_tag(self, name, prefix, value):
+        log('\n%ssetting tag: %s' % (
+            '' if value else 're', prefix + value if value else prefix))
+        gw = self.get_gateway(name)
+        old_tags = self.get_gateway_tags(gw)
+        new_tags = []
+        for t in old_tags:
+            if not t.startswith(prefix):
+                new_tags.append(t)
+                continue
+        if value:
+            new_tags.append(prefix + value)
+        self.put_gateway_tags(gw, new_tags)
         self('set-simple-gateway', {'name': name, 'comments': gw['comments']})
 
     def gw2str(self, gw):
@@ -668,43 +761,39 @@ class Management(object):
                         '|'.join(self.get_gateway_tags(gw)),
                          self.targets.get(gw['name'], '-')])
 
-    def dbedit(self, cmds, update=True):
-        cmds = cmds[:]
-        if update:
-            cmds.append('update_all')
-        cmds.append('')
-        p = subprocess.Popen(
-            ['dbedit', '-local', '-f', '/dev/fd/0'],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE)
-        out, err = p.communicate('\n'.join(cmds))
-        return out, err
+    def get_uid(self, name):
+        objects = self('show-generic-objects', {'name': name},
+                       aggregate='objects')
+        uids = [o['uid'] for o in objects if o['name'] == name]
+        if len(uids) == 1:
+            return uids[0]
+        if not len(uids):
+            return None
+        raise Exception('more than one object named "%s"' % name)
 
     def set_proxy(self, name, proxy_ports):
-        path = 'network_objects %s' % name
+        log('\n%s: %s' % ('setting proxy', json.dumps(proxy_ports)))
+        uid = self.get_uid(name)
         if not proxy_ports:
-            self.dbedit(['modify %s proxy_on_gw_enabled false' % path])
+            self('set-generic-object', {'uid': uid, 'proxyOnGwEnabled': False})
             return
-        out, err = self.dbedit(['printxml %s' % path], update=False)
-        doc = xml.dom.minidom.parseString(out)
-        port_count = len(
-            doc.getElementsByTagName(
-                'proxy_on_gw_settings')[0].getElementsByTagName(
-                    'ports')[0].getElementsByTagName(
-                        'unnamed_element'))
-        for i in xrange(port_count):
-            self.dbedit(['rmbyindex %s proxy_on_gw_settings:ports 0' % path])
-        cmds = [
-            'modify %s proxy_on_gw_enabled true' % path,
-            'modify %s proxy_on_gw_settings:interfaces_type all_interfaces'
-            % path,
-            'modify %s proxy_on_gw_settings:tarnsparent_mode false' % path]
-        for port in proxy_ports:
-            cmds.append('addelement %s proxy_on_gw_settings:ports %s' %
-                        (path, port))
-        self.dbedit(cmds)
 
-    def update_targets(self):
+        ports = self('show-generic-object', {'uid': uid})[
+            'proxyOnGwSettings']['ports']
+        # FIXME: would not be needed when we can assign to an empty value
+        if ports is None:
+            ports = {'add': proxy_ports}
+        else:
+            ports = proxy_ports
+        self('set-generic-object', {
+            'uid': uid,
+            'proxyOnGwEnabled': True,
+            'proxyOnGwSettings': {
+                'interfacesType': 'ALL_INTERFACES',
+                'ports': ports,
+                'tarnsparentMode': False}})
+
+    def get_targets(self):
         """map instance name to a policy where it is an install target"""
         policy_summaries = self('show-packages', {},
                                 aggregate='packages')
@@ -718,7 +807,165 @@ class Management(object):
                 targets[target['name']] = policy_name
         self.targets = targets
 
-    def set_policy(self, name, policy):
+    def load_balancer_tag(self, instance):
+        load_balancers = getattr(instance, 'load_balancers', {})
+        if not load_balancers:
+            return None
+        parts = []
+        for dns_name in load_balancers:
+            ports = load_balancers[dns_name]
+            for port in ports:
+                parts.append('-'.join(
+                    [port] + sorted(ports[port]['subnets'])))
+        return ':'.join(sorted(parts))
+
+    def get_flat_rules(self, command, body):
+        body['limit'] = 1
+        body['offset'] = 0
+        last_section = None
+        while True:
+            response = self(command, body)
+            top_rules = response['rulebase']
+            if not top_rules:
+                return
+            for top_rule in top_rules:
+                if top_rule['type'].endswith('-section'):
+                    sub_rules = top_rule.pop('rulebase')
+                    if top_rule['uid'] != last_section:
+                        last_section = top_rule['uid']
+                        yield top_rule
+                    for sub_rule in sub_rules:
+                        yield sub_rule
+                else:
+                    yield top_rule
+            if body['offset'] + body['limit'] > response['total']:
+                return
+            body['offset'] = response['to']
+
+    def get_rulebase(self, rulebase, nat=False, sections=False):
+        if nat:
+            command = 'show-nat-rulebase'
+            body = {'package': rulebase}
+        else:
+            command = 'show-access-rulebase'
+            body = {'uid': rulebase}
+        rules = []
+        for rule in self.get_flat_rules(command, body):
+            if rule['type'].endswith('-rule'):
+                if not sections:
+                    rules.append(rule)
+                continue
+            if rule['type'].endswith('-section'):
+                if sections:
+                    rules.append(rule)
+                continue
+        return rules
+
+    def add_load_balancer(self, gw, policy, dns_name, ports):
+        debug('\nadding %s: %s\n' % (dns_name, json.dumps(ports, indent=2)))
+        # FIXME: assume that it is correct to use the first interface
+        private_address = gw['interfaces'][0]['ipv4-address']
+        private_name = private_address + '_' + gw['name']
+        if not self.get_uid(private_name):
+            log('\nadding %s' % private_name)
+            self('add-host', {
+                'ignore-warnings': True,  # re-use of IP address
+                'name': private_name, 'ip-address': private_address})
+        # create logical server
+        logical_server = '%s_%s' % (dns_name, gw['name'])
+        if self.get_uid(logical_server):
+            return
+        log('\nadding %s' % logical_server)
+        self('add-generic-object', {
+            'ignore-warnings': True,  # re-use of IP address
+            'create': 'com.checkpoint.objects.classes.dummy.CpmiLogicalServer',
+            'name': logical_server,
+            'ipaddr': private_address,
+            'serversType': 'OTHER',
+            'method': 'DOMAIN',
+            'servers': self.dummy_group_uid})
+        layers = []
+        for layer in self('show-package', {'name': policy})['access-layers']:
+            if self('show-generic-object',
+                    {'uid': layer['uid']})['firewallOn']:
+                layers.append(layer)
+        if not layers:
+            raise Exception('failed to find a firwall layer in "%s"' % layer)
+        for layer in layers:
+            for section in self.get_rulebase(layer['uid'], sections=True):
+                if section.get('name') == self.SECTION:
+                    debug('\nusing access layer "%s\n"' % layer['name'])
+                    position = {'below': section['uid']}
+                    break
+            else:
+                continue
+        else:
+            layer = layers[0]
+            position = 'top'
+        for section in self.get_rulebase(policy, nat=True, sections=True):
+            if section.get('name') == self.SECTION:
+                nat_position = {'below': section['uid']}
+                break
+        else:
+            nat_position = 'top'
+        for port in ports:
+            # add a service
+            service_name = 'tcp-%s_%s' % (port, gw['name'])
+            log('\nadding %s' % service_name)
+            self('add-service-tcp', {
+                'name': service_name, 'port': port})
+            protocol = self.protocol_map.get(ports[port]['protocol'])
+            if protocol:
+                self('set-generic-object', {
+                    'uid': self.get_uid(service_name),
+                    'protoType': protocol})
+            # add subnets
+            net_uids = []
+            for subnet in ports[port]['subnets']:
+                net, slash, mask = subnet.partition('/')
+                net_name = '%s-%s_%s' % (net, mask, service_name)
+                log('\nadding %s' % net_name)
+                net_uids.append(self('add-network', {
+                    'ignore-warnings': True,  # re-use of subnet/mask
+                    'name': net_name, 'subnet': net,
+                    'mask-length': int(mask)})['uid'])
+            source = 'Any'
+            original_source = 'All_Internet'
+            if net_uids:
+                group_name = 'net-group_%s' % service_name
+                log('\nadding %s' % group_name)
+                group_uid = self('add-group', {
+                    'name': group_name, 'members': net_uids})['uid']
+                source = group_uid
+                original_source = group_uid
+            # add access rule
+            log('\nadding access rule for %s' % service_name)
+            self('add-access-rule', {
+                'name': 'access_%s' % service_name,
+                'layer': layer['uid'],
+                'position': position,
+                'source': source,
+                'destination': logical_server,
+                'service': service_name,
+                'action': 'Accept',
+                'track': 'Log',
+                'install-on': gw['name']})
+            # add nat rule
+            log('\nadding nat rule for %s' % service_name)
+            self('add-nat-rule', {
+                'comments': 'nat_%s' % service_name,
+                'package': policy,
+                'position': nat_position,
+                'original-source': original_source,
+                'original-destination': private_name,
+                'original-service': service_name,
+                'translated-source': private_name,
+                'method': 'hide',
+                'install-on': gw['name']})
+
+    def set_policy(self, gw, policy):
+        name = gw['name']
+        log('\nsetting policy "%s" on %s' % (policy, name))
         old_policy = None
         if name in self.targets:
             old_policy = self.targets[name]
@@ -738,52 +985,135 @@ class Management(object):
         self('install-policy', {
             'policy-package': policy, 'targets': name})
 
-        self.add_gateway_tags(name, [self.INSTALLED])
+    def reset_gateway(self, name, delete=False):
+        log('\n%s: %s' % ('deleting' if delete else 'resetting', name))
+        gw = self.get_gateway(name)
+        self.set_policy(gw, None)
+        policies = [p['name']
+                    for p in self('show-packages', {}, aggregate='packages')]
+        for policy in policies:
+            # remove nat rules installed on the deleted gateway
+            rules = self.get_rulebase(policy, nat=True)
+            for rule in rules:
+                if gw['uid'] in rule['install-on']:
+                    log('\ndeleting %s in "%s"' % (rule['comments'], policy))
+                    self('delete-nat-rule', {
+                        'uid': rule['uid'], 'package': policy})
+            # remove access rules installed on the deleted gateway
+            layers = self(
+                'show-package', {'name': policy})['access-layers']
+            for layer in layers:
+                rules = self.get_rulebase(layer['uid'])
+                for rule in rules:
+                    if gw['uid'] in rule['install-on']:
+                        log('\ndeleting %s in "%s"' % (
+                            rule['name'], layer['name']))
+                        self('delete-access-rule',
+                             {'uid': rule['uid'], 'layer': layer['uid']})
+        # remove groups defined for the gateway
+        for group in self('show-groups', {}, aggregate='objects'):
+            if group['name'].endswith('_' + name):
+                log('\ndeleting %s' % group['name'])
+                self('delete-group', {'name': group['name']})
+        # remove networks defined for the gateway
+        for net in self('show-networks', {}, aggregate='objects'):
+            if net['name'].endswith('_' + name):
+                log('\ndeleting %s' % net['name'])
+                self('delete-network', {'name': net['name']})
+        # remove services defined for the gateway
+        for service in self('show-services-tcp', {}, aggregate='objects'):
+            if service['name'].endswith('_' + name):
+                log('\ndeleting %s' % service['name'])
+                self('delete-service-tcp', {'name': service['name']})
+        # remove logical servers defined for the gateway
+        logical_servers = self(
+            'show-generic-objects', {
+                'class-name':
+                    'com.checkpoint.objects.classes.dummy.CpmiLogicalServer'},
+            aggregate='objects')
+        for logical_server in logical_servers:
+            if logical_server['name'].endswith('_' + name):
+                log('\ndeleting %s' % logical_server['name'])
+                self('delete-generic-object', {'uid': logical_server['uid']})
+        # remove the hosts defined for the gateway
+        for host in self('show-hosts', {}, aggregate='objects'):
+            if host['name'].endswith('_' + name):
+                log('\ndeleting %s' % host['name'])
+                self('delete-host', {'name': host['name']})
+        if delete:
+            log('\ndeleting %s' % name)
+            self('delete-simple-gateway', {'name': name})
 
-    def delete_gateway(self, name):
-        log('\ndeleting: %s' % name)
-        self.set_policy(name, None)
-        if hasattr(self, 'surrogates'):
-            ip_address = self(
-                'show-simple-gateway', {'name': name})['ipv4-address']
-        self('delete-simple-gateway', {'name': name})
-        if hasattr(self, 'surrogates'):
-            log('\nfreeing: %s' % ip_address)
-            self.surrogates.add(ip_address)
+    def is_up_to_date(self, instance, gw, generation):
+        if not gw:
+            return False
+        if (instance.template !=
+                self.get_gateway_tag_value(gw, self.TEMPLATE_PREFIX, '')):
+            log('\nconfiguration was not complete')
+            return False
+        if (generation !=
+                self.get_gateway_tag_value(gw, self.GENERATION_PREFIX, '')):
+            log('\nnew template generation')
+            return False
+        if (self.load_balancer_tag(instance) !=
+                self.get_gateway_tag_value(gw, self.LOAD_BALANCER_PREFIX)):
+            log('\nnew load balancer configuration')
+            return False
+        return True
 
-    def add_gateway(self, instance, exists):
-        log('\n%s: %s' % ('updating' if exists else 'creating', instance.name))
+    def set_gateway(self, instance, gw, state):
+        log('\n%s: %s' % ('updating' if gw else 'creating', instance.name))
         simple_gateway = Template.get_dict(instance.template)
-        tags = simple_gateway.pop('tags', [])
+        generation = str(simple_gateway.pop('generation', ''))
+        if self.is_up_to_date(instance, gw, generation):
+            return
+
         proxy_ports = simple_gateway.pop('proxy-ports', None)
         policy = simple_gateway.pop('policy')
+        otp = simple_gateway.pop('one-time-password')
         # FIXME: network info is not updated once the gateway exists
-        if not exists:
-            if hasattr(self, 'surrogates'):
-                ip_address = self.surrogates.pop()
-                log('\nusing: %s' % ip_address)
-                subprocess.check_call([
-                    'ssh', 'admin@' + ip_address, 'bash', '-c',
-                    '"cp_conf sic init %s </dev/null"' % (
-                        simple_gateway['one-time-password'])])
-            else:
-                ip_address = instance.ip_address
+        if not gw:
+            set_state(state, instance.name, 'ADDING')
+            gw = {
+                'name': instance.name,
+                'ip-address': instance.ip_address,
+                'interfaces': instance.interfaces,
+                'one-time-password': otp}
+            if len(gw['interfaces']) == 1:
+                gw['interfaces'][0]['anti-spoofing'] = False
+            version = simple_gateway.pop('version')
+            if version:
+                gw['version'] = version
+            self.put_gateway_tags(gw, [TAG])
+            self('add-simple-gateway', gw)
+        else:
+            set_state(state, instance.name, 'UPDATING')
+            self.reset_gateway(instance.name)
+        success = False
+        try:
             simple_gateway['name'] = instance.name
-            simple_gateway['ip-address'] = ip_address
-            simple_gateway['interfaces'] = instance.interfaces
-            if len(simple_gateway['interfaces']) == 1:
-                simple_gateway['interfaces'][0]['anti-spoofing'] = False
-            self.put_gateway_tags(
-                simple_gateway, tags + [TAG, instance.template])
-            try:
-                self('add-simple-gateway', simple_gateway)
-            except:
-                if hasattr(self, 'surrogates'):
-                    log('\nfreeing: %s' % ip_address)
-                    self.surrogates.add(ip_address)
-                raise
-        self.set_proxy(instance.name, proxy_ports)
-        self.set_policy(instance.name, policy)
+            tags = simple_gateway.pop('tags', [])
+            self.put_gateway_tags(simple_gateway, tags + [TAG])
+            self('set-simple-gateway', simple_gateway)
+            self.set_proxy(instance.name, proxy_ports)
+            gw = self.get_gateway(instance.name)
+            load_balancers = getattr(instance, 'load_balancers', {})
+            if load_balancers:
+                for dns_name in load_balancers:
+                    self.add_load_balancer(
+                        gw, policy, dns_name, load_balancers[dns_name])
+            self.set_gateway_tag(instance.name,
+                                 self.LOAD_BALANCER_PREFIX,
+                                 self.load_balancer_tag(instance))
+            self.set_policy(gw, policy)
+            self.set_gateway_tag(instance.name,
+                                 self.GENERATION_PREFIX, generation)
+            self.set_gateway_tag(instance.name,
+                                 self.TEMPLATE_PREFIX, instance.template)
+            success = True
+        finally:
+            if not success:
+                self.reset_gateway(instance.name)
 
 
 def set_state(state, name, status):
@@ -793,6 +1123,8 @@ def set_state(state, name, status):
         state[name] = status
     elif name in state:
         del state[name]
+    if not conf['webserver']:
+        return
     with open(STATE_FILE, 'w') as f:
         json.dump([{'name': n, 'status': state[n]} for n in state], f)
 
@@ -806,6 +1138,13 @@ def is_SIC_open(instance):
         time.sleep(5)
         return True
 
+stop = False
+
+
+def handler(signum, frame):
+    global stop
+    stop = True
+
 
 def sync(controller, management, gateways, state):
     log('\n' + controller.name)
@@ -817,47 +1156,41 @@ def sync(controller, management, gateways, state):
                             if name.startswith(
                                 controller.name + Controller.SEPARATOR))
     for name in filtered_gateways - set(instances):
+        if stop:
+            return
         try:
             set_state(state, name, 'DELETING')
-            management.delete_gateway(name)
+            management.reset_gateway(name, delete=True)
         except Exception:
             log('%s' % traceback.format_exc())
         finally:
             set_state(state, name, None)
 
     for name in set(instances):
-        exists = name in gateways
-        if exists and management.INSTALLED in (
-                management.get_gateway_tags(gateways[name])):
-            set_state(state, name, 'COMPLETE')
-            continue
+        if stop:
+            return
+        gw = gateways.get(name)
 
-        if not exists:
+        if not gw:
             if not is_SIC_open(instances[name]):
                 set_state(state, name, 'INITIALIZING')
                 continue
-
         try:
-            set_state(state, name, 'ADDING')
-            management.add_gateway(instances[name], exists)
+            management.set_gateway(instances[name], gw, state)
             set_state(state, name, 'COMPLETE')
         except Exception:
             log('%s' % traceback.format_exc())
-            try:
-                set_state(state, name, 'RESETTING')
-                management.delete_gateway(name)
-            except Exception:
-                log('%s' % traceback.format_exc())
-            finally:
-                set_state(state, name, None)
 
 
 def loop(management, controllers, delay):
     state = {}
     set_state(state, None, None)
-    while True:
+
+    signal.signal(signal.SIGTERM, handler)
+
+    while not stop:
         try:
-            management.update_targets()
+            management.get_targets()
             gateways = management.get_gateways()
             log('\ngateways (before):\n')
             log('\n'.join(
@@ -901,21 +1234,21 @@ def main(argv=None):
 
     parser = argparse.ArgumentParser(prog=argv[0] if argv else None)
     parser.add_argument('config', metavar='CONFIG',
-                        help='@JSON-FILE or a literal json expression')
+                        help='JSON-FILE or a literal json expression')
     parser.add_argument('-p', '--port', metavar='PORT', default='0',
                         help='Listening port for the web server')
     parser.add_argument('-d', '--debug', dest='debug', action='store_true')
     args = parser.parse_args(argv[1:] if argv else None)
 
     if args.config[0] == '@':
-        with open(args.config[1:]) as f:
-            conf = json.load(f, object_pairs_hook=collections.OrderedDict)
-    else:
-        conf = json.loads(args.config,
-                          object_pairs_hook=collections.OrderedDict)
+        args.config = args.config[1:]
+    with open(args.config) as f:
+        conf = json.load(f, object_pairs_hook=collections.OrderedDict)
 
     if args.debug:
         conf['debug'] = True
+
+    conf['webserver'] = int(args.port)
 
     for t in conf['templates']:
         Template(t, **conf['templates'][t])
