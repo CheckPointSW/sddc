@@ -164,7 +164,9 @@ If you are using a IAM role profile, you need to provide it with the following p
 		  "Action": [
 		    "ec2:DescribeNetworkInterfaces",
 		    "ec2:DescribeSubnets",
-		    "ec2:DescribeInstances"
+		    "ec2:DescribeInstances",
+		    "elasticloadbalancing:DescribeLoadBalancers",
+		    "elasticloadbalancing:DescribeTags"
 		  ],
 		  "Effect": "Allow",
 		  "Resource": "*"
@@ -174,7 +176,7 @@ If you are using a IAM role profile, you need to provide it with the following p
 
 
 ## Running:
-	./monitor.py --port 80 @conf.json
+	./monitor.py --port 80 conf.json
 
 The script will start a web server on port 80 where a simple status page can be
 viewed with a web browser.
