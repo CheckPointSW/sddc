@@ -162,13 +162,6 @@ def as_list(obj, key):
     return [value]
 
 
-def get_ec2_tags(obj):
-    tags = collections.OrderedDict()
-    for t in as_list(obj['tagSet'], 'item'):
-        tags[t['key']] = t['value']
-    return tags
-
-
 def listify(obj, key):
     if not isinstance(obj, dict):
         return obj

@@ -198,11 +198,9 @@ class AWS(Controller):
                     'elasticloadbalancing', region, 'GET',
                     '/?Action=DescribeTags&LoadBalancerNames.member.1=' +
                     elb['LoadBalancerName'], '')
-                elb['Tags'] = collections.OrderedDict()
-                for t in api.listify(
-                        body['DescribeTagsResult']['TagDescriptions'],
-                        'member')[0]['Tags']:
-                    elb['Tags'][t['Key']] = t['Value']
+                elb['Tags'] = self.get_tags(api.listify(
+                    body['DescribeTagsResult']['TagDescriptions'],
+                    'member')[0]['Tags'])
                 if elb['Tags'].get('x-chkp-management') != self.management:
                     continue
                 template = elb['Tags'].get('x-chkp-template')
@@ -251,8 +249,14 @@ class AWS(Controller):
                     break
         return instances
 
+    def get_tags(self, tag_list):
+        tags = collections.OrderedDict()
+        for t in tag_list:
+            tags[t.get('key', t.get('Key'))] = t.get('value', t.get('Value'))
+        return tags
+
     def get_topology(self, eni, subnets):
-        tags = api.get_ec2_tags(eni)
+        tags = self.get_tags(eni['tagSet'])
         topology = tags.get('x-chkp-topology', '').lower()
         anti_spoofing = (tags.get('x-chkp-anti-spoofing', 'true').lower() ==
                          'true')
@@ -295,7 +299,7 @@ class AWS(Controller):
                         'running', 'stopping', 'stopped']:
                     continue
 
-                tags = api.get_ec2_tags(instance)
+                tags = self.get_tags(instance['tagSet'])
                 ip_address = tags.get('x-chkp-ip-address', 'public')
 
                 if ip_address == 'private':
