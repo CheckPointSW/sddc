@@ -762,7 +762,7 @@ class Management(object):
     def gw2str(self, gw):
         return ' '.join([gw['name'],
                         '|'.join(self.get_gateway_tags(gw)),
-                         self.targets.get(gw['name'], '-')])
+                         str(self.targets.get(gw['name'], '-'))])
 
     def get_uid(self, name):
         objects = self('show-generic-objects', {'name': name},
@@ -807,7 +807,7 @@ class Management(object):
             if policy['installation-targets'] == 'all':
                 continue
             for target in policy['installation-targets']:
-                targets[target['name']] = policy_name
+                targets.setdefault(target['name'], []).append(policy_name)
         self.targets = targets
 
     def load_balancer_tag(self, instance):
@@ -969,21 +969,17 @@ class Management(object):
     def set_policy(self, gw, policy):
         name = gw['name']
         log('\nsetting policy "%s" on %s' % (policy, name))
-        old_policy = None
-        if name in self.targets:
-            old_policy = self.targets[name]
-        if old_policy:
+        for old_policy in self.targets.pop(name, []):
             self('set-package', {
                 'name': old_policy,
                 'installation-targets': {'remove': name}})
-            del self.targets[name]
         if not policy:
             return
 
         self('set-package', {
             'name': policy,
             'installation-targets': {'add': name}})
-        self.targets[name] = policy
+        self.targets.setdefault('name', []).append(policy)
 
         self('install-policy', {
             'policy-package': policy, 'targets': name})
