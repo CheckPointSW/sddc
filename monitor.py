@@ -207,6 +207,8 @@ class AWS(Controller):
                         body['DescribeTagsResult']['TagDescriptions'],
                         'member')[0]['Tags']:
                     elb['Tags'][t['Key']] = t['Value']
+                if elb['Tags'].get('x-chkp-management') != self.management:
+                    continue
                 template = elb['Tags'].get('x-chkp-template')
                 if template is not None:
                     if template not in elbs[region][vpc]:
