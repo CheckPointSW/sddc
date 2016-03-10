@@ -761,8 +761,8 @@ class Management(object):
 
     def gw2str(self, gw):
         return ' '.join([gw['name'],
-                        '|'.join(self.get_gateway_tags(gw)),
-                         str(self.targets.get(gw['name'], '-'))])
+                         '|'.join(self.get_gateway_tags(gw)),
+                         '|'.join(self.targets.get(gw['name'], ['-']))])
 
     def get_uid(self, name):
         objects = self('show-generic-objects', {'name': name},
@@ -979,7 +979,7 @@ class Management(object):
         self('set-package', {
             'name': policy,
             'installation-targets': {'add': name}})
-        self.targets.setdefault('name', []).append(policy)
+        self.targets.setdefault(name, []).append(policy)
 
         self('install-policy', {
             'policy-package': policy, 'targets': name})
