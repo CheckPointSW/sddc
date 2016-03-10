@@ -1061,7 +1061,7 @@ class Management(object):
             return False
         return True
 
-    def set_gateway(self, instance, gw, state):
+    def set_gateway(self, instance, gw):
         log('\n%s: %s' % ('updating' if gw else 'creating', instance.name))
         simple_gateway = Template.get_dict(instance.template)
         generation = str(simple_gateway.pop('generation', ''))
@@ -1073,7 +1073,7 @@ class Management(object):
         otp = simple_gateway.pop('one-time-password')
         # FIXME: network info is not updated once the gateway exists
         if not gw:
-            set_state(state, instance.name, 'ADDING')
+            self.set_state(instance.name, 'ADDING')
             gw = {
                 'name': instance.name,
                 'ip-address': instance.ip_address,
@@ -1087,7 +1087,7 @@ class Management(object):
             self.put_gateway_tags(gw, [TAG])
             self('add-simple-gateway', gw)
         else:
-            set_state(state, instance.name, 'UPDATING')
+            self.set_state(instance.name, 'UPDATING')
             self.reset_gateway(instance.name)
         success = False
         try:
@@ -1115,18 +1115,20 @@ class Management(object):
             if not success:
                 self.reset_gateway(instance.name)
 
-
-def set_state(state, name, status):
-    if name:
-        log('\n%s: %s' % (name, status))
-    if status:
-        state[name] = status
-    elif name in state:
-        del state[name]
-    if not conf['webserver']:
-        return
-    with open(STATE_FILE, 'w') as f:
-        json.dump([{'name': n, 'status': state[n]} for n in state], f)
+    def set_state(self, name, status):
+        if not hasattr(self, 'state'):
+            self.state = {}
+        if name:
+            log('\n%s: %s' % (name, status))
+        if status:
+            self.state[name] = status
+        elif name in self.state:
+            del self.state[name]
+        if not conf['webserver']:
+            return
+        with open(STATE_FILE, 'w') as f:
+            json.dump([{'name': n, 'status': self.state[n]}
+                       for n in self.state], f)
 
 
 def is_SIC_open(instance):
@@ -1146,7 +1148,7 @@ def handler(signum, frame):
     stop = True
 
 
-def sync(controller, management, gateways, state):
+def sync(controller, management, gateways):
     log('\n' + controller.name)
     instances = {}
     for instance in controller.get_instances():
@@ -1159,12 +1161,12 @@ def sync(controller, management, gateways, state):
         if stop:
             return
         try:
-            set_state(state, name, 'DELETING')
+            management.set_state(name, 'DELETING')
             management.reset_gateway(name, delete=True)
         except Exception:
             log('%s' % traceback.format_exc())
         finally:
-            set_state(state, name, None)
+            management.set_state(name, None)
 
     for name in set(instances):
         if stop:
@@ -1173,18 +1175,17 @@ def sync(controller, management, gateways, state):
 
         if not gw:
             if not is_SIC_open(instances[name]):
-                set_state(state, name, 'INITIALIZING')
+                management.set_state(name, 'INITIALIZING')
                 continue
         try:
-            management.set_gateway(instances[name], gw, state)
-            set_state(state, name, 'COMPLETE')
+            management.set_gateway(instances[name], gw)
+            management.set_state(name, 'COMPLETE')
         except Exception:
             log('%s' % traceback.format_exc())
 
 
 def loop(management, controllers, delay):
-    state = {}
-    set_state(state, None, None)
+    management.set_state(None, None)
 
     signal.signal(signal.SIGTERM, handler)
 
@@ -1197,7 +1198,7 @@ def loop(management, controllers, delay):
                 [management.gw2str(gateways[gw]) for gw in gateways] + ['']))
             for c in controllers:
                 try:
-                    sync(c, management, gateways, state)
+                    sync(c, management, gateways)
                 except Exception:
                     log('%s' % traceback.format_exc())
             log('\n')
