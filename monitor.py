@@ -571,6 +571,7 @@ class Management(object):
             self.password = base64.b64decode(options['b64password'])
         else:
             self.password = options['password']
+        self.auto_publish = True
         self.sid = None
         self.targets = {}
         self.dummy_group_uid = self.get_uid(self.DUMMY_PREFIX + 'group')
@@ -589,8 +590,8 @@ class Management(object):
             'HTTPS': self('show-generic-object', {
                 'uid': self.get_uid('https')})['protoType']}
 
-    def __call__(self, command, body, login=True, publish=True,
-                 aggregate=None, silent=False):
+    def __call__(self, command, body, login=True, aggregate=None,
+                 silent=False):
         # FIXME: need to "censor" session ids in login replies and other
         #        requests
         if command == 'login':
@@ -662,7 +663,7 @@ class Management(object):
                     raise Exception(
                         '%s failed:\n%s' % (command, '\n'.join(msgs)))
 
-            if publish and (
+            if self.auto_publish and (
                     command.startswith('set-') or
                     command.startswith('add-') or
                     command.startswith('delete-')):
@@ -1088,9 +1089,11 @@ class Management(object):
             self('add-simple-gateway', gw)
         else:
             self.set_state(instance.name, 'UPDATING')
-            self.reset_gateway(instance.name)
         success = False
+        published = False
         try:
+            self.auto_publish = False
+            self.reset_gateway(instance.name)
             simple_gateway['name'] = instance.name
             tags = simple_gateway.pop('tags', [])
             self.put_gateway_tags(simple_gateway, tags + [TAG])
@@ -1105,6 +1108,9 @@ class Management(object):
             self.set_gateway_tag(instance.name,
                                  self.LOAD_BALANCER_PREFIX,
                                  self.load_balancer_tag(instance))
+            self('publish', {})
+            self.published = True
+            self.auto_publish = True
             self.set_policy(gw, policy)
             self.set_gateway_tag(instance.name,
                                  self.GENERATION_PREFIX, generation)
@@ -1112,8 +1118,19 @@ class Management(object):
                                  self.TEMPLATE_PREFIX, instance.template)
             success = True
         finally:
+            self.auto_publish = True
             if not success:
-                self.reset_gateway(instance.name)
+                if not published:
+                    try:
+                        log('\ndiscarding changes for %s' % instance.name)
+                        self('discard', {})
+                    except Exception:
+                        log('%s' % traceback.format_exc())
+                else:
+                    try:
+                        self.reset_gateway(instance.name)
+                    except Exception:
+                        log('%s' % traceback.format_exc())
 
     def set_state(self, name, status):
         if not hasattr(self, 'state'):
