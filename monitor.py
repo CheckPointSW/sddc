@@ -181,19 +181,19 @@ class AWS(Controller):
         return interfaces
 
     def retrieve_elbs(self, subnets):
-        elbs = {}
+        elbs = {
+            'by-template': {},
+            'by-instance': {}}
         for region in self.regions:
-            elbs[region] = {}
-            untagged_elbs = {}
+            i2lb_names = {}
+            tagged_elbs = {}
+            all_elbs = {}
             headers, body = self.aws.request(
                 'elasticloadbalancing', region, 'GET',
                 '/?Action=DescribeLoadBalancers', '')
             elb_list = api.listify(body['DescribeLoadBalancersResult'][
                 'LoadBalancerDescriptions'], 'member')
             for elb in elb_list:
-                vpc = elb['VPCId']
-                elbs[region][vpc] = elbs[region].get(vpc, {})
-                untagged_elbs[vpc] = untagged_elbs.get(vpc, {})
                 headers, body = self.aws.request(
                     'elasticloadbalancing', region, 'GET',
                     '/?Action=DescribeTags&LoadBalancerNames.member.1=' +
@@ -201,29 +201,52 @@ class AWS(Controller):
                 elb['Tags'] = self.get_tags(api.listify(
                     body['DescribeTagsResult']['TagDescriptions'],
                     'member')[0]['Tags'])
-                if elb['Tags'].get('x-chkp-management') != self.management:
-                    continue
-                template = elb['Tags'].get('x-chkp-template')
-                if template is not None:
-                    if template not in elbs[region][vpc]:
-                        elbs[region][vpc][template] = {}
-                    elbs[region][vpc][template][elb['DNSName']] = {}
+                cidrs = [subnets[region][s]['cidrBlock']
+                         for s in elb['Subnets']]
+                dns_name = elb['DNSName']
+                front_protocol_ports = []
+                back_protocol_ports = []
                 for listener in elb['ListenerDescriptions']:
-                    if template is not None:
-                        elbs[region][vpc][template][elb['DNSName']][
-                            listener['Listener']['LoadBalancerPort']] = {
-                                'protocol': listener['Listener']['Protocol']}
-                    else:
-                        untagged_elbs[vpc][listener['Listener'][
-                            'InstancePort']] = [subnets[region][s]['cidrBlock']
-                                                for s in elb['Subnets']]
-            for vpc in elbs[region]:
-                for template in elbs[region][vpc]:
-                    for dns_name in elbs[region][vpc][template]:
-                        for port in elbs[region][vpc][template][dns_name]:
-                            # FIXME: sort subnets by AZ
-                            elbs[region][vpc][template][dns_name][port][
-                                'subnets'] = untagged_elbs[vpc].get(port, [])
+                    front_protocol_ports.append('%s-%s' % (
+                        listener['Listener']['Protocol'],
+                        listener['Listener']['LoadBalancerPort']))
+                    back_protocol_ports.append('%s-%s' % (
+                        listener['Listener']['InstanceProtocol'],
+                        listener['Listener']['InstancePort']))
+                if elb['Tags'].get('x-chkp-management') == self.management:
+                    template = elb['Tags'].get('x-chkp-template')
+                    tagged_elbs.setdefault(template, {})
+                    tagged_elbs[template][dns_name] = front_protocol_ports
+                lb_name = elb['LoadBalancerName']
+                for i in elb['Instances']:
+                    i2lb_names.setdefault(i['InstanceId'], set()).add(
+                        elb['LoadBalancerName'])
+                all_elbs.setdefault(lb_name, {})
+                for protocol_port in back_protocol_ports:
+                    all_elbs[lb_name][protocol_port] = cidrs
+
+            elbs['by-template'][region] = tagged_elbs
+
+            headers, body = self.aws.request(
+                'autoscaling', region, 'GET',
+                '/?Action=DescribeAutoScalingGroups', '')
+            groups = api.listify(body['DescribeAutoScalingGroupsResult'][
+                'AutoScalingGroups'], 'member')
+            for group in groups:
+                for i in group['Instances']:
+                    i2lb_names.setdefault(i['InstanceId'], set()).update(
+                        group['LoadBalancerNames'])
+
+            i2cidrs = {}
+            for i in i2lb_names:
+                i2cidrs.setdefault(i, {})
+                for lb_name in i2lb_names[i]:
+                    for protocol_port in all_elbs.get(lb_name, {}):
+                        i2cidrs[i].setdefault(protocol_port, []).extend(
+                            all_elbs[lb_name].get(protocol_port, []))
+
+            elbs['by-instance'][region] = i2cidrs
+
         return elbs
 
     def retrieve_instances(self):
@@ -319,9 +342,17 @@ class AWS(Controller):
                 instance_obj = Instance(
                     instance_name, ip_address, interfaces,
                     tags['x-chkp-template'])
-                # FIXME: keep only the subnets in the instance AZ
-                instance_obj.load_balancers = elbs[region].get(
-                    instance['vpcId'], {}).get(instance_obj.template)
+                load_balancers = {}
+                internal_elbs = elbs['by-template'].get(
+                        region, {}).get(instance_obj.template, {})
+                external_elbs = elbs['by-instance'].get(region, {}).get(
+                    instance['instanceId'], {})
+                for dns_name in internal_elbs:
+                    for protocol_port in internal_elbs[dns_name]:
+                        load_balancers.setdefault(
+                            dns_name, {})[protocol_port] = external_elbs.get(
+                                protocol_port, [])
+                instance_obj.load_balancers = load_balancers
                 instances.append(instance_obj)
         return instances
 
@@ -816,10 +847,11 @@ class Management(object):
             return None
         parts = []
         for dns_name in load_balancers:
-            ports = load_balancers[dns_name]
-            for port in ports:
+            protocol_ports = load_balancers[dns_name]
+            for protocol_port in protocol_ports:
                 parts.append('-'.join(
-                    [port] + sorted(ports[port]['subnets'])))
+                    [protocol_port] + sorted(
+                        protocol_ports[protocol_port])))
         return ':'.join(sorted(parts))
 
     def get_flat_rules(self, command, body):
@@ -864,8 +896,9 @@ class Management(object):
                 continue
         return rules
 
-    def add_load_balancer(self, gw, policy, dns_name, ports):
-        debug('\nadding %s: %s\n' % (dns_name, json.dumps(ports, indent=2)))
+    def add_load_balancer(self, gw, policy, dns_name, protocol_ports):
+        debug('\nadding %s: %s\n' % (
+            dns_name, json.dumps(protocol_ports, indent=2)))
         # FIXME: assume that it is correct to use the first interface
         private_address = gw['interfaces'][0]['ipv4-address']
         private_name = private_address + '_' + gw['name']
@@ -911,20 +944,21 @@ class Management(object):
                 break
         else:
             nat_position = 'top'
-        for port in ports:
+        for protocol_port in protocol_ports:
+            lb_protocol, dash, port = protocol_port.partition('-')
             # add a service
-            service_name = 'tcp-%s_%s' % (port, gw['name'])
+            service_name = '%s_%s' % (protocol_port, gw['name'])
             log('\nadding %s' % service_name)
             self('add-service-tcp', {
                 'name': service_name, 'port': port})
-            protocol = self.protocol_map.get(ports[port]['protocol'])
+            protocol = self.protocol_map.get(lb_protocol)
             if protocol:
                 self('set-generic-object', {
                     'uid': self.get_uid(service_name),
                     'protoType': protocol})
             # add subnets
             net_uids = []
-            for subnet in ports[port]['subnets']:
+            for subnet in protocol_ports[protocol_port]:
                 net, slash, mask = subnet.partition('/')
                 net_name = '%s-%s_%s' % (net, mask, service_name)
                 log('\nadding %s' % net_name)
