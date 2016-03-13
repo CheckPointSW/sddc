@@ -66,7 +66,7 @@ The script takes a configuration file in JSON format
 	    "templates": {
 	        "BASE-TEMPLATE-NAME": {
 	            "one-time-password": "STRING",
-                    "version": "R77.30",
+	            "version": "R77.30",
 	            ...  // optional attributes of a simple-gateway web_api object
 	        },
 	        "TEMPLATE1-NAME": {
@@ -145,7 +145,7 @@ In reference to the above configuration:
 					* cred-file: "IAM"
 	    * For OpenStack controllers:
 			* scheme: one of "https" or "http"
-	        * host: The IP address and port of the keystone endpoint
+			* host: The IP address and port of the keystone endpoint
 			* fingerprint: the SHA256 fingerprint of the controller certificate. disable fingerprint checking by providing an empty string "" (insecure)
 			* tenant: The tenant UUID
 			* user: An OpenStack username
@@ -161,16 +161,16 @@ If you are using a IAM role profile, you need to provide it with the following p
 	  "Version": "2012-10-17",
 	  "Statement": [
 	    {
-		  "Action": [
-		    "ec2:DescribeNetworkInterfaces",
-		    "ec2:DescribeSubnets",
-		    "ec2:DescribeInstances",
-		    "elasticloadbalancing:DescribeLoadBalancers",
-		    "elasticloadbalancing:DescribeTags"
-		  ],
-		  "Effect": "Allow",
-		  "Resource": "*"
-		}
+	      "Action": [
+	        "ec2:DescribeNetworkInterfaces",
+	        "ec2:DescribeSubnets",
+	        "ec2:DescribeInstances",
+	        "elasticloadbalancing:DescribeLoadBalancers",
+	        "elasticloadbalancing:DescribeTags"
+	      ],
+	      "Effect": "Allow",
+	      "Resource": "*"
+	    }
 	  ]
 	}
 
