@@ -166,7 +166,8 @@ If you are using a IAM role profile, you need to provide it with the following p
 	        "ec2:DescribeSubnets",
 	        "ec2:DescribeInstances",
 	        "elasticloadbalancing:DescribeLoadBalancers",
-	        "elasticloadbalancing:DescribeTags"
+	        "elasticloadbalancing:DescribeTags",
+	        "autoscaling:DescribeAutoScalingGroups"
 	      ],
 	      "Effect": "Allow",
 	      "Resource": "*"
