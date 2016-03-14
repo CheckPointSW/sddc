@@ -250,33 +250,53 @@ class AWS(Controller):
 
         return elbs
 
+    def retrieve_all(self, region, path, top_set, collect_set):
+        objects = []
+        next_token = None
+        while True:
+            extra_params = ''
+            if next_token:
+                extra_params += '&' + urllib.urlencode({
+                    'NextToken', next_token})
+            headers, body = self.aws.request(
+                'ec2', region, 'GET', path + extra_params, '')
+            obj = api.listify(body, 'item')
+            for r in obj[top_set]:
+                objects += r[collect_set]
+            next_token = obj.get('nextToken')
+            if not next_token:
+                break
+        return objects
+
     def retrieve_instances(self):
         instances = {}
         for region in self.regions:
-            instances[region] = []
-            next_token = None
-            while True:
-                extra_params = ''
-                if next_token:
-                    extra_params += '&' + urllib.urlencode({
-                        'NextToken', next_token})
-                headers, body = self.aws.request(
-                    'ec2', region, 'GET',
-                    '/?Action=DescribeInstances' +
-                    '&Filter.1.Name=tag:x-chkp-management&Filter.1.Value=' +
-                    self.management + extra_params, '')
-                object = api.listify(body, 'item')
-                for r in object['reservationSet']:
-                    instances[region] += r['instancesSet']
-                next_token = object.get('nextToken')
-                if not next_token:
-                    break
+            instances[region] = self.retrieve_all(
+                region,
+                '/?Action=DescribeInstances' +
+                '&Filter.1.Name=tag-key&Filter.1.Value=x-chkp-management',
+                'reservationSet', 'instancesSet')
+            instances[region] += self.retrieve_all(
+                region,
+                '/?Action=DescribeInstances' +
+                '&Filter.2.Name=tag-key&Filter.2.Value=x-chkp-tags',
+                'reservationSet', 'instancesSet')
+            instances[region] = [
+                i for i in instances[region]
+                if self.get_tags(i['tagSet']).get(
+                    'x-chkp-management') == self.management]
         return instances
 
     def get_tags(self, tag_list):
         tags = collections.OrderedDict()
         for t in tag_list:
-            tags[t.get('key', t.get('Key'))] = t.get('value', t.get('Value'))
+            tags[t.get('key', t.get('Key'))] = t.get(
+                'value', t.get('Value', ''))
+        joined_tags = tags.get('x-chkp-tags')
+        if joined_tags:
+            for part in joined_tags.split(':'):
+                key, es, value = part.partition('=')
+                tags.setdefault('x-chkp-' + key, value)
         return tags
 
     def get_topology(self, eni, subnets):
