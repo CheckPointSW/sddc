@@ -74,6 +74,9 @@ The script takes a configuration file in JSON format
 	            "policy": "POLICY1-NAME",
 	            "proxy-ports": ["8080"],
 	            ...  // optional attributes of a simple-gateway web_api object
+	            "color": "orange",
+	            "application-control": true,
+	            ...
 	        },
 	        "TEMPLATE2-NAME": {
 	            "proto": "BASE-TEMPLATE-NAME",
@@ -109,7 +112,10 @@ In reference to the above configuration:
 
 	* name: a string represnting the management server. This should match the x-chkp-management tag on the instance
 	* host: the IP address or host name of the management server.
-	* fingerprint: the SHA256 fingerprint of the management certificate. disable fingerprint checking by providing an empty string "" (insecure)
+	* fingerprint: the SHA256 fingerprint of the management certificate. disable fingerprint checking by providing an empty string "" (insecure but reasonable if running locally on the management server). To retrive the fingerprint, run the following command on the mangatement server (in bash):
+
+			cpopenssl s_client -connect 127.0.0.1:443 2>/dev/null </dev/null | cpopenssl x509 -outform DER | sha256sum | awk '{printf "sha256:%s\n", $1}'
+
     * user: A SmartCenter administrator username
 	* One of the following:
 		* password: The password associated with the user
@@ -118,13 +124,13 @@ In reference to the above configuration:
 * templates:
 	* An object with one or more templates.
 	* The name of each template must be unique.
-	* When a new gateway instance is detected, the script uses the x-chkp-template tag value to
-	* select a template from this list.
+	* When a new gateway instance is detected, the script uses the x-chkp-template tag value to select a template from this list.
 	* Templates can inherit attributes from other templates through the "proto" attribute.
 	* The selected template determines the eventual gateway configuration including:
 		* one-time-password: the one time password used to initiate secure internal communication between the gateway and the management
 		* policy: a name of pre-existing security policy package to be installed on the gateway
 		* proxy-ports: an optional list of TCP ports on which to enable the proxy on gateway feature
+		* any other attribute that can be set with the set-simple-gateway R80 Web API as documented in the [Management API Reference](https://sc1.checkpoint.com/documents/R80/APIs/index.html#web/set-simple-gateway)
 
 * controllers:
 	* An object with one or more controller configuration objects.
