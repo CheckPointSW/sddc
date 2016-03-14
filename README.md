@@ -116,7 +116,7 @@ In reference to the above configuration:
 
 			cpopenssl s_client -connect 127.0.0.1:443 2>/dev/null </dev/null | cpopenssl x509 -outform DER | sha256sum | awk '{printf "sha256:%s\n", $1}'
 
-    * user: A SmartCenter administrator username
+	* user: A SmartCenter administrator username
 	* One of the following:
 		* password: The password associated with the user
 		* b64password: The base64 encoded password (for additional obscurity)
