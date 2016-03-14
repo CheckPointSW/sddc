@@ -25,6 +25,7 @@ import httplib
 import json
 import os
 import os.path
+import random
 import re
 import signal
 import socket
@@ -344,7 +345,7 @@ class AWS(Controller):
                     tags['x-chkp-template'])
                 load_balancers = {}
                 internal_elbs = elbs['by-template'].get(
-                        region, {}).get(instance_obj.template, {})
+                    region, {}).get(instance_obj.template, {})
                 external_elbs = elbs['by-instance'].get(region, {}).get(
                     instance['instanceId'], {})
                 for dns_name in internal_elbs:
@@ -595,6 +596,7 @@ class Management(object):
     MONITOR_PREFIX = '__monitor__-'
     DUMMY_PREFIX = MONITOR_PREFIX + 'dummy-'
     SECTION = MONITOR_PREFIX + 'section'
+    GATEWAY_PREFIX = '__gateway__'
 
     def __init__(self, **options):
         self.host = options['host']
@@ -781,10 +783,10 @@ class Management(object):
                 return tag[len(prefix):]
         return default
 
-    def set_object_tag_value(self, uid, prefix, value, in_comments=True):
-        log('\n%ssetting tag: %s' % (
-            '' if value else 're', prefix + value if value else prefix))
-        obj = self('show-generic-object', {'uid': uid})
+    def put_object_tag_value(self, obj, prefix, value, in_comments=True):
+        log('\n%s tag: %s' % (
+            'putting' if value else 'removing',
+            prefix + value if value else prefix))
         old_tags = self.get_object_tags(obj, in_comments=in_comments)
         new_tags = []
         for t in old_tags:
@@ -794,6 +796,10 @@ class Management(object):
         if value:
             new_tags.append(prefix + value)
         self.put_object_tags(obj, new_tags, in_comments=in_comments)
+
+    def set_object_tag_value(self, uid, prefix, value, in_comments=True):
+        obj = self('show-generic-object', {'uid': uid})
+        self.put_object_tag_value(obj, prefix, value, in_comments=in_comments)
         payload = {'uid': uid}
         if in_comments:
             payload['comments'] = obj['comments']
@@ -919,18 +925,32 @@ class Management(object):
                 'ignore-warnings': True,  # re-use of IP address
                 'name': private_name, 'ip-address': private_address})
         # create logical server
-        logical_server = '%s_%s' % (dns_name, gw['name'])
+        logical_server = None
+        for i in xrange(100):
+            extension = ''.join([random.choice('0123456789' +
+                                               'ABCDEFGHIJKLMNOPQRSTUVWXYZ' +
+                                               'abcdefghijklmnopqrstuvwxyz')
+                                 for j in xrange(6)])
+            candidate = '%s_%s' % (dns_name, extension)
+            if self.get_uid(candidate):
+                continue
+            logical_server = candidate
+            break
+        if not logical_server:
+            raise Exception('Failed to find a name for a logical server')
         if self.get_uid(logical_server):
             return
         log('\nadding %s' % logical_server)
-        self('add-generic-object', {
+        ls_obj = {
             'ignore-warnings': True,  # re-use of IP address
             'create': 'com.checkpoint.objects.classes.dummy.CpmiLogicalServer',
             'name': logical_server,
             'ipaddr': private_address,
             'serversType': 'OTHER',
             'method': 'DOMAIN',
-            'servers': self.dummy_group_uid})
+            'servers': self.dummy_group_uid}
+        self.put_object_tag_value(ls_obj, self.GATEWAY_PREFIX, gw['name'])
+        self('add-generic-object', ls_obj)
         layers = []
         for layer in self('show-package', {'name': policy})['access-layers']:
             if self('show-generic-object',
@@ -1076,7 +1096,10 @@ class Management(object):
                     'com.checkpoint.objects.classes.dummy.CpmiLogicalServer'},
             aggregate='objects')
         for logical_server in logical_servers:
-            if logical_server['name'].endswith('_' + name):
+            logical_server = self('show-generic-object', {
+                'uid': logical_server['uid']})
+            if self.get_object_tag_value(
+                    logical_server, self.GATEWAY_PREFIX) == name:
                 log('\ndeleting %s' % logical_server['name'])
                 self('delete-generic-object', {'uid': logical_server['uid']})
         # remove the hosts defined for the gateway
