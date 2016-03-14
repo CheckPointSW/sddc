@@ -742,7 +742,7 @@ class Management(object):
                 return None
             else:
                 raise
-        if TAG not in self.get_gateway_tags(gw):
+        if TAG not in self.get_object_tags(gw):
             return None
         return gw
 
@@ -755,31 +755,37 @@ class Management(object):
                 gateways[gw['name']] = gw
         return gateways
 
-    def get_gateway_tags(self, gw):
+    def get_object_tags(self, obj, in_comments=True):
+        if not in_comments:
+            return obj['tags']
         tags = []
-        comments = gw.get('comments', '')
+        comments = obj.get('comments', '')
         match = re.match(r'.*\{tags=([^}]*)\}.*$', comments)
         if match and match.group(1):
             tags = match.group(1).split('|')
         return tags
 
-    def put_gateway_tags(self, gw, tags):
-        comments = gw.get('comments', '')
+    def put_object_tags(self, obj, tags, in_comments=True):
+        if not in_comments:
+            obj['tags'] = tags
+            return
+        comments = obj.get('comments', '')
         match = re.match(r'([^{]*)(\{tags=[^}]*\})?(.*)$', comments)
-        gw['comments'] = match.group(1) + (
+        obj['comments'] = match.group(1) + (
             '{tags=%s}' % '|'.join(tags)) + match.group(3)
 
-    def get_gateway_tag_value(self, gw, prefix, default=None):
-        for tag in self.get_gateway_tags(gw):
+    def get_object_tag_value(self, obj, prefix, default=None,
+                             in_comments=True):
+        for tag in self.get_object_tags(obj, in_comments=in_comments):
             if tag.startswith(prefix):
                 return tag[len(prefix):]
         return default
 
-    def set_gateway_tag(self, name, prefix, value):
+    def set_object_tag_value(self, uid, prefix, value, in_comments=True):
         log('\n%ssetting tag: %s' % (
             '' if value else 're', prefix + value if value else prefix))
-        gw = self.get_gateway(name)
-        old_tags = self.get_gateway_tags(gw)
+        obj = self('show-generic-object', {'uid': uid})
+        old_tags = self.get_object_tags(obj, in_comments=in_comments)
         new_tags = []
         for t in old_tags:
             if not t.startswith(prefix):
@@ -787,12 +793,17 @@ class Management(object):
                 continue
         if value:
             new_tags.append(prefix + value)
-        self.put_gateway_tags(gw, new_tags)
-        self('set-simple-gateway', {'name': name, 'comments': gw['comments']})
+        self.put_object_tags(obj, new_tags, in_comments=in_comments)
+        payload = {'uid': uid}
+        if in_comments:
+            payload['comments'] = obj['comments']
+        else:
+            payload['tags'] = obj['tags']
+        self('set-generic-object', payload)
 
     def gw2str(self, gw):
         return ' '.join([gw['name'],
-                         '|'.join(self.get_gateway_tags(gw)),
+                         '|'.join(self.get_object_tags(gw)),
                          '|'.join(self.targets.get(gw['name'], ['-']))])
 
     def get_uid(self, name):
@@ -1081,15 +1092,15 @@ class Management(object):
         if not gw:
             return False
         if (instance.template !=
-                self.get_gateway_tag_value(gw, self.TEMPLATE_PREFIX, '')):
+                self.get_object_tag_value(gw, self.TEMPLATE_PREFIX, '')):
             log('\nconfiguration was not complete')
             return False
         if (generation !=
-                self.get_gateway_tag_value(gw, self.GENERATION_PREFIX, '')):
+                self.get_object_tag_value(gw, self.GENERATION_PREFIX, '')):
             log('\nnew template generation')
             return False
         if (self.load_balancer_tag(instance) !=
-                self.get_gateway_tag_value(gw, self.LOAD_BALANCER_PREFIX)):
+                self.get_object_tag_value(gw, self.LOAD_BALANCER_PREFIX)):
             log('\nnew load balancer configuration')
             return False
         return True
@@ -1117,7 +1128,7 @@ class Management(object):
             version = simple_gateway.pop('version')
             if version:
                 gw['version'] = version
-            self.put_gateway_tags(gw, [TAG])
+            self.put_object_tags(gw, [TAG])
             self('add-simple-gateway', gw)
         else:
             self.set_state(instance.name, 'UPDATING')
@@ -1128,7 +1139,7 @@ class Management(object):
             self.reset_gateway(instance.name)
             simple_gateway['name'] = instance.name
             tags = simple_gateway.pop('tags', [])
-            self.put_gateway_tags(simple_gateway, tags + [TAG])
+            self.put_object_tags(simple_gateway, tags + [TAG])
             self('set-simple-gateway', simple_gateway)
             self.set_proxy(instance.name, proxy_ports)
             gw = self.get_gateway(instance.name)
@@ -1137,17 +1148,17 @@ class Management(object):
                 for dns_name in load_balancers:
                     self.add_load_balancer(
                         gw, policy, dns_name, load_balancers[dns_name])
-            self.set_gateway_tag(instance.name,
-                                 self.LOAD_BALANCER_PREFIX,
-                                 self.load_balancer_tag(instance))
+            self.set_object_tag_value(gw['uid'],
+                                      self.LOAD_BALANCER_PREFIX,
+                                      self.load_balancer_tag(instance))
             self('publish', {})
             self.published = True
             self.auto_publish = True
             self.set_policy(gw, policy)
-            self.set_gateway_tag(instance.name,
-                                 self.GENERATION_PREFIX, generation)
-            self.set_gateway_tag(instance.name,
-                                 self.TEMPLATE_PREFIX, instance.template)
+            self.set_object_tag_value(gw['uid'],
+                                      self.GENERATION_PREFIX, generation)
+            self.set_object_tag_value(gw['uid'],
+                                      self.TEMPLATE_PREFIX, instance.template)
             success = True
         finally:
             self.auto_publish = True
