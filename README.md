@@ -42,6 +42,7 @@ The following tags should be added to gateway instances:
 |x-chkp-management|The name of the management server as it appears in the configuraiton file|Mandatory|
 |x-chkp-template|A name of a template as it appears in the configuration file|Mandatory|
 |x-chkp-ip-address|The main IP address of the gateway or "private" or "public"|Only in AWS, Mandatory|
+|x-chkp-tags|"TAG-NAME-1=TAG-VALUE-1:TAG-NAME-2=TAG-VALUE-2..." a list of tags separated by colons, with the name and value separated by an equal sign, the name should only include the part after the "x-chkp-" prefix (e.g., "management")|Only in AWS, useful when instances already have close to 10 tags|
 |x-chkp-interfaces|"NET-NAME-FOR-eth0:NET-NAME-FOR-eth1:..." a list of the neutron networks that are attached to each of the gateway interfaces|Only in OpenStack, Mandatory for gateways with more than one interface|
 
 Optionally, in AWS, network interface objects (ENI) can optionally have the following tags:
