@@ -137,6 +137,8 @@ In reference to the above configuration:
 
 		* b64password: The base64 encoded password (for additional obscurity)
 
+	* If the host is either localhost or 127.0.0.1, and the user is omitted then the login will be done with the mgmt_cli tool "login-as-root" feature.
+
 
 * templates:
 

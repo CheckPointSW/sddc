@@ -610,6 +610,7 @@ def http(method, url, fingerprint, headers, body):
 class Management(object):
     IN_PROGRESS = 'in progress'
     FAILED = 'failed'
+    LOCALHOST = {'127.0.0.1', 'localhost'}
     TEMPLATE_PREFIX = '__template__'
     GENERATION_PREFIX = '__generation__'
     LOAD_BALANCER_PREFIX = '__load_balancer__'
@@ -620,12 +621,13 @@ class Management(object):
 
     def __init__(self, **options):
         self.host = options['host']
-        self.fingerprint = options['fingerprint']
-        self.user = options['user']
-        if 'b64password' in options:
-            self.password = base64.b64decode(options['b64password'])
-        else:
-            self.password = options['password']
+        self.fingerprint = options.get('fingerprint', '')
+        self.user = options.get('user')
+        self.password = options.get(
+            'password', base64.b64decode(options.get('b64password', '')))
+        if self.host.partition(':')[0] not in self.LOCALHOST:
+            if not self.user or not self.password:
+                raise Exception('Missing credentials for management user')
         self.auto_publish = True
         self.sid = None
         self.targets = {}
@@ -736,8 +738,14 @@ class Management(object):
         # FIXME: if the polling period is longer than the session timeout
         #        we need to request a longer session or add keepalive
         try:
-            resp = self('login',
-                        {'user': self.user, 'password': self.password})
+            if not self.user:
+                log('+')
+                resp = json.loads(subprocess.check_output([
+                    'mgmt_cli', '--root', 'true', '--format', 'json',
+                    'login']))
+            else:
+                resp = self('login',
+                            {'user': self.user, 'password': self.password})
             self.sid = resp['sid']
             return self
         except:
