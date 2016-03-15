@@ -5,7 +5,7 @@ Tools for integration with the Software Defined Data Center (SDDC).
 
 # Monitor
 
-The monitor.py script works in conjucntion with:
+The monitor.py script works in conjunction with:
 
 * A Check Point R80 SmartCenter Server (the management)
 
@@ -48,7 +48,7 @@ The following tags should be added to gateway instances:
 
 |Tag name|Tag value|Comment|
 |--------|---------|-------|
-|x-chkp-management|The name of the management server as it appears in the configuraiton file|Mandatory|
+|x-chkp-management|The name of the management server as it appears in the configuration file|Mandatory|
 |x-chkp-template|A name of a template as it appears in the configuration file|Mandatory|
 |x-chkp-ip-address|The main IP address of the gateway or "private" or "public"|Only in AWS, Mandatory|
 |x-chkp-tags|"TAG-NAME-1=TAG-VALUE-1:TAG-NAME-2=TAG-VALUE-2..." a list of tags separated by colons, with the name and value separated by an equal sign, the name should only include the part after the "x-chkp-" prefix (e.g., "management=my-management:template=my-template:ip-address=public")|Only in AWS, use the compound tag when instances already have close to 10 tags|
@@ -120,11 +120,11 @@ In reference to the above configuration:
 
 * management:
 
-	* name: a string represnting the management server. This should match the x-chkp-management tag on the instance
+	* name: a string representing the management server. This should match the x-chkp-management tag on the instance
 
 	* host: the IP address or host name of the management server.
 
-	* fingerprint: the SHA256 fingerprint of the management certificate. disable fingerprint checking by providing an empty string "" (insecure but reasonable if running locally on the management server). To retrive the fingerprint, run the following command on the mangatement server (in bash):
+	* fingerprint: the SHA256 fingerprint of the management certificate. disable fingerprint checking by providing an empty string "" (insecure but reasonable if running locally on the management server). To retrieve the fingerprint, run the following command on the management server (in bash):
 
 			cpopenssl s_client -connect 127.0.0.1:443 2>/dev/null </dev/null | cpopenssl x509 -outform DER | sha256sum | awk '{printf "sha256:%s\n", $1}'
 
@@ -173,7 +173,7 @@ In reference to the above configuration:
 
 			* regions: a list of AWS region names
 
-			* One of the following alternatives for specifying credenials:
+			* One of the following alternatives for specifying credentials:
 
 				* Explicit:
 
