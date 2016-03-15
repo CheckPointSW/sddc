@@ -179,6 +179,15 @@ def listify(obj, key):
 
 class AWS(object):
     def __init__(self, key=None, secret=None, token=None, key_file=None):
+        if os.path.isfile('/etc/cp-release'):
+            os.environ.setdefault('AWS_CURL', 'curl_cli')
+            if 'CURL_CA_BUNDLE' not in os.environ:
+                if 'CPDIR' not in os.environ:
+                    raise Exception(
+                        'Please define CPDIR in env for the CA bundle')
+                ca_bundle = os.environ['CPDIR'] + '/conf/ca-bundle.crt'
+                os.environ['CURL_CA_BUNDLE'] = ca_bundle
+
         def read_file(f_name):
             f_key, f_secret = None, None
             with open(f_name) as f:
@@ -225,15 +234,6 @@ AWS_SESSION_TOKEN - (optional)
         self.creds['secret_key'] = secret
         if token:
             self.creds['token'] = token
-
-        if os.path.isfile('/etc/cp-release'):
-            os.environ.setdefault('AWS_CURL', 'curl_cli')
-            if 'AWS_CA_BUNDLE' not in os.environ:
-                if 'CPDIR' not in os.environ:
-                    raise Exception(
-                        'Please define CPDIR in env for the CA bundle')
-                ca_bundle = os.environ['CPDIR'] + '/conf/ca-bundle.crt'
-                os.environ['AWS_CA_BUNDLE'] = ca_bundle
 
     def refresh_credentials(self):
         if not self.creds.get('role'):
