@@ -1256,6 +1256,7 @@ stop = False
 
 def handler(signum, frame):
     global stop
+    log('\nstop requested...\n')
     stop = True
 
 
@@ -1320,7 +1321,11 @@ def loop(management, controllers, delay):
         except Exception:
             log('%s' % traceback.format_exc())
         log('\n')
-        time.sleep(delay)
+        step = 2
+        for i in xrange(0, delay, step):
+            if stop:
+                break
+            time.sleep(step)
 
 
 @contextlib.contextmanager
@@ -1372,6 +1377,7 @@ def main(argv=None):
     with web_server(args.port):
         with Management(**conf['management']) as management:
             loop(management, controllers, conf['delay'])
+    log('\n')
 
 
 if __name__ == '__main__':
