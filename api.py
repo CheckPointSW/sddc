@@ -26,18 +26,28 @@ import urllib
 import urlparse
 import xml.dom.minidom
 
-DEBUG = os.environ.get('AWS_API_DEBUG') == 'true'
 META_DATA = 'http://169.254.169.254/2014-02-25/meta-data'
 
 
-def log(msg):
+def logger(msg):
     sys.stderr.write(msg)
+
+logger.log = logger
+logger.debug = logger if os.environ.get('AWS_API_DEBUG') == 'true' else None
+
+
+def log(msg):
+    logger.log(msg)
 
 
 def debug(msg):
-    if DEBUG:
-        log(msg)
+    if logger.debug:
+        logger.debug(msg)
 
+
+def set_logger(log, debug=None):
+    logger.log = log
+    logger.debug = debug
 
 ALGORITHM = 'AWS4-HMAC-SHA256'
 
@@ -67,7 +77,7 @@ def http(method, url, body, req_headers=None):
             'AWS_NO_DOT'].lower() != 'true':
         log('.')
     cmd = [curl, '-s', '-S', '-g', '-L', '-D', '/dev/fd/2', '-X', method]
-    if DEBUG:
+    if logger.debug:
         cmd += ['-v']
     if method == 'HEAD':
         cmd += ['-I']

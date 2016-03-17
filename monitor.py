@@ -23,6 +23,8 @@ import datetime
 import hashlib
 import httplib
 import json
+import logging
+import logging.handlers
 import os
 import os.path
 import random
@@ -44,15 +46,33 @@ WEB_DIR = os.path.dirname(sys.argv[0]) + '/web'
 STATE_FILE = WEB_DIR + '/gateways.json'
 
 conf = {}
+log_buffer = []
 
 
-def log(msg):
-    sys.stderr.write(msg)
+def log(msg, level=logging.INFO):
+    logger = conf.get('logger')
+    if logger:
+        if '\n' not in msg:
+            log_buffer.append(msg)
+            return
+        lines = msg.split('\n')
+        lines[0] = ''.join(log_buffer) + lines[0]
+        del log_buffer[:]
+        log_buffer.append(lines.pop())
+        for line in lines:
+            logger.log(level, '%s', line)
+    else:
+        sys.stderr.write(msg)
+
+
+def progress(msg):
+    if not conf.get('logger'):
+        log(msg)
 
 
 def debug(msg):
     if conf.get('debug'):
-        log(msg)
+        log(msg, level=logging.DEBUG)
 
 
 def dump(obj):
@@ -61,7 +81,7 @@ def dump(obj):
 
 # avoid printing sensitive data
 @contextlib.contextmanager
-def censor(active, pattern, replacement):
+def censor(active, log, pattern, replacement):
     line = []
     if active:
         stdout = sys.stdout
@@ -413,7 +433,7 @@ class OpenStack(Controller):
                 raise Exception('failed API call: %s: %s' % (path, msg))
         headers = {'content-type': 'application/json'}
         if time.time() + 30 > self.expiration:
-            log('+')
+            progress('+')
             auth_data = {
                 "auth": {
                     "identity": {
@@ -455,7 +475,7 @@ class OpenStack(Controller):
                 else:
                     raise Exception('no public endpoint for %s' %
                                     svc['type'])
-        log('.')
+        progress('.')
         headers['x-auth-token'] = self.token
         if data:
             data = json.dumps(data)
@@ -590,8 +610,8 @@ def http(method, url, fingerprint, headers, body):
         connection = httplib.HTTPConnection
     with contextlib.closing(connection(url_parts.netloc)) as conn:
         conn.fingerprint = fingerprint
-        debuglevel = int(os.environ.get('HTTP_DEBUG_LEVEL', '0'))
-        with censor(debuglevel > 0,
+        debuglevel = 2 if conf.get('debug') else 0
+        with censor(debuglevel > 0, debug,
                     r'send: .*"password":\s*"([^"]*)".*$', '***'):
             conn.set_debuglevel(debuglevel)
             conn.connect()
@@ -603,7 +623,7 @@ def http(method, url, fingerprint, headers, body):
             headers['_version'] = resp.version
         body = resp.read()
         if debuglevel > 1:
-            log('body: %s\n' % repr(body))
+            debug('body: %s\n' % repr(body))
     return headers, body
 
 
@@ -663,7 +683,7 @@ class Management(object):
             if not self.sid:
                 self.__enter__()
             c = '.'
-        log(c)
+        progress(c)
         debug('%s\n' % command)
         headers = {'content-type': 'application/json'}
         if command != 'login':
@@ -675,15 +695,9 @@ class Management(object):
                 body['offset'] = offset
             if aggregate:
                 body['limit'] = 500
-            debug('request body\n')
-            if command != 'login':
-                dump(body)
             resp_headers, resp_body = http(
                 'POST', 'https://%s/web_api/%s' % (self.host, command),
                 self.fingerprint, headers, json.dumps(body))
-            dump(resp_headers)
-            if command != 'login':
-                debug('%s\n' % resp_body)
             if resp_headers['_status'] != 200:
                 if not silent:
                     log('\n%s\n' % command)
@@ -706,7 +720,7 @@ class Management(object):
                                 {'task-id': payload['task-id']})['tasks'][0]
                     if task['status'] != self.IN_PROGRESS:
                         break
-                    log('_')
+                    progress('_')
                     time.sleep(2)
                 if task['status'] == self.FAILED:
                     task = self('show-task',
@@ -739,7 +753,7 @@ class Management(object):
         #        we need to request a longer session or add keepalive
         try:
             if not self.user:
-                log('+')
+                progress('+')
                 resp = json.loads(subprocess.check_output([
                     'mgmt_cli', '--root', 'true', '--format', 'json',
                     'login']))
@@ -758,7 +772,7 @@ class Management(object):
                 self('discard', {})
                 self('logout', {})
         except Exception:
-            log('%s' % traceback.format_exc())
+            log('\n%s' % traceback.format_exc())
 
     def get_gateway(self, name):
         try:
@@ -1219,12 +1233,12 @@ class Management(object):
                         log('\ndiscarding changes for %s' % instance.name)
                         self('discard', {})
                     except Exception:
-                        log('%s' % traceback.format_exc())
+                        log('\n%s' % traceback.format_exc())
                 else:
                     try:
                         self.reset_gateway(instance.name)
                     except Exception:
-                        log('%s' % traceback.format_exc())
+                        log('\n%s' % traceback.format_exc())
 
     def set_state(self, name, status):
         if not hasattr(self, 'state'):
@@ -1276,7 +1290,7 @@ def sync(controller, management, gateways):
             management.set_state(name, 'DELETING')
             management.reset_gateway(name, delete=True)
         except Exception:
-            log('%s' % traceback.format_exc())
+            log('\n%s' % traceback.format_exc())
         finally:
             management.set_state(name, None)
 
@@ -1293,7 +1307,7 @@ def sync(controller, management, gateways):
             management.set_gateway(instances[name], gw)
             management.set_state(name, 'COMPLETE')
         except Exception:
-            log('%s' % traceback.format_exc())
+            log('\n%s' % traceback.format_exc())
 
 
 def loop(management, controllers, delay):
@@ -1312,14 +1326,14 @@ def loop(management, controllers, delay):
                 try:
                     sync(c, management, gateways)
                 except Exception:
-                    log('%s' % traceback.format_exc())
+                    log('\n%s' % traceback.format_exc())
             log('\n')
             gateways = management.get_gateways()
             log('\ngateways (after):\n')
             log('\n'.join(
                 [management.gw2str(gateways[gw]) for gw in gateways] + ['']))
         except Exception:
-            log('%s' % traceback.format_exc())
+            log('\n%s' % traceback.format_exc())
         log('\n')
         step = 2
         for i in xrange(0, delay, step):
@@ -1355,6 +1369,8 @@ def main(argv=None):
     parser.add_argument('-p', '--port', metavar='PORT', default='0',
                         help='Listening port for the web server')
     parser.add_argument('-d', '--debug', dest='debug', action='store_true')
+    parser.add_argument('-l', '--logfile', metavar='LOGFILE',
+                        help='Path to log file')
     args = parser.parse_args(argv[1:] if argv else None)
 
     if args.config[0] == '@':
@@ -1364,6 +1380,23 @@ def main(argv=None):
 
     if args.debug:
         conf['debug'] = True
+
+    logfile = getattr(args, 'logfile', None)
+    if logfile:
+        handler = logging.handlers.RotatingFileHandler(args.logfile,
+                                                       maxBytes=1000000,
+                                                       backupCount=3)
+        logger = logging.getLogger('MONITOR')
+        handler.setFormatter(logging.Formatter(
+            '%(asctime)s-%(name)s-%(levelname)s- %(message)s'))
+        logger.addHandler(handler)
+        conf['logger'] = logger
+        if args.debug:
+            logger.setLevel(logging.DEBUG)
+        else:
+            logger.setLevel(logging.INFO)
+        os.environ['AWS_NO_DOT'] = 'true'
+    api.set_logger(log=log, debug=debug)
 
     conf['webserver'] = int(args.port)
 
@@ -1378,7 +1411,12 @@ def main(argv=None):
         with Management(**conf['management']) as management:
             loop(management, controllers, conf['delay'])
     log('\n')
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        sys.exit(main())
+    except:
+        log('\n%s' % traceback.format_exc())
+        sys.exit(1)
