@@ -47,19 +47,32 @@ WEB_DIR = os.path.dirname(sys.argv[0]) + '/web'
 STATE_FILE = WEB_DIR + '/gateways.json'
 
 conf = collections.OrderedDict()
-log_buffer = []
+log_buffer = [None]
 
 
 def log(msg, level=logging.INFO):
     logger = conf.get('logger')
     if logger:
+        current_level = log_buffer[0]
+        if current_level != level:
+            line = ''.join(log_buffer[1:])
+            del log_buffer[:]
+            log_buffer.append(level)
+            if line:
+                logger.log(current_level, line)
         if '\n' not in msg:
-            log_buffer.append(msg)
+            if msg:
+                log_buffer.append(msg)
             return
         lines = msg.split('\n')
-        lines[0] = ''.join(log_buffer) + lines[0]
+        lines[0] = ''.join(log_buffer[1:]) + lines[0]
+        if current_level != level and not lines[0]:
+            lines.pop(0)
         del log_buffer[:]
-        log_buffer.append(lines.pop())
+        log_buffer.append(level)
+        last = lines.pop()
+        if last:
+            log_buffer.append(last)
         for line in lines:
             logger.log(level, '%s', line)
     else:
@@ -67,7 +80,9 @@ def log(msg, level=logging.INFO):
 
 
 def progress(msg):
-    if not conf.get('logger'):
+    if conf.get('logger'):
+        log('', level=None)
+    else:
         log(msg)
 
 
