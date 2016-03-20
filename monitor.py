@@ -20,6 +20,7 @@ import base64
 import collections
 import contextlib
 import datetime
+import fcntl
 import hashlib
 import httplib
 import json
@@ -45,7 +46,7 @@ TAG = 'managed-virtual-gateway'
 WEB_DIR = os.path.dirname(sys.argv[0]) + '/web'
 STATE_FILE = WEB_DIR + '/gateways.json'
 
-conf = {}
+conf = collections.OrderedDict()
 log_buffer = []
 
 
@@ -640,6 +641,7 @@ class Management(object):
     GATEWAY_PREFIX = '__gateway__'
 
     def __init__(self, **options):
+        self.name = options['name']
         self.host = options['host']
         self.fingerprint = options.get('fingerprint', '')
         self.user = options.get('user')
@@ -651,21 +653,6 @@ class Management(object):
         self.auto_publish = True
         self.sid = None
         self.targets = {}
-        self.dummy_group_uid = self.get_uid(self.DUMMY_PREFIX + 'group')
-        if not self.dummy_group_uid:
-            dummy_host_uid = self.get_uid(self.DUMMY_PREFIX + 'host')
-            if not dummy_host_uid:
-                dummy_host_uid = self('add-host', {
-                    'name': self.DUMMY_PREFIX + 'host',
-                    'ip-address': '169.254.1.1'})['uid']
-            self.dummy_group_uid = self('add-group', {
-                'name': self.DUMMY_PREFIX + 'group',
-                'members': dummy_host_uid})['uid']
-        self.protocol_map = {
-            'HTTP': self('show-generic-object', {
-                'uid': self.get_uid('http')})['protoType'],
-            'HTTPS': self('show-generic-object', {
-                'uid': self.get_uid('https')})['protoType']}
 
     def __call__(self, command, body, login=True, aggregate=None,
                  silent=False):
@@ -761,6 +748,16 @@ class Management(object):
                 resp = self('login',
                             {'user': self.user, 'password': self.password})
             self.sid = resp['sid']
+            log('\nnew session:  %s' % resp['uid'])
+            self('set-session', {'tags': {'add': self.name}})
+            for session in self('show-sessions', {'details-level': 'full'},
+                                aggregate='objects'):
+                if session['uid'] == resp['uid']:
+                    continue
+                for tag in session['tags']:
+                    if tag['name'] == self.name:
+                        log('\ndiscarding session: %s' % session['uid'])
+                        self('discard', {'uid': session['uid']})
             return self
         except:
             self.__exit__(*sys.exc_info())
@@ -955,6 +952,31 @@ class Management(object):
                 continue
         return rules
 
+    def get_dummy_group(self):
+        if hasattr(self, 'dummy_group'):
+            return self.dummy_group
+        self.dummy_group = self.get_uid(self.DUMMY_PREFIX + 'group')
+        if not self.dummy_group:
+            dummy_host = self.get_uid(self.DUMMY_PREFIX + 'host')
+            if not dummy_host:
+                dummy_host = self('add-host', {
+                    'ignore-warnings': True,  # re-use of IP address
+                    'name': self.DUMMY_PREFIX + 'host',
+                    'ip-address': '169.254.1.1'})['uid']
+            self.dummy_group = self('add-group', {
+                'name': self.DUMMY_PREFIX + 'group',
+                'members': dummy_host})['uid']
+        return self.dummy_group
+
+    def get_protocol_type(self, protocol):
+        if not hasattr(self, 'protocol_map'):
+            self.protocol_map = {
+                'HTTP': self('show-generic-object', {
+                    'uid': self.get_uid('http')})['protoType'],
+                'HTTPS': self('show-generic-object', {
+                    'uid': self.get_uid('https')})['protoType']}
+        return self.protocol_map.get(protocol)
+
     def add_load_balancer(self, gw, policy, dns_name, protocol_ports):
         debug('\nadding %s: %s\n' % (
             dns_name, json.dumps(protocol_ports, indent=2)))
@@ -990,7 +1012,7 @@ class Management(object):
             'ipaddr': private_address,
             'serversType': 'OTHER',
             'method': 'DOMAIN',
-            'servers': self.dummy_group_uid}
+            'servers': self.get_dummy_group()}
         self.put_object_tag_value(ls_obj, self.GATEWAY_PREFIX, gw['name'])
         self('add-generic-object', ls_obj)
         layers = []
@@ -1024,7 +1046,7 @@ class Management(object):
             log('\nadding %s' % service_name)
             self('add-service-tcp', {
                 'name': service_name, 'port': port})
-            protocol = self.protocol_map.get(lb_protocol)
+            protocol = self.get_protocol_type(lb_protocol)
             if protocol:
                 self('set-generic-object', {
                     'uid': self.get_uid(service_name),
@@ -1265,13 +1287,10 @@ def is_SIC_open(instance):
         time.sleep(5)
         return True
 
-stop = False
 
-
-def handler(signum, frame):
-    global stop
-    log('\nstop requested...\n')
-    stop = True
+def signal_handler(signum, frame):
+    log('\ncaught signal %d...\n' % signum)
+    raise KeyboardInterrupt('signal %d' % signum)
 
 
 def sync(controller, management, gateways):
@@ -1284,8 +1303,6 @@ def sync(controller, management, gateways):
                             if name.startswith(
                                 controller.name + Controller.SEPARATOR))
     for name in filtered_gateways - set(instances):
-        if stop:
-            return
         try:
             management.set_state(name, 'DELETING')
             management.reset_gateway(name, delete=True)
@@ -1295,8 +1312,6 @@ def sync(controller, management, gateways):
             management.set_state(name, None)
 
     for name in set(instances):
-        if stop:
-            return
         gw = gateways.get(name)
 
         if not gw:
@@ -1313,9 +1328,7 @@ def sync(controller, management, gateways):
 def loop(management, controllers, delay):
     management.set_state(None, None)
 
-    signal.signal(signal.SIGTERM, handler)
-
-    while not stop:
+    while True:
         try:
             management.get_targets()
             gateways = management.get_gateways()
@@ -1335,23 +1348,20 @@ def loop(management, controllers, delay):
         except Exception:
             log('\n%s' % traceback.format_exc())
         log('\n')
-        step = 2
-        for i in xrange(0, delay, step):
-            if stop:
-                break
-            time.sleep(step)
+        time.sleep(delay)
 
 
 @contextlib.contextmanager
-def web_server(port):
-    if not int(port):
+def web_server():
+    port = conf.get('webserver', 0)
+    if not port:
         yield
         return
     sudo = []
-    if int(port) < 1024:
+    if port < 1024:
         sudo = ['sudo']
     server = subprocess.Popen(
-        sudo + [sys.executable, '-m', 'SimpleHTTPServer', port],
+        sudo + [sys.executable, '-m', 'SimpleHTTPServer', str(port)],
         cwd=WEB_DIR)
     yield
     server.terminate()
@@ -1360,9 +1370,20 @@ def web_server(port):
         server.kill()
 
 
-def main(argv=None):
-    global conf
+def start(config):
+    for t in config['templates']:
+        Template(t, **config['templates'][t])
+    controllers = []
+    for c in config['controllers']:
+        controller = config['controllers'][c]
+        controllers += [globals()[controller['class']](
+            name=c, management=config['management']['name'], **controller)]
+    with web_server():
+        with Management(**config['management']) as management:
+            loop(management, controllers, config['delay'])
 
+
+def main(argv=None):
     parser = argparse.ArgumentParser(prog=argv[0] if argv else None)
     parser.add_argument('config', metavar='CONFIG',
                         help='JSON-FILE or a literal json expression')
@@ -1372,11 +1393,6 @@ def main(argv=None):
     parser.add_argument('-l', '--logfile', metavar='LOGFILE',
                         help='Path to log file')
     args = parser.parse_args(argv[1:] if argv else None)
-
-    if args.config[0] == '@':
-        args.config = args.config[1:]
-    with open(args.config) as f:
-        conf = json.load(f, object_pairs_hook=collections.OrderedDict)
 
     if args.debug:
         conf['debug'] = True
@@ -1400,23 +1416,36 @@ def main(argv=None):
 
     conf['webserver'] = int(args.port)
 
-    for t in conf['templates']:
-        Template(t, **conf['templates'][t])
-    controllers = []
-    for c in conf['controllers']:
-        controller = conf['controllers'][c]
-        controllers += [globals()[controller['class']](
-            name=c, management=conf['management']['name'], **controller)]
-    with web_server(args.port):
-        with Management(**conf['management']) as management:
-            loop(management, controllers, conf['delay'])
-    log('\n')
+    if args.config[0] == '@':
+        args.config = args.config[1:]
+
+    signal.signal(signal.SIGHUP, signal_handler)
+    signal.signal(signal.SIGQUIT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    while True:
+        try:
+            with open(args.config) as f:
+                try:
+                    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except:
+                    raise Exception('Another process is already running')
+                config = json.load(
+                    f, object_pairs_hook=collections.OrderedDict)
+                start(config)
+        except Exception:
+            log('\n%s' % traceback.format_exc())
+        log('\n')
+        time.sleep(300)
     return 0
 
 
 if __name__ == '__main__':
     try:
-        sys.exit(main())
+        rc = main(sys.argv)
+    except SystemExit:
+        raise
     except:
         log('\n%s' % traceback.format_exc())
-        sys.exit(1)
+        rc = 1
+    sys.exit(rc)
