@@ -82,6 +82,7 @@ The script takes a configuration file in JSON format
 	        "TEMPLATE1-NAME": {
 	            "proto": "BASE-TEMPLATE-NAME",
 	            "policy": "POLICY1-NAME",
+				"generation": "SOME-VALUE (Optional)",
 	            "proxy-ports": ["8080"],
 	            ...  // optional attributes of a simple-gateway web_api object
 	            "color": "orange",
@@ -155,6 +156,8 @@ In reference to the above configuration:
 		* one-time-password: the one time password used to initiate secure internal communication between the gateway and the management
 
 		* policy: a name of pre-existing security policy package to be installed on the gateway
+
+		* generation: an optional string or number that can be used to force re-applying a template to an already existing gateway. If generation is specified and its value is different than the previous value, then the template settings will be reapplied to the gateway
 
 		* proxy-ports: an optional list of TCP ports on which to enable the proxy on gateway feature
 
