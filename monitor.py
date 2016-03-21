@@ -754,25 +754,27 @@ class Management(object):
         # FIXME: if the polling period is longer than the session timeout
         #        we need to request a longer session or add keepalive
         try:
+            obj = {}
+            self.put_object_tag_value(obj, self.MONITOR_PREFIX, self.name)
             if not self.user:
                 progress('+')
                 resp = json.loads(subprocess.check_output([
                     'mgmt_cli', '--root', 'true', '--format', 'json',
-                    'login']))
+                    'login', 'session-comments', obj['comments']]))
             else:
                 resp = self('login',
-                            {'user': self.user, 'password': self.password})
+                            {'user': self.user, 'password': self.password,
+                             'session-comments': obj['comments']})
             self.sid = resp['sid']
             log('\nnew session:  %s' % resp['uid'])
-            self('set-session', {'tags': {'add': self.name}})
             for session in self('show-sessions', {'details-level': 'full'},
                                 aggregate='objects'):
                 if session['uid'] == resp['uid']:
                     continue
-                for tag in session['tags']:
-                    if tag['name'] == self.name:
-                        log('\ndiscarding session: %s' % session['uid'])
-                        self('discard', {'uid': session['uid']})
+                if self.name == self.get_object_tag_value(
+                        session, self.MONITOR_PREFIX):
+                    log('\ndiscarding session: %s' % session['uid'])
+                    self('discard', {'uid': session['uid']})
             return self
         except:
             self.__exit__(*sys.exc_info())
