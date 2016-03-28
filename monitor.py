@@ -669,6 +669,8 @@ class Management(object):
         self.auto_publish = True
         self.sid = None
         self.targets = {}
+        if 'proxy' in options:
+            os.environ['https_proxy'] = options['proxy']
 
     def __call__(self, command, body, login=True, aggregate=None,
                  silent=False):

@@ -198,6 +198,21 @@ class AWS(object):
                 ca_bundle = os.environ['CPDIR'] + '/conf/ca-bundle.crt'
                 os.environ['CURL_CA_BUNDLE'] = ca_bundle
 
+            if 'https_proxy' not in os.environ:
+                host = None
+                port = None
+                out, err = subprocess.Popen(
+                    ['/bin/clish', '-c', 'show proxy'], stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE).communicate()
+                for line in out.split('\n'):
+                    if line.startswith('address'):
+                        host = re.split(r'\s+', line)[1]
+                    if line.startswith('port'):
+                        port = re.split(r'\s+', line)[1]
+                if host and port:
+                    os.environ['https_proxy'] = 'http://%s:%s' % (host, port)
+
         def read_file(f_name):
             f_key, f_secret = None, None
             with open(f_name) as f:
