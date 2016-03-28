@@ -71,12 +71,14 @@ The script takes a configuration file in JSON format
 	        "host": "IP-ADDRESS-OR-HOST-NAME[:PORT]",
 	        "fingerprint": "sha256:FINGERPRINT-IN-HEX",
 	        "user": "SMARTCENTER-ADMIN-USERNAME",
-	        "password": "STRING"
+	        "password": "STRING",
+			"custom-script": "PATH-TO-CUSTOMIZATION-SCRIPT"
 	    },
 	    "templates": {
 	        "BASE-TEMPLATE-NAME": {
 	            "one-time-password": "STRING",
 	            "version": "R77.30",
+				"custom-parameters": "PARAM-1 PARAM-2 ...",
 	            ...  // optional attributes of a simple-gateway web_api object
 	        },
 	        "TEMPLATE1-NAME": {
@@ -130,7 +132,7 @@ In reference to the above configuration:
 			cpopenssl s_client -connect 127.0.0.1:443 2>/dev/null </dev/null | cpopenssl x509 -outform DER | sha256sum | awk '{printf "sha256:%s\n", $1}'
 
 
-	* user: A SmartCenter administrator username
+	* user: a SmartCenter administrator username
 
 	* One of the following:
 
@@ -139,6 +141,8 @@ In reference to the above configuration:
 		* b64password: The base64 encoded password (for additional obscurity)
 
 	* If the host is either localhost or 127.0.0.1, and the user is omitted then the login will be done with the mgmt_cli tool "login-as-root" feature.
+
+	* custom-script: an optional script to run just before the policy is installed when a gateway is provisioned, and at the beginning of the deprovisionig process. When a gateway is added the script will be run with the keyword 'add', with the gateway name and the custom-parameters attribute in the template. When a gateway is deleted the script will run with the keyword 'delete' and the gateway name. In the case of a configuration update (for example, a load balancing configuration change or a template/generation change), the custom script will be run with 'delete' and later again with 'add' and the custom parameters.
 
 
 * templates:
@@ -160,6 +164,8 @@ In reference to the above configuration:
 		* generation: an optional string or number that can be used to force re-applying a template to an already existing gateway. If generation is specified and its value is different than the previous value, then the template settings will be reapplied to the gateway
 
 		* proxy-ports: an optional list of TCP ports on which to enable the proxy on gateway feature
+
+		* custom-parameters: an optional string with space separated parameters or a list of string parameters to specify when a gateway is added and a custom script is specified in the management section.
 
 		* any other attribute that can be set with the set-simple-gateway R80 Web API as documented in the [Management API Reference](https://sc1.checkpoint.com/documents/R80/APIs/index.html#web/set-simple-gateway)
 

@@ -665,6 +665,7 @@ class Management(object):
         if self.host.partition(':')[0] not in self.LOCALHOST:
             if not self.user or not self.password:
                 raise Exception('Missing credentials for management user')
+        self.custom_script = options.get('custom-script')
         self.auto_publish = True
         self.sid = None
         self.targets = {}
@@ -1130,10 +1131,27 @@ class Management(object):
         self('install-policy', {
             'policy-package': policy, 'targets': name})
 
+    def customize(self, name, parameters=None):
+        if not self.custom_script:
+            return
+        if parameters is None:
+            cmd = [self.custom_script, 'delete', name]
+        else:
+            if isinstance(parameters, basestring):
+                parameters = re.split(r'\s+', parameters)
+            cmd = [self.custom_script, 'add', name] + parameters
+        log('\ncustomizing %s\n' % cmd)
+        out, err = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE).communicate()
+        log(err)
+        log(out)
+
     def reset_gateway(self, name, delete=False):
         log('\n%s: %s' % ('deleting' if delete else 'resetting', name))
         gw = self.get_gateway(name)
         self.set_policy(gw, None)
+        self.customize(name)
         policies = [p['name']
                     for p in self('show-packages', {}, aggregate='packages')]
         for policy in policies:
@@ -1219,6 +1237,7 @@ class Management(object):
         proxy_ports = simple_gateway.pop('proxy-ports', None)
         policy = simple_gateway.pop('policy')
         otp = simple_gateway.pop('one-time-password')
+        custom_parameters = simple_gateway.pop('custom-parameters', [])
         # FIXME: network info is not updated once the gateway exists
         if not gw:
             self.set_state(instance.name, 'ADDING')
@@ -1256,8 +1275,9 @@ class Management(object):
                                       self.LOAD_BALANCER_PREFIX,
                                       self.load_balancer_tag(instance))
             self('publish', {})
-            self.published = True
+            published = True
             self.auto_publish = True
+            self.customize(instance.name, custom_parameters)
             self.set_policy(gw, policy)
             self.set_object_tag_value(gw['uid'],
                                       self.GENERATION_PREFIX, generation)
