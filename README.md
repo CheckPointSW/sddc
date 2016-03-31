@@ -72,6 +72,7 @@ The script takes a configuration file in JSON format
             "fingerprint": "sha256:FINGERPRINT-IN-HEX",
             "user": "SMARTCENTER-ADMIN-USERNAME",
             "password": "STRING",
+            "proxy": "http://PROXY-HOST-NAME-OR-ADDRESS:PROXY-PORT",
             "custom-script": "PATH-TO-CUSTOMIZATION-SCRIPT"
         },
         "templates": {
@@ -141,6 +142,8 @@ In reference to the above configuration:
         * b64password: The base64 encoded password (for additional obscurity)
 
     * If the host is either localhost or 127.0.0.1, and the user is omitted then the login will be done with the mgmt_cli tool "login-as-root" feature.
+
+    * proxy: an optional value for the https_proxy environment variable.
 
     * custom-script: an optional script to run just before the policy is installed when a gateway is provisioned, and at the beginning of the deprovisionig process. When a gateway is added the script will be run with the keyword 'add', with the gateway name and the custom-parameters attribute in the template. When a gateway is deleted the script will run with the keyword 'delete' and the gateway name. In the case of a configuration update (for example, a load balancing configuration change or a template/generation change), the custom script will be run with 'delete' and later again with 'add' and the custom parameters.
 
