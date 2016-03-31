@@ -1337,10 +1337,14 @@ def signal_handler(signum, frame):
 
 def sync(controller, management, gateways):
     log('\n' + controller.name)
+    if not conf.get('debug'):
+        log('\n')
     instances = {}
     for instance in controller.get_instances():
         instances[instance.name] = instance
-    log('\n' + '\n'.join([str(instances[i]) for i in instances] + ['']))
+    if conf.get('debug'):
+        log('\n')
+    log('\n'.join([str(instances[i]) for i in instances] + ['']))
     filtered_gateways = set(name for name in gateways
                             if name.startswith(
                                 controller.name + Controller.SEPARATOR))
