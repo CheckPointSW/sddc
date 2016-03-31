@@ -1135,7 +1135,7 @@ class Management(object):
 
     def customize(self, name, parameters=None):
         if not self.custom_script:
-            return
+            return True
         if parameters is None:
             cmd = [self.custom_script, 'delete', name]
         else:
@@ -1143,11 +1143,13 @@ class Management(object):
                 parameters = re.split(r'\s+', parameters)
             cmd = [self.custom_script, 'add', name] + parameters
         log('\ncustomizing %s\n' % cmd)
-        out, err = subprocess.Popen(
+        proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE).communicate()
+            stderr=subprocess.PIPE)
+        out, err = proc.communicate()
         log(err)
         log(out)
+        return not proc.wait()
 
     def reset_gateway(self, name, delete=False):
         log('\n%s: %s' % ('deleting' if delete else 'resetting', name))
@@ -1279,8 +1281,9 @@ class Management(object):
             self('publish', {})
             published = True
             self.auto_publish = True
-            self.customize(instance.name, custom_parameters)
             self.set_policy(gw, policy)
+            if not self.customize(instance.name, custom_parameters):
+                raise Exception('customization has failed')
             self.set_object_tag_value(gw['uid'],
                                       self.GENERATION_PREFIX, generation)
             self.set_object_tag_value(gw['uid'],
