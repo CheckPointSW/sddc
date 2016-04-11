@@ -481,7 +481,7 @@ SERVICE[@REGION][:LIST-MEMBER] -- KEY VALUE ...
         data = ''
         if len(argv) > 4:
             data = argv[4]
-        file_name = '/dev/null'
+        file_name = os.devnull
         if data.startswith('@'):
             if data[1:] == '-':
                 data = sys.stdin
