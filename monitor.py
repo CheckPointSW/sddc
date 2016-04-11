@@ -891,7 +891,7 @@ class Management(object):
         ports = self('show-generic-object', {'uid': uid})[
             'proxyOnGwSettings']['ports']
         # FIXME: would not be needed when we can assign to an empty value
-        if ports is None:
+        if not ports:
             ports = {'add': proxy_ports}
         else:
             ports = proxy_ports
