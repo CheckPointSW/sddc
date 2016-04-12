@@ -213,7 +213,7 @@ class AWS(Controller):
             headers, body = self.aws.request(
                 'ec2', region, 'GET',
                 '/?Action=DescribeNetworkInterfaces', '')
-            for i in api.as_list(body['networkInterfaceSet'], 'item'):
+            for i in api.listify(body, 'item')['networkInterfaceSet']:
                 interfaces[region][i['networkInterfaceId']] = i
         return interfaces
 
