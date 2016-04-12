@@ -202,7 +202,7 @@ class AWS(Controller):
             subnets[region] = {}
             headers, body = self.aws.request(
                 'ec2', region, 'GET', '/?Action=DescribeSubnets', '')
-            for s in api.as_list(body['subnetSet'], 'item'):
+            for s in api.listify(body, 'item')['subnetSet']:
                 subnets[region][s['subnetId']] = s
         return subnets
 
