@@ -87,9 +87,11 @@ The script takes a configuration file in JSON format
                 "policy": "POLICY1-NAME",
                 "generation": "SOME-VALUE (Optional)",
                 "proxy-ports": ["8080"],
+                "ips-profile": "Optimized",
                 ...  // optional attributes of a simple-gateway web_api object
                 "color": "orange",
                 "application-control": true,
+                "ips": true,
                 ...
             },
             "TEMPLATE2-NAME": {
@@ -145,7 +147,7 @@ In reference to the above configuration:
 
     * proxy: an optional value for the https_proxy environment variable.
 
-    * custom-script: an optional script to run just before the policy is installed when a gateway is provisioned, and at the beginning of the deprovisionig process. When a gateway is added the script will be run with the keyword 'add', with the gateway name and the custom-parameters attribute in the template. When a gateway is deleted the script will run with the keyword 'delete' and the gateway name. In the case of a configuration update (for example, a load balancing configuration change or a template/generation change), the custom script will be run with 'delete' and later again with 'add' and the custom parameters.
+    * custom-script: an optional script to run just before the policy is installed when a gateway is provisioned, and at the beginning of the deprovisioning process. When a gateway is added the script will be run with the keyword 'add', with the gateway name and the custom-parameters attribute in the template. When a gateway is deleted the script will run with the keyword 'delete' and the gateway name. In the case of a configuration update (for example, a load balancing configuration change or a template/generation change), the custom script will be run with 'delete' and later again with 'add' and the custom parameters.
 
 
 * templates:
@@ -167,6 +169,8 @@ In reference to the above configuration:
         * generation: an optional string or number that can be used to force re-applying a template to an already existing gateway. If generation is specified and its value is different than the previous value, then the template settings will be reapplied to the gateway
 
         * proxy-ports: an optional list of TCP ports on which to enable the proxy on gateway feature
+
+        * ips-profile: an optional IPS profile name to associate with a pre-R80 gateway
 
         * custom-parameters: an optional string with space separated parameters or a list of string parameters to specify when a gateway is added and a custom script is specified in the management section.
 

@@ -881,9 +881,9 @@ class Management(object):
             return None
         raise Exception('more than one object named "%s"' % name)
 
-    def set_proxy(self, name, proxy_ports):
+    def set_proxy(self, gw, proxy_ports):
         log('\n%s: %s' % ('setting proxy', json.dumps(proxy_ports)))
-        uid = self.get_uid(name)
+        uid = gw['uid']
         if not proxy_ports:
             self('set-generic-object', {'uid': uid, 'proxyOnGwEnabled': False})
             return
@@ -902,6 +902,19 @@ class Management(object):
                 'interfacesType': 'ALL_INTERFACES',
                 'ports': ports,
                 'tarnsparentMode': False}})
+
+    def set_ips_profile(self, gw, ips_profile):
+        IPS_LAYER = 'IPS'
+        log('\n%s: %s' % ('setting ips profile', ips_profile))
+        profile = self('show-threat-profile', {'name': ips_profile})
+        for rule in self(
+                'show-threat-rulebase', {'name': IPS_LAYER})['rulebase']:
+            if gw['uid'] in rule['install-on']:
+                break
+        else:
+            raise Exception('could not find IPS rule for gateway')
+        self('set-threat-rule', {
+            'uid': rule['uid'], 'layer': IPS_LAYER, 'action': profile['uid']})
 
     def get_targets(self):
         """map instance name to a policy where it is an install target"""
@@ -1153,9 +1166,9 @@ class Management(object):
 
     def reset_gateway(self, name, delete=False):
         log('\n%s: %s' % ('deleting' if delete else 'resetting', name))
+        self.customize(name)
         gw = self.get_gateway(name)
         self.set_policy(gw, None)
-        self.customize(name)
         policies = [p['name']
                     for p in self('show-packages', {}, aggregate='packages')]
         for policy in policies:
@@ -1239,6 +1252,7 @@ class Management(object):
             return
 
         proxy_ports = simple_gateway.pop('proxy-ports', None)
+        ips_profile = simple_gateway.pop('ips-profile', None)
         policy = simple_gateway.pop('policy')
         otp = simple_gateway.pop('one-time-password')
         custom_parameters = simple_gateway.pop('custom-parameters', [])
@@ -1268,8 +1282,10 @@ class Management(object):
             tags = simple_gateway.pop('tags', [])
             self.put_object_tags(simple_gateway, tags + [TAG])
             self('set-simple-gateway', simple_gateway)
-            self.set_proxy(instance.name, proxy_ports)
             gw = self.get_gateway(instance.name)
+            self.set_proxy(gw, proxy_ports)
+            if gw.get('ips') and ips_profile:
+                self.set_ips_profile(gw, ips_profile)
             load_balancers = getattr(instance, 'load_balancers', {})
             if load_balancers:
                 for dns_name in load_balancers:
