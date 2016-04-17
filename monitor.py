@@ -1284,8 +1284,11 @@ class Management(object):
             self('set-simple-gateway', simple_gateway)
             gw = self.get_gateway(instance.name)
             self.set_proxy(gw, proxy_ports)
-            if gw.get('ips') and ips_profile:
-                self.set_ips_profile(gw, ips_profile)
+            if gw.get('ips'):
+                self('set-generic-object', {
+                    'uid': gw['uid'], 'protectInternalInterfacesOnly': False})
+                if ips_profile:
+                    self.set_ips_profile(gw, ips_profile)
             load_balancers = getattr(instance, 'load_balancers', {})
             if load_balancers:
                 for dns_name in load_balancers:
