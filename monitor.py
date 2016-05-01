@@ -37,8 +37,8 @@ import subprocess
 import sys
 import time
 import traceback
+import urllib
 import urlparse
-import xml.dom.minidom
 
 import api
 
