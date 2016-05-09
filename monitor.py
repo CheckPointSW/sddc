@@ -1078,7 +1078,7 @@ class Management(object):
             service_name = '%s_%s' % (protocol_port, gw['name'])
             log('\nadding %s' % service_name)
             self('add-service-tcp', {
-                'name': service_name, 'port': port})
+                'name': service_name, 'port': port, 'match-for-any': False})
             protocol = self.get_protocol_type(lb_protocol)
             if protocol:
                 self('set-generic-object', {
