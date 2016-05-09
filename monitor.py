@@ -758,7 +758,8 @@ class Management(object):
         #        we need to request a longer session or add keepalive
         try:
             obj = {}
-            self.put_object_tag_value(obj, self.MONITOR_PREFIX, self.name)
+            self.put_object_tag_value(obj, self.MONITOR_PREFIX, self.name,
+                                      silent=True)
             if not self.user:
                 progress('+')
                 resp = json.loads(subprocess.check_output([
@@ -769,7 +770,7 @@ class Management(object):
                             {'user': self.user, 'password': self.password,
                              'session-comments': obj['comments']})
             self.sid = resp['sid']
-            log('\nnew session:  %s' % resp['uid'])
+            debug('\nnew session:  %s' % resp['uid'])
             for session in self('show-sessions', {'details-level': 'full'},
                                 aggregate='objects'):
                 if session['uid'] == resp['uid']:
@@ -842,10 +843,12 @@ class Management(object):
                 return tag[len(prefix):]
         return default
 
-    def put_object_tag_value(self, obj, prefix, value, in_comments=True):
-        log('\n%s tag: %s' % (
-            'putting' if value else 'removing',
-            prefix + value if value else prefix))
+    def put_object_tag_value(self, obj, prefix, value, in_comments=True,
+                             silent=False):
+        if not silent:
+            log('\n%s tag: %s' % (
+                'putting' if value else 'removing',
+                prefix + value if value else prefix))
         old_tags = self.get_object_tags(obj, in_comments=in_comments)
         new_tags = []
         for t in old_tags:
@@ -1448,6 +1451,74 @@ def start(config):
             loop(management, controllers, config['delay'])
 
 
+def test(config_file):
+    log('\nTesting if the configuration file exists...\n')
+    if not os.path.isfile(config_file):
+        raise Exception('Cannot find "%s"\n' % config_file)
+
+    log('\nTesting if the configuration file is a valid JSON object...\n')
+    try:
+        with open(config_file) as f:
+            config = json.load(f, object_pairs_hook=collections.OrderedDict)
+    except ValueError:
+        raise Exception('%s is not a valid JSON file\n' % config_file)
+
+    log('\nTesting basic configuration structure...\n')
+    for key in ['delay', 'management', 'templates', 'controllers']:
+        if key not in config or not config[key]:
+            raise Exception('"%s" section is missing or empty\n' % key)
+
+    if not isinstance(config['delay'], int):
+        raise Exception('The parameter "delay" must be an integer\n')
+
+    log('\nTesting management configuration...\n')
+    for key in ['name', 'host']:
+        if key not in config['management']:
+            raise Exception(
+                'The parameter "%s" is missing in management section\n' % key)
+
+    log('\nTesting management connectivity...\n')
+    config['management']['name'] = config['management']['name'] + '-test'
+    with Management(**config['management']) as management:
+        management.get_gateways()
+
+    log('\nTesting controllers...\n')
+    for name, c in config['controllers'].items():
+        log('\nTesting %s...\n' % name)
+        for key in ['class']:
+            if key not in c:
+                raise Exception('The parameter "%s" is missing' % key)
+
+        cls = globals().get(c['class'], object)
+        if not issubclass(cls, Controller):
+            raise Exception('Unknown controller class "%s"' % c['class'])
+
+        if c['class'] == 'AWS':
+            for key in ['regions']:
+                if key not in c or not c[key]:
+                    raise Exception(
+                        'The parameter "%s" is missing or empty' % key)
+
+        controller = cls(
+            name=name, management=config['management']['name'], **c)
+        controller.get_instances()
+
+    log('\nTesting templates...\n')
+    protos = set([t.get('proto') for t in config['templates'].values()])
+    for t in config['templates']:
+        Template(t, **config['templates'][t])
+
+    for name, t in config['templates'].items():
+        if name in protos:
+            continue
+        log('\nTesting %s...\n' % name)
+        for key in ['version', 'one-time-password', 'policy']:
+            if key not in t:
+                raise Exception('The parameter "%s" is missing' % key)
+
+    log('\nAll Tests passed successfully\n')
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog=argv[0] if argv else None)
     parser.add_argument('config', metavar='CONFIG',
@@ -1457,6 +1528,7 @@ def main(argv=None):
     parser.add_argument('-d', '--debug', dest='debug', action='store_true')
     parser.add_argument('-l', '--logfile', metavar='LOGFILE',
                         help='Path to log file')
+    parser.add_argument('-t', '--test', dest='test', action='store_true')
     args = parser.parse_args(argv[1:] if argv else None)
 
     if args.debug:
@@ -1478,6 +1550,10 @@ def main(argv=None):
             logger.setLevel(logging.INFO)
         os.environ['AWS_NO_DOT'] = 'true'
     api.set_logger(log=log, debug=debug)
+
+    if args.test:
+        test(args.config)
+        sys.exit(0)
 
     conf['webserver'] = int(args.port)
 
