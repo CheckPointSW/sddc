@@ -164,6 +164,8 @@ In reference to the above configuration:
 
         * one-time-password: the one time password used to initiate secure internal communication between the gateway and the management
 
+        * version: the gateway version (e.g. R77.30)
+
         * policy: a name of pre-existing security policy package to be installed on the gateway
 
         * generation: an optional string or number that can be used to force re-applying a template to an already existing gateway. If generation is specified and its value is different than the previous value, then the template settings will be reapplied to the gateway
