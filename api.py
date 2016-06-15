@@ -12,6 +12,7 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
+import base64
 import collections
 import datetime
 import hashlib
@@ -71,6 +72,13 @@ API_TARGETS = {
 }
 
 
+def truncate(buf, max_len):
+    first_truncated = repr(buf[:max_len * 4])
+    second_truncated = first_truncated[:max_len]
+    was_truncated = len(buf) > max_len * 4 or len(first_truncated) > max_len
+    return second_truncated + ('...' if was_truncated else '')
+
+
 def http(method, url, body, req_headers=None):
     curl = os.environ.get('AWS_CURL', 'curl')
     if 'AWS_NO_DOT' not in os.environ or os.environ[
@@ -104,13 +112,14 @@ def http(method, url, body, req_headers=None):
         body = None
     cmd.append(url)
     debug(repr(cmd) + '\n')
+    max_debug = 2048
     if body and not isinstance(body, file):
-        debug(repr(body[:65536]) + ('...' if len(body) > 65536 else '') + '\n')
+        debug(truncate(body, max_debug) + '\n')
     p = subprocess.Popen(cmd, stdin=stdin, stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE)
     out, err = p.communicate(body)
     debug(err + '\n')
-    debug(repr(out[:65536]) + ('...' if len(out) > 65536 else '') + '\n')
+    debug(truncate(out, max_debug) + '\n')
     rc = p.wait()
     if rc:
         raise Exception('%s\n%s' % (cmd, err))
@@ -212,6 +221,11 @@ class AWS(object):
                         port = re.split(r'\s+', line)[1]
                 if host and port:
                     os.environ['https_proxy'] = 'http://%s:%s' % (host, port)
+
+            no_proxy = set(os.environ.get('no_proxy', '').split(','))
+            no_proxy -= {''}
+            no_proxy |= {'169.254.169.254'}
+            os.environ['no_proxy'] = ','.join(no_proxy)
 
         def read_file(f_name):
             f_key, f_secret = None, None
@@ -356,9 +370,11 @@ AWS_SESSION_TOKEN - (optional)
                 headers['X-Amz-Security-Token'] = self.creds['token']
             if service.endswith('s3'):
                 headers['X-Amz-Content-Sha256'] = hashed_payload
-        canonical_headers = '\n'.join(sorted(
-            ['%s:%s' % (k.lower(), v) for k, v in headers.items()])) + '\n'
-        signed_headers = ';'.join(sorted([k.lower() for k in headers]))
+        canonical_header_name_pairs = sorted([(n.lower(), n) for n in headers])
+        canonical_headers = '\n'.join([
+            '%s:%s' % (l, headers[n])
+            for l, n in canonical_header_name_pairs]) + '\n'
+        signed_headers = ';'.join([l for l, n in canonical_header_name_pairs])
 
         parts = []
         for k, v in sorted(query.items()):
@@ -387,10 +403,20 @@ AWS_SESSION_TOKEN - (optional)
             query_string = '?' + query_string
         return url + query_string
 
-    def request(self, service, region, method, url, payload):
+    def request(self, service, region, method, url, payload,
+                user_headers=None):
         req_headers = None
         if method in {'GET', 'POST'}:
             req_headers = []
+        elif method == 'PUT' and service.endswith('s3') and not isinstance(
+                payload, file):
+            req_headers = ['Content-MD5: %s' %
+                           base64.b64encode(hashlib.md5(payload).digest())]
+        if req_headers is not None or user_headers is not None:
+            if req_headers is None:
+                req_headers = []
+            if user_headers is not None:
+                req_headers += user_headers[:]
         url = self.get_url(service, region, method, url, payload,
                            header_list=req_headers)
         headers, body = http(method, url, payload, req_headers)
@@ -433,6 +459,7 @@ def init(*args, **kwargs):
 
 
 def main(argv):
+    global request  # for pyflakes
     if len(argv) < 4 or argv[1] == '-h' or (
             argv[2] != '--' and len(argv) > 5) or (
             argv[2] == '--' and len(argv) % 2 != 1):
@@ -445,6 +472,13 @@ SERVICE[@REGION][:LIST-MEMBER] -- KEY VALUE ...
         sys.exit(1)
     os.environ['AWS_NO_DOT'] = 'true'
     init()
+    user_headers = []
+    for var in os.environ:
+        if var.startswith('AWS_HTTP_'):
+            name = var[len('AWS_HTTP_'):].lower().replace('_', '-')
+            user_headers.append('%s: %s' % (name, os.environ[var]))
+    if not user_headers:
+        user_headers = None
     service_region_member = argv[1]
     service, region, member = re.match(
         r'([^@:]+)(@[^:]*)?(:.*)?$', service_region_member).groups()
@@ -475,7 +509,8 @@ SERVICE[@REGION][:LIST-MEMBER] -- KEY VALUE ...
                 query.append((argv[i], argv[i + 1]))
             payload = ''
         headers, body = request(service, region, method,
-                                '/?' + urllib.urlencode(query), payload)
+                                '/?' + urllib.urlencode(query), payload,
+                                user_headers)
     else:
         url = argv[3]
         data = ''
@@ -491,7 +526,8 @@ SERVICE[@REGION][:LIST-MEMBER] -- KEY VALUE ...
         with open(file_name, 'rb') as f:
             if data is None:
                 data = f
-            headers, body = request(service, region, method, url, data)
+            headers, body = request(service, region, method, url, data,
+                                    user_headers)
     try:
         if headers.get('_parsed'):
             if member:
