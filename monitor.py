@@ -672,6 +672,11 @@ class Management(object):
         if 'proxy' in options:
             os.environ['https_proxy'] = options['proxy']
 
+        no_proxy = set(os.environ.get('no_proxy', '').split(','))
+        no_proxy -= {''}
+        no_proxy |= {'127.0.0.1', 'localhost'}
+        os.environ['no_proxy'] = ','.join(no_proxy)
+
     def __call__(self, command, body, login=True, aggregate=None,
                  silent=False):
         # FIXME: need to "censor" session ids in login replies and other
