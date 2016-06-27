@@ -20,6 +20,7 @@ import base64
 import collections
 import contextlib
 import datetime
+import email.utils
 import fcntl
 import hashlib
 import httplib
@@ -1503,6 +1504,15 @@ def test(config_file):
                 if key not in c or not c[key]:
                     raise Exception(
                         'The parameter "%s" is missing or empty' % key)
+            url = 'https://ec2.' + c['regions'][0] + '.amazonaws.com/'
+            h, b = api.http('GET', url, '')
+            d = h.get('date')
+            t1 = datetime.datetime(*email.utils.parsedate(d)[:6])
+            t2 = datetime.datetime.utcnow()
+            log('\nTime difference is ' + str(abs(t2 - t1)) + '\n')
+            if abs(t2 - t1) > datetime.timedelta(seconds=5):
+                raise Exception(
+                    'Your system clock is not accurate, please set up NTP')
 
         controller = cls(
             name=name, management=config['management']['name'], **c)
