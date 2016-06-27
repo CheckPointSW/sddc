@@ -71,6 +71,35 @@ API_TARGETS = {
     'events': ('AWSEvents', '1.1'),
 }
 
+if os.path.isfile('/etc/cp-release'):
+    os.environ.setdefault('AWS_CURL', 'curl_cli')
+    if 'CURL_CA_BUNDLE' not in os.environ:
+        if 'CPDIR' not in os.environ:
+            raise Exception(
+                'Please define CPDIR in env for the CA bundle')
+        ca_bundle = os.environ['CPDIR'] + '/conf/ca-bundle.crt'
+        os.environ['CURL_CA_BUNDLE'] = ca_bundle
+
+    if 'https_proxy' not in os.environ:
+        host = None
+        port = None
+        out, err = subprocess.Popen(
+            ['/bin/clish', '-c', 'show proxy'], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE).communicate()
+        for line in out.split('\n'):
+            if line.startswith('address'):
+                host = re.split(r'\s+', line)[1]
+            if line.startswith('port'):
+                port = re.split(r'\s+', line)[1]
+        if host and port:
+            os.environ['https_proxy'] = 'http://%s:%s' % (host, port)
+
+    no_proxy = set(os.environ.get('no_proxy', '').split(','))
+    no_proxy -= {''}
+    no_proxy |= {'169.254.169.254'}
+    os.environ['no_proxy'] = ','.join(no_proxy)
+
 
 def truncate(buf, max_len):
     first_truncated = repr(buf[:max_len * 4])
@@ -198,35 +227,6 @@ def listify(obj, key):
 
 class AWS(object):
     def __init__(self, key=None, secret=None, token=None, key_file=None):
-        if os.path.isfile('/etc/cp-release'):
-            os.environ.setdefault('AWS_CURL', 'curl_cli')
-            if 'CURL_CA_BUNDLE' not in os.environ:
-                if 'CPDIR' not in os.environ:
-                    raise Exception(
-                        'Please define CPDIR in env for the CA bundle')
-                ca_bundle = os.environ['CPDIR'] + '/conf/ca-bundle.crt'
-                os.environ['CURL_CA_BUNDLE'] = ca_bundle
-
-            if 'https_proxy' not in os.environ:
-                host = None
-                port = None
-                out, err = subprocess.Popen(
-                    ['/bin/clish', '-c', 'show proxy'], stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE).communicate()
-                for line in out.split('\n'):
-                    if line.startswith('address'):
-                        host = re.split(r'\s+', line)[1]
-                    if line.startswith('port'):
-                        port = re.split(r'\s+', line)[1]
-                if host and port:
-                    os.environ['https_proxy'] = 'http://%s:%s' % (host, port)
-
-            no_proxy = set(os.environ.get('no_proxy', '').split(','))
-            no_proxy -= {''}
-            no_proxy |= {'169.254.169.254'}
-            os.environ['no_proxy'] = ','.join(no_proxy)
-
         def read_file(f_name):
             f_key, f_secret = None, None
             with open(f_name) as f:
