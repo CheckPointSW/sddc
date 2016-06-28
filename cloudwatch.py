@@ -95,10 +95,10 @@ def main(argv):
 
     qs = {}
     for i, m in enumerate(metrics):
-        if i % 32 == 0:
+        if i % 16 == 0:
             put_metric(qs)
             qs = {}
-        prefix = 'MetricData.member.' + str(i + 1) + '.'
+        prefix = 'MetricData.member.' + str(i % 16 + 1) + '.'
         qs[prefix + 'MetricName'] = m[0]
         qs[prefix + 'Value'] = m[1]
         qs[prefix + 'Unit'] = m[2]
