@@ -147,7 +147,7 @@ In reference to the above configuration:
 
     * proxy: an optional value for the https_proxy environment variable.
 
-    * custom-script: an optional script to run just before the policy is installed when a gateway is provisioned, and at the beginning of the deprovisioning process. When a gateway is added the script will be run with the keyword 'add', with the gateway name and the custom-parameters attribute in the template. When a gateway is deleted the script will run with the keyword 'delete' and the gateway name. In the case of a configuration update (for example, a load balancing configuration change or a template/generation change), the custom script will be run with 'delete' and later again with 'add' and the custom parameters.
+    * custom-script: an optional script to run just after the policy is installed when a gateway is provisioned, and at the beginning of the deprovisioning process. When a gateway is added the script will be run with the keyword 'add', with the gateway name and the custom-parameters attribute in the template. When a gateway is deleted the script will run with the keyword 'delete' and the gateway name. In the case of a configuration update (for example, a load balancing configuration change or a template/generation change), the custom script will be run with 'delete' and later again with 'add' and the custom parameters.
 
 
 * templates:
