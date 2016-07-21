@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 #   Copyright 2015 Check Point Software Technologies LTD
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
@@ -108,12 +110,14 @@ def truncate(buf, max_len):
     return second_truncated + ('...' if was_truncated else '')
 
 
-def http(method, url, body, req_headers=None):
+def http(method, url, body, req_headers=None, max_time=None):
     curl = os.environ.get('AWS_CURL', 'curl')
     if 'AWS_NO_DOT' not in os.environ or os.environ[
             'AWS_NO_DOT'].lower() != 'true':
         log('.')
     cmd = [curl, '-s', '-S', '-g', '-L', '-D', '/dev/fd/2', '-X', method]
+    if max_time:
+        cmd += ['--max-time', str(max_time)]
     if logger.debug:
         cmd += ['-v']
     if method == 'HEAD':
@@ -226,7 +230,8 @@ def listify(obj, key):
 
 
 class AWS(object):
-    def __init__(self, key=None, secret=None, token=None, key_file=None):
+    def __init__(self, key=None, secret=None, token=None, key_file=None,
+                 max_time=None):
         def read_file(f_name):
             f_key, f_secret = None, None
             with open(f_name) as f:
@@ -273,6 +278,10 @@ AWS_SESSION_TOKEN - (optional)
         self.creds['secret_key'] = secret
         if token:
             self.creds['token'] = token
+
+        self.max_time = max_time
+        if not self.max_time:
+            self.max_time = os.environ.get('AWS_MAX_TIME')
 
     def refresh_credentials(self):
         if not self.creds.get('role'):
@@ -404,7 +413,7 @@ AWS_SESSION_TOKEN - (optional)
         return url + query_string
 
     def request(self, service, region, method, url, payload,
-                user_headers=None):
+                user_headers=None, max_time=None):
         req_headers = None
         if method in {'GET', 'POST'}:
             req_headers = []
@@ -419,7 +428,9 @@ AWS_SESSION_TOKEN - (optional)
                 req_headers += user_headers[:]
         url = self.get_url(service, region, method, url, payload,
                            header_list=req_headers)
-        headers, body = http(method, url, payload, req_headers)
+        if not max_time:
+            max_time = self.max_time
+        headers, body = http(method, url, payload, req_headers, max_time)
         ct = headers.get('content-type')
         if method == 'HEAD':
             body = None
