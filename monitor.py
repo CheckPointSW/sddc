@@ -41,7 +41,8 @@ import traceback
 import urllib
 import urlparse
 
-import api
+import aws
+import azure
 
 TAG = 'managed-virtual-gateway'
 WEB_DIR = os.path.dirname(sys.argv[0]) + '/web'
@@ -174,7 +175,7 @@ class Instance(object):
     def __str__(self):
         return ' '.join([
             self.name, self.ip_address, json.dumps(self.interfaces),
-            self.template, json.dumps(getattr(self, 'load_balancers'))])
+            self.template, json.dumps(getattr(self, 'load_balancers', None))])
 
 
 class Controller(object):
@@ -191,7 +192,7 @@ class Controller(object):
 class AWS(Controller):
     def __init__(self, **options):
         super(AWS, self).__init__(**options)
-        self.aws = api.AWS(
+        self.aws = aws.AWS(
             key=options.get('access-key'), secret=options.get('secret-key'),
             token=options.get('session-token'),
             key_file=options.get('cred-file'))
@@ -203,7 +204,7 @@ class AWS(Controller):
             subnets[region] = {}
             headers, body = self.aws.request(
                 'ec2', region, 'GET', '/?Action=DescribeSubnets', '')
-            for s in api.listify(body, 'item')['subnetSet']:
+            for s in aws.listify(body, 'item')['subnetSet']:
                 subnets[region][s['subnetId']] = s
         return subnets
 
@@ -214,7 +215,7 @@ class AWS(Controller):
             headers, body = self.aws.request(
                 'ec2', region, 'GET',
                 '/?Action=DescribeNetworkInterfaces', '')
-            for i in api.listify(body, 'item')['networkInterfaceSet']:
+            for i in aws.listify(body, 'item')['networkInterfaceSet']:
                 interfaces[region][i['networkInterfaceId']] = i
         return interfaces
 
@@ -229,14 +230,14 @@ class AWS(Controller):
             headers, body = self.aws.request(
                 'elasticloadbalancing', region, 'GET',
                 '/?Action=DescribeLoadBalancers', '')
-            elb_list = api.listify(body['DescribeLoadBalancersResult'][
+            elb_list = aws.listify(body['DescribeLoadBalancersResult'][
                 'LoadBalancerDescriptions'], 'member')
             for elb in elb_list:
                 headers, body = self.aws.request(
                     'elasticloadbalancing', region, 'GET',
                     '/?Action=DescribeTags&LoadBalancerNames.member.1=' +
                     elb['LoadBalancerName'], '')
-                elb['Tags'] = self.get_tags(api.listify(
+                elb['Tags'] = self.get_tags(aws.listify(
                     body['DescribeTagsResult']['TagDescriptions'],
                     'member')[0]['Tags'])
                 cidrs = [subnets[region][s]['cidrBlock']
@@ -268,7 +269,7 @@ class AWS(Controller):
             headers, body = self.aws.request(
                 'autoscaling', region, 'GET',
                 '/?Action=DescribeAutoScalingGroups', '')
-            groups = api.listify(body['DescribeAutoScalingGroupsResult'][
+            groups = aws.listify(body['DescribeAutoScalingGroupsResult'][
                 'AutoScalingGroups'], 'member')
             for group in groups:
                 for i in group['Instances']:
@@ -297,7 +298,7 @@ class AWS(Controller):
                     'NextToken', next_token})
             headers, body = self.aws.request(
                 'ec2', region, 'GET', path + extra_params, '')
-            obj = api.listify(body, 'item')
+            obj = aws.listify(body, 'item')
             for r in obj[top_set]:
                 objects += r[collect_set]
             next_token = obj.get('nextToken')
@@ -598,6 +599,151 @@ class OpenStack(Controller):
             instances.append(Instance(
                 instance_name, ip_address, interfaces,
                 instance['metadata']['x-chkp-template']))
+        return instances
+
+
+class Azure(Controller):
+    def __init__(self, **options):
+        super(Azure, self).__init__(**options)
+        self.azure = azure.Azure(credentials=options.get('credentials'))
+        subs = options['subscriptions']
+        self.subs = {
+            '/subscriptions/' + sub: sub[:8] for sub in subs}
+
+    def retrieve_vms(self):
+        vms = {}
+        for sub in self.subs:
+            headers, body = self.azure.arm(
+                'GET',
+                '%s/providers/Microsoft.Compute/virtualMachines' % sub)
+            for vm in body['value']:
+                if vm.get('tags', {}).get(
+                        'x-chkp-management') != self.management:
+                    continue
+                vm = self.azure.arm(
+                    'GET', vm['id'] + '/?$expand=instanceView')[1]
+                vms[vm['id']] = vm
+        return vms
+
+    def retrieve_interfaces(self):
+        interfaces = {}
+        for sub in self.subs:
+            headers, body = self.azure.arm(
+                'GET',
+                '%s/providers/Microsoft.Network/networkInterfaces' % sub)
+            for interface in body['value']:
+                interfaces[interface['id']] = interface
+        return interfaces
+
+    def retrieve_public_addresses(self):
+        addresses = {}
+        for sub in self.subs:
+            headers, body = self.azure.arm(
+                'GET',
+                '%s/providers/Microsoft.Network/publicIpAddresses' % sub)
+            for address in body['value']:
+                addresses[address['id']] = address
+        return addresses
+
+    def retrieve_subnets(self):
+        subnets = {}
+        for sub in self.subs:
+            headers, body = self.azure.arm(
+                'GET',
+                '%s/providers/Microsoft.Network/virtualNetworks' % sub)
+            for vnet in body['value']:
+                for subnet in vnet['properties'].get('subnets', []):
+                    subnets[subnet['id']] = subnet
+        return subnets
+
+    def get_primary_configuration(self, interface):
+        configurations = interface['properties']['ipConfigurations']
+        for configuration in configurations:
+            if configuration['properties'].get('primary'):
+                break
+        else:
+            if len(configurations) != 1:
+                log('no primary configuration for %s\n' % interface['id'])
+                return None
+            configuration = configurations[0]
+        return configuration['properties']
+
+    def get_topology(self, index, tags, configuration, subnets):
+        topology = tags.get('x-chkp-topology', '').lower()
+        anti_spoofing = (tags.get('x-chkp-anti-spoofing', 'true').lower() ==
+                         'true')
+        if not topology:
+            if configuration.get('publicIPAddress', {}):
+                topology = 'external'
+            else:
+                topology = 'internal'
+
+        interface = {
+            'name': 'eth%s' % index,
+            'ipv4-address': configuration['privateIPAddress'],
+            'ipv4-mask-length':
+                int(subnets[configuration['subnet']['id']]['properties'][
+                    'addressPrefix'].partition('/')[2]),
+            'anti-spoofing': anti_spoofing,
+            'topology': topology
+        }
+
+        if topology == 'internal':
+            interface['topology-settings'] = {
+                'ip-address-behind-this-interface':
+                    'network defined by the interface ip and net mask'
+            }
+
+        return interface
+
+    def get_instances(self):
+        vms = self.retrieve_vms()
+        interfaces = self.retrieve_interfaces()
+        public_addresses = self.retrieve_public_addresses()
+        subnets = self.retrieve_subnets()
+        instances = []
+        for vm in vms.values():
+            instance_name = self.SEPARATOR.join([
+                self.name, vm['name'],
+                self.subs['/'.join(vm['id'].split('/')[:3])]])
+            power_state = None
+            for s in vm['properties']['instanceView']['statuses']:
+                if s['code'].startswith('PowerState'):
+                    power_state = s['code']
+            if power_state != 'PowerState/running':
+                continue
+            tags = vm.get('tags', {})
+
+            instance_interfaces = []
+            ip_address = tags.get('x-chkp-ip-address', 'public')
+            for index, interface in enumerate(
+                    vm['properties']['networkProfile']['networkInterfaces']):
+                interface = interfaces[interface['id']]
+                configuration = self.get_primary_configuration(interface)
+                if not configuration:
+                    instance_interfaces = []
+                    break
+                instance_interfaces.append(self.get_topology(
+                    index, interface.get('tags', {}), configuration, subnets))
+                if interface['properties'].get('primary'):
+                    if ip_address == 'private':
+                        ip_address = configuration['privateIPAddress']
+                    elif ip_address == 'public':
+                        ip_address = public_addresses.get(
+                            configuration.get('publicIPAddress', {}).get(
+                                'id'), {}).get('properties', {}).get(
+                                    'ipAddress')
+            if not instance_interfaces:
+                log('problem in retrieving interfaces for %s\n' %
+                    instance_name)
+                continue
+            if not ip_address or ip_address == 'public':
+                log('no ip address for %s\n' % instance_name)
+                continue
+
+            instances.append(Instance(
+                instance_name, ip_address, instance_interfaces,
+                tags['x-chkp-template']))
         return instances
 
 
@@ -1477,17 +1623,6 @@ def test(config_file):
     if not isinstance(config['delay'], int):
         raise Exception('The parameter "delay" must be an integer\n')
 
-    log('\nTesting management configuration...\n')
-    for key in ['name', 'host']:
-        if key not in config['management']:
-            raise Exception(
-                'The parameter "%s" is missing in management section\n' % key)
-
-    log('\nTesting management connectivity...\n')
-    config['management']['name'] = config['management']['name'] + '-test'
-    with Management(**config['management']) as management:
-        management.get_gateways()
-
     log('\nTesting controllers...\n')
     for name, c in config['controllers'].items():
         log('\nTesting %s...\n' % name)
@@ -1499,13 +1634,13 @@ def test(config_file):
         if not issubclass(cls, Controller):
             raise Exception('Unknown controller class "%s"' % c['class'])
 
-        if c['class'] == 'AWS':
+        if cls == AWS:
             for key in ['regions']:
                 if key not in c or not c[key]:
                     raise Exception(
                         'The parameter "%s" is missing or empty' % key)
             url = 'https://ec2.' + c['regions'][0] + '.amazonaws.com/'
-            h, b = api.http('GET', url, '')
+            h, b = aws.http('GET', url, '')
             d = h.get('date')
             t1 = datetime.datetime(*email.utils.parsedate(d)[:6])
             t2 = datetime.datetime.utcnow()
@@ -1513,6 +1648,12 @@ def test(config_file):
             if abs(t2 - t1) > datetime.timedelta(seconds=5):
                 raise Exception(
                     'Your system clock is not accurate, please set up NTP')
+
+        elif cls == Azure:
+            for key in ['subscriptions', 'credentials']:
+                if key not in c or not c[key]:
+                    raise Exception(
+                        'The parameter "%s" is missing or empty' % key)
 
         controller = cls(
             name=name, management=config['management']['name'], **c)
@@ -1530,6 +1671,17 @@ def test(config_file):
         for key in ['version', 'one-time-password', 'policy']:
             if key not in t:
                 raise Exception('The parameter "%s" is missing' % key)
+
+    log('\nTesting management configuration...\n')
+    for key in ['name', 'host']:
+        if key not in config['management']:
+            raise Exception(
+                'The parameter "%s" is missing in management section\n' % key)
+
+    log('\nTesting management connectivity...\n')
+    config['management']['name'] = config['management']['name'] + '-test'
+    with Management(**config['management']) as management:
+        management.get_gateways()
 
     log('\nAll Tests passed successfully\n')
 
@@ -1564,7 +1716,9 @@ def main(argv=None):
         else:
             logger.setLevel(logging.INFO)
         os.environ['AWS_NO_DOT'] = 'true'
-    api.set_logger(log=log, debug=debug)
+        os.environ['AZURE_NO_DOT'] = 'true'
+    aws.set_logger(log=log, debug=debug)
+    azure.set_logger(log=log, debug=debug)
 
     if args.test:
         test(args.config)

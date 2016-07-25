@@ -107,6 +107,16 @@ The script takes a configuration file in JSON format
                 "secret-key": "AWS-SECRET-KEY",
                 "regions": ["us-east-1", "us-west-2"]
             },
+            "AZURE-RESOURCES": {
+                "class": "Azure",
+                "subscriptions": ["SUBSCRIPTION-ID", ...],
+                "credentials": {
+                    "tenant": "THE-ACTIVE-DIRECTORY-TENANT-ID",
+                    "grant_type": "client_credentials",
+                    "client_id": "THE-APP-ID",
+                    "client_secret": "THE-SERVICE-PRINCIPAL-PASSWORD"
+                }
+            },
             "OPENSTACK-DEVTEST": {
                 "class": "OpenStack",
                 "scheme": "https",
@@ -187,7 +197,7 @@ In reference to the above configuration:
 
     * Controller attributes:
 
-        * class: either "AWS" or "OpenStack"
+        * class: either "AWS", "Azure" or "OpenStack"
 
         * For AWS controllers:
 
@@ -212,6 +222,28 @@ In reference to the above configuration:
                 * Using an IAM role profile:
 
                     * cred-file: "IAM"
+
+        * For Azure controllers:
+
+            * subscriptions: a list of Azure subscription IDs
+
+            * credentials: an object containing one of the following alternatives (in any case the entity for which the credentials are specified (a service principal or a user) must have "read" access to the relevant resources in the subscription):
+
+                * Service Principal:
+
+                    * tenant: the Azure Active Directory tenant ID
+
+                    * grant_type: "client_credentials"
+
+                    * client_id: the application ID with which the service principal is associated
+
+                    * client_secret: the service principal password
+
+                * User name and password:
+
+                    * username: the Azure fully qualified user name
+
+                    * password: the password for the user
 
         * For OpenStack controllers:
 
