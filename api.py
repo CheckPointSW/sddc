@@ -115,13 +115,16 @@ def http(method, url, body, req_headers=None, max_time=None):
     if 'AWS_NO_DOT' not in os.environ or os.environ[
             'AWS_NO_DOT'].lower() != 'true':
         log('.')
-    cmd = [curl, '-s', '-S', '-g', '-L', '-D', '/dev/fd/2', '-X', method]
+    cmd = [curl, '--silent', '--show-error', '--globoff',
+           '--dump-header', '/dev/fd/2']
     if max_time:
         cmd += ['--max-time', str(max_time)]
     if logger.debug:
-        cmd += ['-v']
+        cmd += ['--verbose']
     if method == 'HEAD':
-        cmd += ['-I']
+        cmd += ['--head']
+    else:
+        cmd += ['--request', method]
     if url.startswith('https:') and os.environ.get('AWS_CA_BUNDLE'):
         cmd += ['--cacert', os.environ['AWS_CA_BUNDLE']]
     if body:
@@ -134,11 +137,11 @@ def http(method, url, body, req_headers=None, max_time=None):
                 has_content_type = True
             if h.lower().startswith('content-length:'):
                 has_content_length = True
-            cmd += ['-H', h]
+            cmd += ['--header', h]
     if not has_content_type:
-        cmd += ['-H', 'Content-Type:']
+        cmd += ['--header', 'Content-Type:']
     if not body and not has_content_length and method in set(['PUT', 'POST']):
-        cmd += ['-H', 'Content-Length: 0']
+        cmd += ['--header', 'Content-Length: 0']
     stdin = subprocess.PIPE
     if isinstance(body, file):
         stdin = body
