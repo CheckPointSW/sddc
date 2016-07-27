@@ -1698,9 +1698,6 @@ def main(argv=None):
     parser.add_argument('-t', '--test', dest='test', action='store_true')
     args = parser.parse_args(argv[1:] if argv else None)
 
-    if args.debug:
-        conf['debug'] = True
-
     logfile = getattr(args, 'logfile', None)
     if logfile:
         handler = logging.handlers.RotatingFileHandler(args.logfile,
@@ -1710,15 +1707,19 @@ def main(argv=None):
         handler.setFormatter(logging.Formatter(
             '%(asctime)s-%(name)s-%(levelname)s- %(message)s'))
         logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
         conf['logger'] = logger
-        if args.debug:
-            logger.setLevel(logging.DEBUG)
-        else:
-            logger.setLevel(logging.INFO)
         os.environ['AWS_NO_DOT'] = 'true'
         os.environ['AZURE_NO_DOT'] = 'true'
-    aws.set_logger(log=log, debug=debug)
-    azure.set_logger(log=log, debug=debug)
+
+    debug_func = None
+    if args.debug:
+        conf['debug'] = True
+        debug_func = debug
+        if conf.get('logger'):
+            conf.get('logger').setLevel(logging.DEBUG)
+    aws.set_logger(log=log, debug=debug_func)
+    azure.set_logger(log=log, debug=debug_func)
 
     if args.test:
         test(args.config)

@@ -119,8 +119,6 @@ def http(method, url, body, req_headers=None, max_time=None):
            '--dump-header', '/dev/fd/2']
     if max_time:
         cmd += ['--max-time', str(max_time)]
-    if logger.debug:
-        cmd += ['--verbose']
     if method == 'HEAD':
         cmd += ['--head']
     else:
