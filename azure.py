@@ -432,6 +432,15 @@ def set_logger(log, debug=None):
     logger.log = log
     logger.debug = debug
 
+if os.path.isfile('/etc/cp-release'):
+    os.environ.setdefault('AZURE_REST_CURL', 'curl_cli')
+    if 'CURL_CA_BUNDLE' not in os.environ:
+        if 'CPDIR' not in os.environ:
+            raise Exception(
+                'Please define CPDIR in env for the CA bundle')
+        ca_bundle = os.environ['CPDIR'] + '/conf/ca-bundle.crt'
+        os.environ['CURL_CA_BUNDLE'] = ca_bundle
+
 
 class RequestException(Exception):
     def __init__(self, proto, code, reason, body):
@@ -778,7 +787,9 @@ class Azure(object):
 
     def blob(self, method, account, path, body=None, headers=None, tag=None):
         debug('blob: %s %s %s %s %s\n' % (
-            method, account, path, body, headers))
+            method, account, path,
+            repr(body[:1024]) if isinstance(body, basestring) else str(body),
+            headers))
         headers_dict = {}
         if headers is not None:
             for h in headers:
@@ -1049,7 +1060,7 @@ def main(*args):
     log(json.dumps(h, indent=2) + '\n')
     if hasattr(b, 'toprettyxml'):
         print b.toprettyxml().encode('utf-8')
-    elif isinstance(b, dict):
+    elif isinstance(b, dict) or isinstance(b, list):
         print json.dumps(b, indent=2).encode('utf-8')
     elif b is not None:
         sys.stdout.write(b)
