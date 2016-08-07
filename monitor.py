@@ -1407,6 +1407,7 @@ class Management(object):
             return
 
         proxy_ports = simple_gateway.pop('proxy-ports', None)
+        https_inspection = simple_gateway.pop('https-inspection', False)
         ips_profile = simple_gateway.pop('ips-profile', None)
         policy = simple_gateway.pop('policy')
         otp = simple_gateway.pop('one-time-password')
@@ -1439,6 +1440,9 @@ class Management(object):
             self('set-simple-gateway', simple_gateway)
             gw = self.get_gateway(instance.name)
             self.set_proxy(gw, proxy_ports)
+            self('set-generic-object', {
+                'uid': gw['uid'],
+                'sslInspectionEnabled': https_inspection})
             if gw.get('ips'):
                 self('set-generic-object', {
                     'uid': gw['uid'], 'protectInternalInterfacesOnly': False})
