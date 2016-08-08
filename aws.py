@@ -233,6 +233,8 @@ def listify(obj, key):
 class AWS(object):
     def __init__(self, key=None, secret=None, token=None, key_file=None,
                  max_time=None):
+        self.max_time = max_time
+
         def read_file(f_name):
             f_key, f_secret = None, None
             with open(f_name) as f:
@@ -246,25 +248,13 @@ class AWS(object):
 
         self.creds = {}
 
-        if key_file == 'IAM' or os.environ.get('AWS_KEY_FILE') == 'IAM':
+        if key_file == 'IAM':
             url = META_DATA + '/iam/security-credentials/'
             self.creds['role'] = http('GET', url, '')[1]
             return
 
         if key_file:
             key, secret = read_file(key_file)
-        if not key:
-            key = os.environ.get(
-                'AWS_ACCESS_KEY_ID', os.environ.get('AWS_ACCESS_KEY'))
-        if not secret:
-            secret = os.environ.get(
-                'AWS_SECRET_ACCESS_KEY', os.environ.get('AWS_SECRET_KEY'))
-        if not token:
-            token = os.environ.get('AWS_SESSION_TOKEN')
-
-        if not key and not secret and not token:
-            if 'AWS_KEY_FILE' in os.environ:
-                key, secret = read_file(os.environ['AWS_KEY_FILE'])
 
         if not key or not secret:
             raise Exception("""Please specify a source for credentials in env:
@@ -279,10 +269,6 @@ AWS_SESSION_TOKEN - (optional)
         self.creds['secret_key'] = secret
         if token:
             self.creds['token'] = token
-
-        self.max_time = max_time
-        if not self.max_time:
-            self.max_time = os.environ.get('AWS_MAX_TIME')
 
     def refresh_credentials(self):
         if not self.creds.get('role'):
@@ -462,7 +448,25 @@ def init(*args, **kwargs):
     if '_once' in globals():
         return
     globals()['_once'] = True
+
+    def set_from_env(arg_name, env_names):
+        val = kwargs.get(arg_name)
+        if not val:
+            for name in env_names:
+                val = os.environ.get(name)
+                if val:
+                    break
+            if val:
+                kwargs[arg_name] = val
+
+    set_from_env('key', ['AWS_ACCESS_KEY_ID', 'AWS_ACCESS_KEY'])
+    set_from_env('secret', ['AWS_SECRET_ACCESS_KEY', 'AWS_SECRET_KEY'])
+    set_from_env('token', ['AWS_SESSION_TOKEN'])
+    set_from_env('key_file', ['AWS_KEY_FILE'])
+    set_from_env('max_time', ['AWS_MAX_TIME'])
+
     aws = AWS(*args, **kwargs)
+
     import inspect
     for m in inspect.getmembers(aws, inspect.ismethod):
         if m[0] == '__init__':
