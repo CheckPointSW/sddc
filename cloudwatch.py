@@ -17,7 +17,7 @@ import subprocess
 import sys
 import urllib
 
-import api
+import aws
 
 
 def get_cpstat(flavor, flag, metrics):
@@ -41,11 +41,11 @@ def main(argv):
     os.environ['AWS_CA_BUNDLE'] = os.environ['CPDIR'] + '/conf/ca-bundle.crt'
     os.environ['AWS_NO_DOT'] = 'true'
 
-    region = api.http(
-        'GET', api.META_DATA + '/placement/availability-zone', '')[1][:-1]
-    instance = api.http('GET', api.META_DATA + '/instance-id', '')[1]
+    region = aws.http(
+        'GET', aws.META_DATA + '/placement/availability-zone', '')[1][:-1]
+    instance = aws.http('GET', aws.META_DATA + '/instance-id', '')[1]
 
-    api.init(key_file='IAM')
+    aws.init(key_file='IAM')
 
     metrics = []
 
@@ -90,7 +90,7 @@ def main(argv):
             return
         qs['Action'] = 'PutMetricData'
         qs['Namespace'] = 'Check Point'
-        api.request(
+        aws.request(
             'monitoring', region, 'GET', '/?' + urllib.urlencode(qs), '')
 
     qs = {}
