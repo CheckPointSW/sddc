@@ -605,55 +605,81 @@ class OpenStack(Controller):
 class Azure(Controller):
     def __init__(self, **options):
         super(Azure, self).__init__(**options)
-        self.azure = azure.Azure(credentials=options.get('credentials'))
-        subs = options['subscriptions']
-        self.subs = {
-            '/subscriptions/' + sub: sub[:8] for sub in subs}
+        self.sub = '/subscriptions/' + options['subscription']
+        self.azure = azure.Azure(subscription=options['subscription'],
+                                 credentials=options.get('credentials'))
 
-    def retrieve_vms(self):
+    def retrieve_vms_and_interfaces(self):
         vms = {}
-        for sub in self.subs:
-            headers, body = self.azure.arm(
-                'GET',
-                '%s/providers/Microsoft.Compute/virtualMachines' % sub)
-            for vm in body['value']:
-                if vm.get('tags', {}).get(
-                        'x-chkp-management') != self.management:
-                    continue
-                vm = self.azure.arm(
-                    'GET', vm['id'] + '/?$expand=instanceView')[1]
+        interfaces = {}
+        headers, body = self.azure.arm(
+            'GET',
+            '%s/providers/Microsoft.Compute/virtualMachines' % self.sub)
+        for vm in body['value']:
+            if vm.get('tags', {}).get(
+                    'x-chkp-management') != self.management:
+                continue
+            vm = self.azure.arm(
+                'GET', vm['id'] + '/?$expand=instanceView')[1]
+            vms[vm['id']] = vm
+
+        headers, body = self.azure.arm(
+            'GET',
+            '%s/providers/Microsoft.Network/networkInterfaces' % self.sub)
+        for interface in body['value']:
+            interfaces[interface['id']] = interface
+
+        headers, body = self.azure.arm(
+            'GET',
+            '%s/providers/Microsoft.Compute/virtualMachineScaleSets' %
+            self.sub)
+        for vmss in body['value']:
+            if vmss.get('tags', {}).get(
+                    'x-chkp-management') != self.management:
+                continue
+            vmss_vms = self.azure.arm(
+                'GET', vmss['id'] +
+                '/virtualMachines/?$expand=instanceView')[1]['value']
+            for vm in vmss_vms:
                 vms[vm['id']] = vm
-        return vms
+
+            for interface in self.azure.arm(
+                    'GET', vmss['id'] + '/networkInterfaces')[1]['value']:
+                interface.setdefault('tags', {})
+                interface['tags'].setdefault(
+                    'x-chkp-topology',
+                    vmss.get('tags', {}).get('x-chkp-topology', 'external'))
+                interfaces[interface['id']] = interface
+
+        return vms, interfaces
 
     def retrieve_interfaces(self):
         interfaces = {}
-        for sub in self.subs:
-            headers, body = self.azure.arm(
-                'GET',
-                '%s/providers/Microsoft.Network/networkInterfaces' % sub)
-            for interface in body['value']:
-                interfaces[interface['id']] = interface
+        headers, body = self.azure.arm(
+            'GET',
+            '%s/providers/Microsoft.Network/networkInterfaces' % self.sub)
+        for interface in body['value']:
+            interfaces[interface['id']] = interface
+
         return interfaces
 
     def retrieve_public_addresses(self):
         addresses = {}
-        for sub in self.subs:
-            headers, body = self.azure.arm(
-                'GET',
-                '%s/providers/Microsoft.Network/publicIpAddresses' % sub)
-            for address in body['value']:
-                addresses[address['id']] = address
+        headers, body = self.azure.arm(
+            'GET',
+            '%s/providers/Microsoft.Network/publicIpAddresses' % self.sub)
+        for address in body['value']:
+            addresses[address['id']] = address
         return addresses
 
     def retrieve_subnets(self):
         subnets = {}
-        for sub in self.subs:
-            headers, body = self.azure.arm(
-                'GET',
-                '%s/providers/Microsoft.Network/virtualNetworks' % sub)
-            for vnet in body['value']:
-                for subnet in vnet['properties'].get('subnets', []):
-                    subnets[subnet['id']] = subnet
+        headers, body = self.azure.arm(
+            'GET',
+            '%s/providers/Microsoft.Network/virtualNetworks' % self.sub)
+        for vnet in body['value']:
+            for subnet in vnet['properties'].get('subnets', []):
+                subnets[subnet['id']] = subnet
         return subnets
 
     def get_primary_configuration(self, interface):
@@ -673,7 +699,7 @@ class Azure(Controller):
         anti_spoofing = (tags.get('x-chkp-anti-spoofing', 'true').lower() ==
                          'true')
         if not topology:
-            if configuration.get('publicIPAddress', {}):
+            if configuration.get('publicIPAddress'):
                 topology = 'external'
             else:
                 topology = 'internal'
@@ -697,21 +723,13 @@ class Azure(Controller):
         return interface
 
     def get_instances(self):
-        vms = self.retrieve_vms()
-        interfaces = self.retrieve_interfaces()
+        vms, interfaces = self.retrieve_vms_and_interfaces()
         public_addresses = self.retrieve_public_addresses()
         subnets = self.retrieve_subnets()
         instances = []
         for vm in vms.values():
             instance_name = self.SEPARATOR.join([
-                self.name, vm['name'],
-                self.subs['/'.join(vm['id'].split('/')[:3])]])
-            power_state = None
-            for s in vm['properties']['instanceView']['statuses']:
-                if s['code'].startswith('PowerState'):
-                    power_state = s['code']
-            if power_state != 'PowerState/running':
-                continue
+                self.name, vm['name'], vm['id'].split('/')[4]])
             tags = vm.get('tags', {})
 
             instance_interfaces = []
@@ -1654,7 +1672,7 @@ def test(config_file):
                     'Your system clock is not accurate, please set up NTP')
 
         elif cls == Azure:
-            for key in ['subscriptions', 'credentials']:
+            for key in ['subscription', 'credentials']:
                 if key not in c or not c[key]:
                     raise Exception(
                         'The parameter "%s" is missing or empty' % key)

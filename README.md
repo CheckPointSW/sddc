@@ -110,7 +110,7 @@ The script takes a configuration file in JSON format
             },
             "AZURE-RESOURCES": {
                 "class": "Azure",
-                "subscriptions": ["SUBSCRIPTION-ID", ...],
+                "subscription": "SUBSCRIPTION-ID",
                 "credentials": {
                     "tenant": "THE-ACTIVE-DIRECTORY-TENANT-ID",
                     "grant_type": "client_credentials",
@@ -228,7 +228,7 @@ In reference to the above configuration:
 
         * For Azure controllers:
 
-            * subscriptions: a list of Azure subscription IDs
+            * subscription: the Azure subscription ID
 
             * credentials: an object containing one of the following alternatives (in any case the entity for which the credentials are specified (a service principal or a user) must have "read" access to the relevant resources in the subscription):
 
