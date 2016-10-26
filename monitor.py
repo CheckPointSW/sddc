@@ -254,6 +254,12 @@ class AWS(Controller):
                         listener['Listener']['InstancePort']))
                 if elb['Tags'].get('x-chkp-management') == self.management:
                     template = elb['Tags'].get('x-chkp-template')
+                    ignore_ports = elb['Tags'].get('x-chkp-ignore-ports')
+                    if ignore_ports:
+                        ignore_ports = set(ignore_ports.split(','))
+                    front_protocol_ports = [
+                        pp for pp in front_protocol_ports
+                        if pp.split('-')[1] not in ignore_ports]
                     tagged_elbs.setdefault(template, {})
                     tagged_elbs[template][dns_name] = front_protocol_ports
                 lb_name = elb['LoadBalancerName']
