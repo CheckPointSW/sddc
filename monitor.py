@@ -254,7 +254,7 @@ class AWS(Controller):
                         listener['Listener']['InstancePort']))
                 if elb['Tags'].get('x-chkp-management') == self.management:
                     template = elb['Tags'].get('x-chkp-template')
-                    ignore_ports = elb['Tags'].get('x-chkp-ignore-ports')
+                    ignore_ports = elb['Tags'].get('x-chkp-ignore-ports', [])
                     if ignore_ports:
                         ignore_ports = set(ignore_ports.split(','))
                     front_protocol_ports = [
