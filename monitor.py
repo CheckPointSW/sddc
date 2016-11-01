@@ -1242,6 +1242,7 @@ class Management(object):
                     break
             else:
                 continue
+            break
         else:
             layer = layers[0]
             position = 'top'
