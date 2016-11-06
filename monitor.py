@@ -1286,7 +1286,7 @@ class Management(object):
             # add access rule
             log('\nadding access rule for %s' % service_name)
             self('add-access-rule', {
-                'name': 'access_%s' % service_name,
+                'comments': 'access_%s' % service_name,
                 'layer': layer['uid'],
                 'position': position,
                 'source': source,
@@ -1367,7 +1367,8 @@ class Management(object):
                 for rule in rules:
                     if gw['uid'] in rule['install-on']:
                         log('\ndeleting %s in "%s"' % (
-                            rule['name'], layer['name']))
+                            rule.get('comments', rule.get('name')),
+                            layer['name']))
                         self('delete-access-rule',
                              {'uid': rule['uid'], 'layer': layer['uid']})
         # remove groups defined for the gateway
