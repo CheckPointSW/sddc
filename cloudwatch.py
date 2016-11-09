@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 #   Copyright 2015 Check Point Software Technologies LTD
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
