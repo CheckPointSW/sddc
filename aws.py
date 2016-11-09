@@ -73,27 +73,50 @@ API_TARGETS = {
     'events': ('AWSEvents', '1.1'),
 }
 
+
+class AWSException(Exception):
+    pass
+
+
+class EnvException(AWSException):
+    pass
+
+
+class CurlException(AWSException):
+    def __init__(self, err, cmd):
+        super(AWSException, self).__init__(err)
+        self.cmd = cmd
+
+
+class RoleException(AWSException):
+    pass
+
+
+class PayloadException(AWSException):
+    pass
+
+
+class VersionException(AWSException):
+    pass
+
 if os.path.isfile('/etc/cp-release'):
     os.environ.setdefault('AWS_CURL', 'curl_cli')
     if 'CURL_CA_BUNDLE' not in os.environ:
         if 'CPDIR' not in os.environ:
-            raise Exception(
+            raise EnvException(
                 'Please define CPDIR in env for the CA bundle')
         ca_bundle = os.environ['CPDIR'] + '/conf/ca-bundle.crt'
         os.environ['CURL_CA_BUNDLE'] = ca_bundle
 
     if 'https_proxy' not in os.environ:
-        host = None
-        port = None
-        out, err = subprocess.Popen(
-            ['/bin/clish', '-c', 'show proxy'], stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE).communicate()
-        for line in out.split('\n'):
-            if line.startswith('address'):
-                host = re.split(r'\s+', line)[1]
-            if line.startswith('port'):
-                port = re.split(r'\s+', line)[1]
+        host, err = subprocess.Popen(
+            ['dbget', 'proxy:ip-address'], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+        host = host.strip()
+        port, err = subprocess.Popen(
+            ['dbget', 'proxy:port'], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+        port = port.strip()
         if host and port:
             os.environ['https_proxy'] = 'http://%s:%s' % (host, port)
 
@@ -156,7 +179,7 @@ def http(method, url, body, req_headers=None, max_time=None):
     debug(truncate(out, max_debug) + '\n')
     rc = p.wait()
     if rc:
-        raise Exception('%s\n%s' % (cmd, err))
+        raise CurlException(err, cmd)
     # use only the last set of headers
     lines = [h.strip() for h in err.strip().split('\n')]
     ends = [i for i, line in enumerate(lines) if line == '']
@@ -249,18 +272,28 @@ class AWS(object):
         self.creds = {}
 
         if key_file == 'IAM':
+            try:
+                http('GET', META_DATA + '/ami-id', '', max_time=15)
+            except:
+                raise RoleException('not in AWS')
             url = META_DATA + '/iam/security-credentials/'
-            self.creds['role'] = http('GET', url, '')[1]
+            h, b = http('GET', url, '')
+            if h.get('_code') != '200':
+                raise RoleException('no role in meta-data')
+            self.creds['role'] = b
             return
 
         if key_file:
             key, secret = read_file(key_file)
 
         if not key or not secret:
-            raise Exception("""Please specify a source for credentials in env:
+            raise EnvException("""
+Please specify a source for credentials in env:
 
-AWS_KEY_FILE - text file with AWSAccessKeyId=..., AWSSecretKey=..., and
-    optionally AWSSessionToken=...
+AWS_KEY_FILE - text file with AWSAccessKeyId=..., AWSSecretKey=...,
+    and optionally AWSSessionToken=...,
+    or, the value IAM instead of a path to a text file to indicate the
+    usage of temporary credentials via a IAM instance profile
 AWS_ACCESS_KEY_ID or AWS_ACCESS_KEY
 AWS_SECRET_ACCESS_KEY or AWS_SECRET_KEY
 AWS_SESSION_TOKEN - (optional)
@@ -323,7 +356,7 @@ AWS_SESSION_TOKEN - (optional)
             hashed_payload = 'UNSIGNED-PAYLOAD'
         else:
             if isinstance(payload, file):
-                raise Exception('cannot sign streaming payload')
+                raise PayloadException('cannot sign streaming payload')
             hashed_payload = hashlib.sha256(payload).hexdigest()
 
         headers = collections.OrderedDict()
@@ -340,7 +373,7 @@ AWS_SESSION_TOKEN - (optional)
             target = query.pop('X-Amz-Target', None)
             if target is None and 'Action' in query:
                 if service not in API_TARGETS:
-                    raise Exception(
+                    raise VersionException(
                         'cannot find version or target prefix for "%s"' % (
                             service))
                 target_prefix, json_version = API_TARGETS[service]
