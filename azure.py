@@ -200,7 +200,7 @@ ARM_VERSIONS = {
     'notificationhubs/namespaces': '2014-09-01',
     'notificationhubs/checknamespaceavailability': '2014-09-01',
     'notificationhubs/billingtier': '2014-09-01',
-    'network/virtualnetworks': '2015-06-15',
+    'network/virtualnetworks': '2016-06-01',
     'network/virtualnetworkgateways': '2015-06-15',
     'network/trafficmanagerprofiles': '2015-11-01',
     'network/routetables': '2015-06-15',
@@ -594,11 +594,18 @@ def request_py(method, url, cert=None, body=None, headers=None, pool=None,
     return resp_headers, resp_body
 
 
+class CurlException(Exception):
+    def __init__(self, err, cmd):
+        super(Exception, self).__init__(err)
+        self.cmd = cmd
+
+
 def request_curl(method, url, cert=None, body=None, headers=None,
                  max_time=None):
     args = [
         os.environ['AZURE_REST_CURL'],
         '--silent',
+        '--show-error',
         '--globoff',
         '--dump-header', '/dev/fd/2',
         '--url', url,
@@ -629,7 +636,7 @@ def request_curl(method, url, cert=None, body=None, headers=None,
     response, headers = p.communicate(body)
     debug('%s\n' % headers)
     if p.poll():
-        raise Exception('curl exit is %d\n%s\n' % (p.poll(), headers))
+        raise CurlException(headers, args)
 
     # use only the last set of headers
     lines = [h.strip() for h in headers.strip().split('\n')]
@@ -648,25 +655,61 @@ def request_curl(method, url, cert=None, body=None, headers=None,
     return headers, response
 
 
+class Environment(object):
+    ATTRIBUTES = ['name', 'login', 'core', 'arm', 'graph']
+    s = {}
+
+    def __init__(self, **kwargs):
+        if set(self.ATTRIBUTES) != set(kwargs.keys()):
+            raise Exception('Too many or too few environment parameters')
+        for attr in kwargs.keys():
+            setattr(self, attr, kwargs[attr])
+        self.s[self.name] = self
+
+Environment(
+    name='AzureCloud', login='login.windows.net',
+    core='core.windows.net', arm='management.azure.com',
+    graph='graph.windows.net')
+Environment(
+    name='AzureChinaCloud', login='login.chinacloudapi.cn',
+    core='core.chinacloudapi.cn', arm='management.chinacloudapi.cn',
+    graph='graph.chinacloudapi.cn')
+Environment(
+    name='AzureUSGovernment', login='login-us.microsoftonline.com',
+    core='core.usgovcloudapi.net', arm='management.usgovcloudapi.net',
+    graph='graph.windows.net')
+Environment(
+    name='AzureGermanCloud', login='login.microsoftonline.de',
+    core='core.cloudapi.de', arm='management.microsoftazure.de',
+    graph='graph.cloudapi.de')
+
+
 class Azure(object):
-    def __init__(self, subscription=None, credentials={}, max_time=None):
+    def __init__(self, subscription=None, credentials={}, max_time=None,
+                 environment=None):
         self.pool = {}
         self.tokens = {}
         self.accounts = {}
         self.subscription = subscription
         self.credentials = credentials.copy()
         self.max_time = max_time
+        if not environment:
+            environment = 'AzureCloud'
+        if isinstance(environment, basestring):
+            environment = Environment.s[environment]
+        self.environment = environment
 
     @contextlib.contextmanager
-    def get_token(self, tenant='common',
-                  resource='https://management.core.windows.net/'):
+    def get_token(self, tenant='common', resource=None):
+        if not resource:
+            resource = 'https://management.%s/' % self.environment.core
         if (resource not in self.tokens or
                 not self.tokens[resource].get('access') or
                 self.tokens[resource].get('expires', 0) < time.time()):
             debug('get_token: %s: no cache\n' % resource)
             credentials = self.credentials.copy()
             tenant = credentials.pop('tenant', tenant)
-            url = 'https://login.windows.net'
+            url = 'https://' + self.environment.login
             url += '/%s/oauth2/token?api-version=1.0' % tenant
             credentials['resource'] = resource
             if 'username' in credentials:
@@ -693,7 +736,7 @@ class Azure(object):
             if not self.subscription:
                 raise Exception('subscription was not specified')
             path = '/subscriptions/' + self.subscription + path
-        url = 'https://management.azure.com' + path
+        url = 'https://' + self.environment.arm + path
 
         if headers is None:
             headers = []
@@ -737,7 +780,7 @@ class Azure(object):
         if headers is None:
             headers = []
 
-        resource = 'https://graph.windows.net'
+        resource = 'https://' + self.environment.graph
         url = resource + path
 
         if body:
@@ -766,7 +809,7 @@ class Azure(object):
 
         def get_accounts(provider, version, key_name):
             accounts = self.arm(
-                'GET', '/providers/' + provider + '?api-version' + version
+                'GET', '/providers/' + provider + '?api-version=' + version
                 )[1]['value']
             for a in accounts:
                 if a['properties']['provisioningState'] != 'Succeeded':
@@ -808,7 +851,8 @@ class Azure(object):
             headers_dict['x-ms-version'] = '2015-04-05'
         if account is None:
             m = re.match(
-                'https?://([^\.]+)\.blob\.core\.windows\.net(.*)$', path)
+                r'https?://([^\.]+)\.blob\.%s(.*)$' %
+                self.environment.core.replace('.', '\\.'), path)
             if m:
                 account = m.group(1)
                 path = m.group(2)
@@ -947,6 +991,12 @@ def init(*args, **kwargs):
         max_time = os.environ.get('AZURE_MAX_TIME')
         if max_time:
             kwargs['max_time'] = max_time
+
+    environment = kwargs.get('environment')
+    if not environment:
+        environment = os.environ.get('AZURE_ENVIRONMENT')
+        if environment:
+            kwargs['environment'] = environment
 
     azure = Azure(*args, **kwargs)
 
