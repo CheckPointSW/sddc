@@ -88,6 +88,7 @@ The script takes a configuration file in JSON format
                 "generation": "SOME-VALUE (Optional)",
                 "proxy-ports": ["8080"],
                 "https-inspection": true,
+                "identity-awareness": true,
                 "ips-profile": "Optimized",
                 ...  // optional attributes of a simple-gateway web_api object
                 "color": "orange",
@@ -184,6 +185,7 @@ In reference to the above configuration:
         * proxy-ports: an optional list of TCP ports on which to enable the proxy on gateway feature
 
         * https-inspection: an optional boolean attribute indicating whether to enable the HTTP Inspection feature on the gateway
+        * identity-awareness: an optional boolean attribute indicating whether to enable the Identity Awareness feature on the gateway
 
         * ips-profile: an optional IPS profile name to associate with a pre-R80 gateway
 

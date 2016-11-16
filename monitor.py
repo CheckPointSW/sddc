@@ -817,6 +817,7 @@ def http(method, url, fingerprint, headers, body):
 class Management(object):
     IN_PROGRESS = 'in progress'
     FAILED = 'failed'
+    SUCCEEDED = 'succeeded'
     LOCALHOST = {'127.0.0.1', 'localhost'}
     TEMPLATE_PREFIX = '__template__'
     GENERATION_PREFIX = '__generation__'
@@ -825,6 +826,21 @@ class Management(object):
     DUMMY_PREFIX = MONITOR_PREFIX + 'dummy-'
     SECTION = MONITOR_PREFIX + 'section'
     GATEWAY_PREFIX = '__gateway__'
+
+    CPMI_IDENTITY_AWARE_BLADE = (
+        'com.checkpoint.objects.classes.dummy.CpmiIdentityAwareBlade')
+    CPMI_PORTAL_SETTINGS = (
+        'com.checkpoint.objects.classes.dummy.CpmiPortalSettings')
+    CPMI_REALM_BLADE_ENTRY = (
+        'com.checkpoint.objects.classes.dummy.CpmiRealmBladeEntry')
+    CPMI_REALM_FETCH_OPTIONS = (
+        'com.checkpoint.objects.realms_schema.dummy.CpmiRealmFetchOptions')
+    CPMI_REALM_AUTHENTICATION = (
+        'com.checkpoint.objects.realms_schema.dummy.CpmiRealmAuthentication')
+    CPMI_REALM_AUTH_SCHEME = (
+        'com.checkpoint.objects.realms_schema.dummy.CpmiRealmAuthScheme')
+    CPMI_LOGICAL_SERVER = (
+        'com.checkpoint.objects.classes.dummy.CpmiLogicalServer')
 
     def __init__(self, **options):
         self.name = options['name']
@@ -893,20 +909,26 @@ class Management(object):
                 raise Exception('failed API call: %s%s' % (command, msg))
             if resp_body:
                 payload = json.loads(resp_body)
-            if payload.get('task-id'):
+            else:
+                raise Exception('empty API call response for: %s' % command)
+            task_id = payload.get('task-id')
+            if not task_id:
+                task_id = payload.get(
+                    'tasks', [{}])[0].get('task-id')
+            if command != 'show-task' and task_id:
                 # FIXME: it takes some time for the task to appear
                 time.sleep(2)
                 while True:
                     task = self('show-task',
-                                {'task-id': payload['task-id']})['tasks'][0]
+                                {'task-id': task_id})['tasks'][0]
                     if task['status'] != self.IN_PROGRESS:
                         break
                     progress('_')
                     time.sleep(2)
+                task = self('show-task',
+                            {'task-id': task_id,
+                             'details-level': 'full'})['tasks'][0]
                 if task['status'] == self.FAILED:
-                    task = self('show-task',
-                                {'task-id': payload['task-id'],
-                                 'details-level': 'full'})['tasks'][0]
                     # FIXME: what about partial success and warnings
                     msgs = []
                     for msg in task[
@@ -914,6 +936,8 @@ class Management(object):
                         msgs.append('%s: %s' % (msg['type'], msg['message']))
                     raise Exception(
                         '%s failed:\n%s' % (command, '\n'.join(msgs)))
+                if task['status'] == self.SUCCEEDED:
+                    payload = task
 
             if self.auto_publish and (
                     command.startswith('set-') or
@@ -1095,6 +1119,82 @@ class Management(object):
         self('set-threat-rule', {
             'uid': rule['uid'], 'layer': IPS_LAYER, 'action': profile['uid']})
 
+    def set_identity_awareness(self, gw, enabled):
+        if gw['version'] != 'R77.30':
+            log('\nidentity awarness setup is not supported for "%s"' % (
+                gw['version']))
+            return False
+        uid = gw['uid']
+        gw_gen = self('show-generic-object', {'uid': uid})
+        was_installed = gw_gen.get('identityAwareBlade', {}).get(
+            'identityAwareBladeInstalled') == 'INSTALLED'
+        log('\nsetting identity awareness: %s -> %s' % (
+            was_installed, enabled))
+        if enabled and was_installed or not enabled and not was_installed:
+            return False
+        if not enabled:
+            self('set-generic-object', {
+                'uid': uid,
+                'identityAwareBlade': {
+                    'identityAwareBladeInstalled': 'NOT_MINUS_INSTALLED',
+                    'isCollectingIdentities': False}})
+            return False
+        has_portal = 'IAMUAgent' in {
+            p.get('portalName') for p in gw_gen.get('portals', [])}
+        has_realm = 'identity_portal' in {
+            p.get('ownedName') for p in gw_gen.get('realmsForBlades', [])}
+        with open('/dev/urandom') as f:
+            psk = base64.b64encode(f.read(12))
+        gw_obj = {
+            'uid': uid,
+            'cdmModule': 'NOT_MINUS_INSTALLED',
+            'identityAwareBlade': {
+                'create': self.CPMI_IDENTITY_AWARE_BLADE,
+                'owned-object': {
+                    'idaApiSettings': {
+                        'idaApiClientVerificationSettings': []},
+                    'enableCitrix': True,
+                    'citrixSettings': {
+                        'preSharedSecret': psk},
+                    'idcSettings': [],
+                    'isCollectingIdentities': True,
+                    'identityAwareBladeInstalled': 'INSTALLED'}}}
+        if not has_portal:
+            gw_obj.update({
+                'portals': {
+                    'add': {
+                        'create': self.CPMI_PORTAL_SETTINGS,
+                        'owned-object': {
+                            'internalPort': 8886,
+                            'portalName': 'IAMUAgent',
+                            'portalAccess': 'ALL_INTERFACES',
+                            'mainUrl': 'https://0.0.0.0/_IA_MU_Agent',
+                            'ipAddress': '0.0.0.0'}}}})
+        if not has_realm:
+            gw_obj.update({
+                'realmsForBlades': {
+                    'add': {
+                        'create': self.CPMI_REALM_BLADE_ENTRY,
+                        'owned-object': {
+                            'ownedName': 'identity_portal',
+                            'displayString': 'Identity Portal Realm',
+                            'requirePasswordInFirstChallenge': True,
+                            'directory': {
+                                'fetchOptions': {
+                                    'create': self.CPMI_REALM_FETCH_OPTIONS}},
+                            'authentication': {
+                                'create': self.CPMI_REALM_AUTHENTICATION,
+                                'owned-object': {
+                                    'authSchemes': {
+                                        'add': {
+                                            'create':
+                                                self.CPMI_REALM_AUTH_SCHEME,
+                                            'owned-object': {
+                                                'authScheme': 'USER_PASS',
+                                            }}}}}}}}})
+        self('set-generic-object', gw_obj)
+        return True
+
     def get_targets(self):
         """map instance name to a policy where it is an install target"""
         policy_summaries = self('show-packages', {},
@@ -1219,7 +1319,7 @@ class Management(object):
         log('\nadding %s' % logical_server)
         ls_obj = {
             'ignore-warnings': True,  # re-use of IP address
-            'create': 'com.checkpoint.objects.classes.dummy.CpmiLogicalServer',
+            'create': self.CPMI_LOGICAL_SERVER,
             'name': logical_server,
             'ipaddr': private_address,
             'serversType': 'OTHER',
@@ -1388,9 +1488,7 @@ class Management(object):
                 self('delete-service-tcp', {'name': service['name']})
         # remove logical servers defined for the gateway
         logical_servers = self(
-            'show-generic-objects', {
-                'class-name':
-                    'com.checkpoint.objects.classes.dummy.CpmiLogicalServer'},
+            'show-generic-objects', {'class-name': self.CPMI_LOGICAL_SERVER},
             aggregate='objects')
         for logical_server in logical_servers:
             logical_server = self('show-generic-object', {
@@ -1434,6 +1532,7 @@ class Management(object):
 
         proxy_ports = simple_gateway.pop('proxy-ports', None)
         https_inspection = simple_gateway.pop('https-inspection', False)
+        identity_awareness = simple_gateway.pop('identity-awareness', False)
         ips_profile = simple_gateway.pop('ips-profile', None)
         policy = simple_gateway.pop('policy')
         otp = simple_gateway.pop('one-time-password')
@@ -1469,6 +1568,8 @@ class Management(object):
             self('set-generic-object', {
                 'uid': gw['uid'],
                 'sslInspectionEnabled': https_inspection})
+            identity_awareness = self.set_identity_awareness(
+                gw, identity_awareness)
             if gw.get('ips'):
                 self('set-generic-object', {
                     'uid': gw['uid'], 'protectInternalInterfacesOnly': False})
@@ -1486,6 +1587,18 @@ class Management(object):
             published = True
             self.auto_publish = True
             self.set_policy(gw, policy)
+            if identity_awareness:
+                cmd = 'pdp api enable'
+                log('\nrunning: "%s" on %s' % (cmd, instance.name))
+                response = self('run-script', {
+                    'script-name': cmd,
+                    'script': cmd,
+                    'targets': [instance.name]
+                    }).get('task-details', [{}])[0]
+                log('\n%s' % base64.b64decode(response.get('responseMessage')))
+                if response.get('statusCode') != self.SUCCEEDED:
+                    log('\nfailed to enable pdp api on the gateway\n%s', (
+                        base64.b64decode(response.get('responseError'))))
             if not self.customize(instance.name, custom_parameters):
                 raise Exception('customization has failed')
             self.set_object_tag_value(gw['uid'],
