@@ -108,7 +108,7 @@ if os.path.isfile('/etc/cp-release'):
         ca_bundle = os.environ['CPDIR'] + '/conf/ca-bundle.crt'
         os.environ['CURL_CA_BUNDLE'] = ca_bundle
 
-    if 'https_proxy' not in os.environ:
+    if 'https_proxy' not in os.environ or 'http_proxy' not in os.environ:
         host, err = subprocess.Popen(
             ['dbget', 'proxy:ip-address'], stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
@@ -118,7 +118,8 @@ if os.path.isfile('/etc/cp-release'):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
         port = port.strip()
         if host and port:
-            os.environ['https_proxy'] = 'http://%s:%s' % (host, port)
+            os.environ.setdefault('https_proxy', 'http://%s:%s' % (host, port))
+            os.environ.setdefault('http_proxy', 'http://%s:%s' % (host, port))
 
     no_proxy = set(os.environ.get('no_proxy', '').split(','))
     no_proxy -= {''}
