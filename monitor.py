@@ -928,16 +928,23 @@ class Management(object):
                 task = self('show-task',
                             {'task-id': task_id,
                              'details-level': 'full'})['tasks'][0]
-                if task['status'] == self.FAILED:
-                    # FIXME: what about partial success and warnings
-                    msgs = []
-                    for msg in task[
-                            'task-details'][0]['stagesInfo'][0]['messages']:
-                        msgs.append('%s: %s' % (msg['type'], msg['message']))
-                    raise Exception(
-                        '%s failed:\n%s' % (command, '\n'.join(msgs)))
-                if task['status'] == self.SUCCEEDED:
+                status = task['status']
+                if status == self.SUCCEEDED:
                     payload = task
+                else:
+                    details = json.dumps(
+                        task.get('task-details', [None])[0], indent=2)
+                    if command == 'install-policy' and status == self.FAILED:
+                        # FIXME: what about partial success and warnings
+                        msgs = []
+                        for msg in task[
+                                'task-details'][0]['stagesInfo'][0][
+                                    'messages']:
+                            msgs.append('%s: %s' % (
+                                msg['type'], msg['message']))
+                        details = '\n'.join(msgs)
+                    raise Exception(
+                        '%s: %s :\n%s' % (command, status, details))
 
             if self.auto_publish and (
                     command.startswith('set-') or
