@@ -842,6 +842,11 @@ class Management(object):
     CPMI_LOGICAL_SERVER = (
         'com.checkpoint.objects.classes.dummy.CpmiLogicalServer')
 
+    BAD_SESSION_PATTERNS = [
+        re.compile(r'.*Wrong session id'),
+        re.compile(r'.* locked[: ]'),
+        re.compile(r'.*Operation is not allowed in read only mode')]
+
     def __init__(self, **options):
         self.name = options['name']
         self.host = options['host']
@@ -904,7 +909,7 @@ class Management(object):
                     msg = ': ' + json.loads(resp_body)['message']
                 except Exception:
                     msg = ''
-                if 'Wrong session id' in msg:
+                if any(p.match(msg) for p in BAD_SESSION_PATTERNS):
                     self.sid = None
                 raise Exception('failed API call: %s%s' % (command, msg))
             if resp_body:
@@ -971,21 +976,18 @@ class Management(object):
                 progress('+')
                 resp = json.loads(subprocess.check_output([
                     'mgmt_cli', '--root', 'true', '--format', 'json',
-                    'login', 'session-comments', obj['comments']]))
+                    'login']))
             else:
                 resp = self('login',
-                            {'user': self.user, 'password': self.password,
-                             'session-comments': obj['comments']})
+                            {'user': self.user, 'password': self.password})
             self.sid = resp['sid']
             debug('\nnew session:  %s' % resp['uid'])
             for session in self('show-sessions', {'details-level': 'full'},
                                 aggregate='objects'):
                 if session['uid'] == resp['uid']:
                     continue
-                if self.name == self.get_object_tag_value(
-                        session, self.MONITOR_PREFIX):
-                    log('\ndiscarding session: %s' % session['uid'])
-                    self('discard', {'uid': session['uid']})
+                log('\ndiscarding session: %s' % session['uid'])
+                self('discard', {'uid': session['uid']})
             return self
         except:
             self.__exit__(*sys.exc_info())
@@ -1829,7 +1831,6 @@ def test(config_file):
                 'The parameter "%s" is missing in management section\n' % key)
 
     log('\nTesting management connectivity...\n')
-    config['management']['name'] = config['management']['name'] + '-test'
     with Management(**config['management']) as management:
         management.get_gateways()
 
