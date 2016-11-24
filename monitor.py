@@ -1394,7 +1394,11 @@ class Management(object):
                 original_source = group_uid
             # add access rule
             log('\nadding access rule for %s' % service_name)
+            short_service_name = service_name
+            if len(short_service_name) > 38:
+                short_service_name = short_service_name[:35] + '___'
             self('add-access-rule', {
+                'name': short_service_name,
                 'comments': 'access_%s' % service_name,
                 'layer': layer['uid'],
                 'position': position,
