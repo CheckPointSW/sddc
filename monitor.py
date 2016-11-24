@@ -909,7 +909,7 @@ class Management(object):
                     msg = ': ' + json.loads(resp_body)['message']
                 except Exception:
                     msg = ''
-                if any(p.match(msg) for p in BAD_SESSION_PATTERNS):
+                if any(p.match(msg) for p in self.BAD_SESSION_PATTERNS):
                     self.sid = None
                 raise Exception('failed API call: %s%s' % (command, msg))
             if resp_body:
