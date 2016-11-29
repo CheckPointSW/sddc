@@ -256,7 +256,7 @@ class AWS(Controller):
                     template = elb['Tags'].get('x-chkp-template')
                     ignore_ports = elb['Tags'].get('x-chkp-ignore-ports', [])
                     if ignore_ports:
-                        ignore_ports = set(ignore_ports.split(','))
+                        ignore_ports = set(ignore_ports.split('/'))
                     front_protocol_ports = [
                         pp for pp in front_protocol_ports
                         if pp.split('-')[1] not in ignore_ports]
@@ -303,7 +303,7 @@ class AWS(Controller):
                 template = alb['Tags'].get('x-chkp-template')
                 ignore_ports = alb['Tags'].get('x-chkp-ignore-ports', [])
                 if ignore_ports:
-                    ignore_ports = set(ignore_ports.split(','))
+                    ignore_ports = set(ignore_ports.split('/'))
                 front_protocol_ports = [
                     pp for pp in front_protocol_ports
                     if pp.split('-')[1] not in ignore_ports]
