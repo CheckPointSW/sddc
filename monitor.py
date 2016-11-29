@@ -1835,6 +1835,9 @@ def test(config_file):
                 if key not in c or not c[key]:
                     raise Exception(
                         'The parameter "%s" is missing or empty' % key)
+            if not isinstance(c['regions'], list):
+                raise Exception(
+                    'The parameter "regions" should be an array')
             url = 'https://ec2.' + c['regions'][0] + '.amazonaws.com/'
             h, b = aws.http('GET', url, '')
             d = h.get('date')
