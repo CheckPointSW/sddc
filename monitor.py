@@ -270,6 +270,46 @@ class AWS(Controller):
                 for protocol_port in back_protocol_ports:
                     all_elbs[lb_name][protocol_port] = cidrs
 
+            headers, body = self.aws.request(
+                'elasticloadbalancing', region, 'GET',
+                '/?Version=2015-12-01&Action=DescribeLoadBalancers', '')
+            alb_list = aws.listify(body['DescribeLoadBalancersResult'][
+                'LoadBalancers'], 'member')
+            for alb in alb_list:
+                headers, body = self.aws.request(
+                    'elasticloadbalancing', region, 'GET',
+                    '/?' + urllib.urlencode({
+                        'Version': '2015-12-01',
+                        'Action': 'DescribeTags',
+                        'ResourceArns.member.1': alb['LoadBalancerArn']}), '')
+                alb['Tags'] = self.get_tags(aws.listify(
+                    body['DescribeTagsResult']['TagDescriptions'],
+                    'member')[0]['Tags'])
+                if alb['Tags'].get('x-chkp-management') != self.management:
+                    continue
+                dns_name = alb['DNSName']
+                headers, body = self.aws.request(
+                    'elasticloadbalancing', region, 'GET',
+                    '/?' + urllib.urlencode({
+                        'Version': '2015-12-01',
+                        'Action': 'DescribeListeners',
+                        'LoadBalancerArn': alb['LoadBalancerArn']}), '')
+                alb['ListenerDescriptions'] = aws.listify(
+                    body['DescribeListenersResult']['Listeners'], 'member')
+                front_protocol_ports = []
+                for listener in alb['ListenerDescriptions']:
+                    front_protocol_ports.append('%s-%s' % (
+                        listener['Protocol'], listener['Port']))
+                template = alb['Tags'].get('x-chkp-template')
+                ignore_ports = alb['Tags'].get('x-chkp-ignore-ports', [])
+                if ignore_ports:
+                    ignore_ports = set(ignore_ports.split(','))
+                front_protocol_ports = [
+                    pp for pp in front_protocol_ports
+                    if pp.split('-')[1] not in ignore_ports]
+                tagged_elbs.setdefault(template, {})
+                tagged_elbs[template][dns_name] = front_protocol_ports
+
             elbs['by-template'][region] = tagged_elbs
 
             headers, body = self.aws.request(
