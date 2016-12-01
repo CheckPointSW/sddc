@@ -194,6 +194,24 @@ def http(method, url, body, req_headers=None, max_time=None):
     return headers, out
 
 
+def get_host_service(service, region):
+    if service == 'iam':
+        host = service
+    elif service.endswith('s3') and not region.startswith('cn-'):
+        if region == 'us-east-1':
+            host = service
+        else:
+            host = service + '-' + region
+        service = 's3'
+    else:
+        host = service + '.' + region
+    suffix = '.amazonaws.com'
+    if region.startswith('cn-'):
+        suffix += '.cn'
+    host += suffix
+    return host, service
+
+
 def sign(key, msg, hex=False):
     sig = hmac.new(key, msg.encode('utf-8'), hashlib.sha256)
     if hex:
@@ -331,25 +349,12 @@ AWS_SESSION_TOKEN - (optional)
             query = urlparse.parse_qs(url_parts.query, keep_blank_values=True,
                                       strict_parsing=True)
             query = {k: query[k][0] for k in query}
-        now = datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
-        if service == 'iam':
-            host = service
-        elif service.endswith('s3') and not region.startswith('cn-'):
-            if region == 'us-east-1':
-                host = service
-            else:
-                host = service + '-' + region
-            service = 's3'
-        else:
-            host = service + '.' + region
+
+        host, service = get_host_service(service, region)
+        url = 'https://' + host + url_parts.path
         signing_name = os.environ.get(
             'AWS_SIGNING_NAME_' + service.replace('.', '_'), service)
-        suffix = '.amazonaws.com'
-        if region.startswith('cn-'):
-            suffix += '.cn'
-        host += suffix
-        url = 'https://' + host + url_parts.path
-
+        now = datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
         scope = '/'.join([now[:8], region, signing_name, 'aws4_request'])
 
         if service.endswith('s3') and (

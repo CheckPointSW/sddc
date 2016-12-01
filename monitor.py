@@ -1838,7 +1838,9 @@ def test(config_file):
             if not isinstance(c['regions'], list):
                 raise Exception(
                     'The parameter "regions" should be an array')
-            url = 'https://ec2.' + c['regions'][0] + '.amazonaws.com/'
+            url = ''.join([
+                'https://', aws.get_host_service('ec2', c['regions'][0])[0],
+                '/'])
             h, b = aws.http('GET', url, '')
             d = h.get('date')
             t1 = datetime.datetime(*email.utils.parsedate(d)[:6])
