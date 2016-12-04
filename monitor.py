@@ -1600,6 +1600,8 @@ class Management(object):
                 'one-time-password': otp}
             if len(gw['interfaces']) == 1:
                 gw['interfaces'][0]['anti-spoofing'] = False
+                gw['interfaces'][0].pop('topology-settings', None)
+                gw['interfaces'][0]['topology'] = 'external'
             version = simple_gateway.pop('version')
             if version:
                 gw['version'] = version
