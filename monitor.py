@@ -219,120 +219,125 @@ class AWS(Controller):
                 interfaces[region][i['networkInterfaceId']] = i
         return interfaces
 
-    def retrieve_elbs(self, subnets):
-        elbs = {
-            'by-template': {},
-            'by-instance': {}}
-        for region in self.regions:
-            i2lb_names = {}
-            tagged_elbs = {}
-            all_elbs = {}
+    def retrieve_classic_lbs(self, region, subnets, auto_scaling_groups,
+                             by_template, by_instance):
+        i2lb_names = {}
+        lb_name2cidrs = {}
+        headers, body = self.aws.request(
+            'elasticloadbalancing', region, 'GET',
+            '/?Action=DescribeLoadBalancers', '')
+        elb_list = aws.listify(body['DescribeLoadBalancersResult'][
+            'LoadBalancerDescriptions'], 'member')
+        for elb in elb_list:
             headers, body = self.aws.request(
                 'elasticloadbalancing', region, 'GET',
-                '/?Action=DescribeLoadBalancers', '')
-            elb_list = aws.listify(body['DescribeLoadBalancersResult'][
-                'LoadBalancerDescriptions'], 'member')
-            for elb in elb_list:
-                headers, body = self.aws.request(
-                    'elasticloadbalancing', region, 'GET',
-                    '/?Action=DescribeTags&LoadBalancerNames.member.1=' +
-                    elb['LoadBalancerName'], '')
-                elb['Tags'] = self.get_tags(aws.listify(
-                    body['DescribeTagsResult']['TagDescriptions'],
-                    'member')[0]['Tags'])
-                cidrs = [subnets[region][s]['cidrBlock']
-                         for s in elb['Subnets']]
-                dns_name = elb['DNSName']
-                front_protocol_ports = []
-                back_protocol_ports = []
-                for listener in elb['ListenerDescriptions']:
-                    front_protocol_ports.append('%s-%s' % (
-                        listener['Listener']['Protocol'],
-                        listener['Listener']['LoadBalancerPort']))
-                    back_protocol_ports.append('%s-%s' % (
-                        listener['Listener']['InstanceProtocol'],
-                        listener['Listener']['InstancePort']))
-                if elb['Tags'].get('x-chkp-management') == self.management:
-                    template = elb['Tags'].get('x-chkp-template')
-                    ignore_ports = elb['Tags'].get('x-chkp-ignore-ports', [])
-                    if ignore_ports:
-                        ignore_ports = set(ignore_ports.split(':'))
-                    front_protocol_ports = [
-                        pp for pp in front_protocol_ports
-                        if pp.split('-')[1] not in ignore_ports]
-                    tagged_elbs.setdefault(template, {})
-                    tagged_elbs[template][dns_name] = front_protocol_ports
-                lb_name = elb['LoadBalancerName']
-                for i in elb['Instances']:
-                    i2lb_names.setdefault(i['InstanceId'], set()).add(
-                        elb['LoadBalancerName'])
-                all_elbs.setdefault(lb_name, {})
-                for protocol_port in back_protocol_ports:
-                    all_elbs[lb_name][protocol_port] = cidrs
-
-            headers, body = self.aws.request(
-                'elasticloadbalancing', region, 'GET',
-                '/?Version=2015-12-01&Action=DescribeLoadBalancers', '')
-            alb_list = aws.listify(body['DescribeLoadBalancersResult'][
-                'LoadBalancers'], 'member')
-            for alb in alb_list:
-                headers, body = self.aws.request(
-                    'elasticloadbalancing', region, 'GET',
-                    '/?' + urllib.urlencode({
-                        'Version': '2015-12-01',
-                        'Action': 'DescribeTags',
-                        'ResourceArns.member.1': alb['LoadBalancerArn']}), '')
-                alb['Tags'] = self.get_tags(aws.listify(
-                    body['DescribeTagsResult']['TagDescriptions'],
-                    'member')[0]['Tags'])
-                if alb['Tags'].get('x-chkp-management') != self.management:
-                    continue
-                dns_name = alb['DNSName']
-                headers, body = self.aws.request(
-                    'elasticloadbalancing', region, 'GET',
-                    '/?' + urllib.urlencode({
-                        'Version': '2015-12-01',
-                        'Action': 'DescribeListeners',
-                        'LoadBalancerArn': alb['LoadBalancerArn']}), '')
-                alb['ListenerDescriptions'] = aws.listify(
-                    body['DescribeListenersResult']['Listeners'], 'member')
-                front_protocol_ports = []
-                for listener in alb['ListenerDescriptions']:
-                    front_protocol_ports.append('%s-%s' % (
-                        listener['Protocol'], listener['Port']))
-                template = alb['Tags'].get('x-chkp-template')
-                ignore_ports = alb['Tags'].get('x-chkp-ignore-ports', [])
+                '/?Action=DescribeTags&LoadBalancerNames.member.1=' +
+                elb['LoadBalancerName'], '')
+            tags = self.get_tags(aws.listify(
+                body['DescribeTagsResult']['TagDescriptions'],
+                'member')[0]['Tags'])
+            cidrs = [subnets[s]['cidrBlock'] for s in elb['Subnets']]
+            dns_name = elb['DNSName']
+            front_protocol_ports = []
+            back_protocol_ports = []
+            for listener in elb['ListenerDescriptions']:
+                front_protocol_ports.append('%s-%s' % (
+                    listener['Listener']['Protocol'],
+                    listener['Listener']['LoadBalancerPort']))
+                back_protocol_ports.append('%s-%s' % (
+                    listener['Listener']['InstanceProtocol'],
+                    listener['Listener']['InstancePort']))
+            if tags.get('x-chkp-management') == self.management:
+                template = tags.get('x-chkp-template')
+                ignore_ports = tags.get('x-chkp-ignore-ports', [])
                 if ignore_ports:
                     ignore_ports = set(ignore_ports.split(':'))
                 front_protocol_ports = [
                     pp for pp in front_protocol_ports
                     if pp.split('-')[1] not in ignore_ports]
-                tagged_elbs.setdefault(template, {})
-                tagged_elbs[template][dns_name] = front_protocol_ports
+                by_template.setdefault(template, {})
+                by_template[template][dns_name] = front_protocol_ports
+            lb_name = elb['LoadBalancerName']
+            for i in elb['Instances']:
+                i2lb_names.setdefault(i['InstanceId'], set()).add(
+                    elb['LoadBalancerName'])
+            lb_name2cidrs.setdefault(lb_name, {})
+            for protocol_port in back_protocol_ports:
+                lb_name2cidrs[lb_name][protocol_port] = cidrs
 
-            elbs['by-template'][region] = tagged_elbs
+        for group in auto_scaling_groups:
+            for i in group['Instances']:
+                i2lb_names.setdefault(i['InstanceId'], set()).update(
+                    group['LoadBalancerNames'])
 
+        for i in i2lb_names:
+            by_instance.setdefault(i, {})
+            for lb_name in i2lb_names[i]:
+                for protocol_port in lb_name2cidrs.get(lb_name, {}):
+                    by_instance[i].setdefault(protocol_port, []).extend(
+                        lb_name2cidrs[lb_name].get(protocol_port, []))
+
+    def retrieve_application_lbs(self, region, subnets, auto_scaling_groups,
+                                 by_template, by_instance):
+        headers, body = self.aws.request(
+            'elasticloadbalancing', region, 'GET',
+            '/?Version=2015-12-01&Action=DescribeLoadBalancers', '')
+        alb_list = aws.listify(body['DescribeLoadBalancersResult'][
+            'LoadBalancers'], 'member')
+        for alb in alb_list:
+            headers, body = self.aws.request(
+                'elasticloadbalancing', region, 'GET',
+                '/?' + urllib.urlencode({
+                    'Version': '2015-12-01',
+                    'Action': 'DescribeTags',
+                    'ResourceArns.member.1': alb['LoadBalancerArn']}), '')
+            tags = self.get_tags(aws.listify(
+                body['DescribeTagsResult']['TagDescriptions'],
+                'member')[0]['Tags'])
+            if tags.get('x-chkp-management') != self.management:
+                continue
+            dns_name = alb['DNSName']
+            headers, body = self.aws.request(
+                'elasticloadbalancing', region, 'GET',
+                '/?' + urllib.urlencode({
+                    'Version': '2015-12-01',
+                    'Action': 'DescribeListeners',
+                    'LoadBalancerArn': alb['LoadBalancerArn']}), '')
+            listeners = aws.listify(
+                body['DescribeListenersResult']['Listeners'], 'member')
+            front_protocol_ports = []
+            for listener in listeners:
+                front_protocol_ports.append('%s-%s' % (
+                    listener['Protocol'], listener['Port']))
+            template = tags.get('x-chkp-template')
+            ignore_ports = tags.get('x-chkp-ignore-ports', [])
+            if ignore_ports:
+                ignore_ports = set(ignore_ports.split(':'))
+            front_protocol_ports = [
+                pp for pp in front_protocol_ports
+                if pp.split('-')[1] not in ignore_ports]
+            by_template.setdefault(template, {})
+            by_template[template][dns_name] = front_protocol_ports
+
+    def retrieve_elbs(self, subnets):
+        by_template = {}
+        by_instance = {}
+        for region in self.regions:
+            by_template[region] = {}
+            by_instance[region] = {}
             headers, body = self.aws.request(
                 'autoscaling', region, 'GET',
                 '/?Action=DescribeAutoScalingGroups', '')
-            groups = aws.listify(body['DescribeAutoScalingGroupsResult'][
-                'AutoScalingGroups'], 'member')
-            for group in groups:
-                for i in group['Instances']:
-                    i2lb_names.setdefault(i['InstanceId'], set()).update(
-                        group['LoadBalancerNames'])
-
-            i2cidrs = {}
-            for i in i2lb_names:
-                i2cidrs.setdefault(i, {})
-                for lb_name in i2lb_names[i]:
-                    for protocol_port in all_elbs.get(lb_name, {}):
-                        i2cidrs[i].setdefault(protocol_port, []).extend(
-                            all_elbs[lb_name].get(protocol_port, []))
-
-            elbs['by-instance'][region] = i2cidrs
-
-        return elbs
+            auto_scaling_groups = aws.listify(
+                body['DescribeAutoScalingGroupsResult']['AutoScalingGroups'],
+                'member')
+            self.retrieve_classic_lbs(
+                region, subnets[region], auto_scaling_groups,
+                by_template[region], by_instance[region])
+            self.retrieve_classic_lbs(
+                region, subnets[region], auto_scaling_groups,
+                by_template[region], by_instance[region])
+        return {'by-templates': by_template, 'by-instance': by_instance}
 
     def retrieve_all(self, region, path, top_set, collect_set):
         objects = []
