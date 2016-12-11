@@ -69,6 +69,7 @@ The script takes a configuration file in JSON format
         "management": {
             "name": "my-management",
             "host": "IP-ADDRESS-OR-HOST-NAME[:PORT]",
+            "domain": "MANAGEMENT-DOMAIN (Optional)",
             "fingerprint": "sha256:FINGERPRINT-IN-HEX",
             "user": "SMARTCENTER-ADMIN-USERNAME",
             "password": "STRING",
@@ -141,6 +142,8 @@ In reference to the above configuration:
     * name: a string representing the management server. This should match the x-chkp-management tag on the instance
 
     * host: the IP address or host name of the management server.
+
+    * domain: the name of UID of the management domain if applicable (optional).
 
     * fingerprint: the SHA256 fingerprint of the management certificate. disable fingerprint checking by providing an empty string "" (insecure but reasonable if running locally on the management server). To retrieve the fingerprint, run the following command on the management server (in bash):
 

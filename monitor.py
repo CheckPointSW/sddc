@@ -953,6 +953,7 @@ class Management(object):
     def __init__(self, **options):
         self.name = options['name']
         self.host = options['host']
+        self.domain = options.get('domain')
         self.fingerprint = options.get('fingerprint', '')
         self.user = options.get('user')
         self.password = options.get(
@@ -1077,12 +1078,16 @@ class Management(object):
                                       silent=True)
             if not self.user:
                 progress('+')
-                resp = json.loads(subprocess.check_output([
-                    'mgmt_cli', '--root', 'true', '--format', 'json',
-                    'login']))
+                login_args = ['mgmt_cli', '--root', 'true', '--format', 'json',
+                              'login']
+                if self.domain:
+                    login_args += ['domain', self.domain]
+                resp = json.loads(subprocess.check_output(login_args))
             else:
-                resp = self('login',
-                            {'user': self.user, 'password': self.password})
+                login_data = {'user': self.user, 'password': self.password}
+                if self.domain:
+                    login_data['domain'] = self.domain
+                resp = self('login', login_data)
             self.sid = resp['sid']
             debug('\nnew session:  %s' % resp['uid'])
             for session in self('show-sessions', {'details-level': 'full'},
