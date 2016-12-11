@@ -283,6 +283,10 @@ If you are using a IAM role profile, you need to provide it with the following p
             "ec2:DescribeInstances",
             "elasticloadbalancing:DescribeLoadBalancers",
             "elasticloadbalancing:DescribeTags",
+            "elasticloadbalancing:DescribeListeners",
+            "elasticloadbalancing:DescribeTargetGroups",
+            "elasticloadbalancing:DescribeRules",
+            "elasticloadbalancing:DescribeTargetHealth",
             "autoscaling:DescribeAutoScalingGroups"
           ],
           "Effect": "Allow",
