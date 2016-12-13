@@ -452,7 +452,8 @@ class AWS(Controller):
         anti_spoofing = (tags.get('x-chkp-anti-spoofing', 'true').lower() ==
                          'true')
         if not topology:
-            if eni.get('association', {}).get('publicIp'):
+            if eni.get('association', {}).get('publicIp') or (
+                    eni['attachment']['deviceIndex'] == '0'):
                 topology = 'external'
             else:
                 topology = 'internal'
@@ -466,12 +467,6 @@ class AWS(Controller):
             'anti-spoofing': anti_spoofing,
             'topology': topology
         }
-
-        if topology == 'internal':
-            interface['topology-settings'] = {
-                'ip-address-behind-this-interface':
-                    'network defined by the interface ip and net mask'
-            }
 
         return interface
 
@@ -822,12 +817,6 @@ class Azure(Controller):
             'anti-spoofing': anti_spoofing,
             'topology': topology
         }
-
-        if topology == 'internal':
-            interface['topology-settings'] = {
-                'ip-address-behind-this-interface':
-                    'network defined by the interface ip and net mask'
-            }
 
         return interface
 
@@ -1655,6 +1644,7 @@ class Management(object):
         https_inspection = simple_gateway.pop('https-inspection', False)
         identity_awareness = simple_gateway.pop('identity-awareness', False)
         ips_profile = simple_gateway.pop('ips-profile', None)
+        specific_network = simple_gateway.pop('specific-network', None)
         policy = simple_gateway.pop('policy')
         otp = simple_gateway.pop('one-time-password')
         custom_parameters = simple_gateway.pop('custom-parameters', [])
@@ -1668,8 +1658,32 @@ class Management(object):
                 'one-time-password': otp}
             if len(gw['interfaces']) == 1:
                 gw['interfaces'][0]['anti-spoofing'] = False
-                gw['interfaces'][0].pop('topology-settings', None)
-                gw['interfaces'][0]['topology'] = 'external'
+            else:
+                this_net = {
+                    'ip-address-behind-this-interface':
+                        'network defined by the interface ip and net mask'}
+                for interface in gw['interfaces']:
+                    if interface.get('topology-settings'):
+                        continue
+                    topology = interface['topology']
+                    if topology == 'internal':
+                        interface['topology-settings'] = this_net
+                        continue
+                    if topology.startswith('specific'):
+                        spec, colon, spec_net = topology.partition(':')
+                        if spec != 'specific':
+                            raise Exception('bad topology: %s: "%s"' % (
+                                interface['name'], topology))
+                        if spec_net:
+                            specific_network = spec_net
+                        if not specific_network:
+                            raise Exception(
+                                'no specific-network for topology: %s' %
+                                interface['name'])
+                        interface['topology'] = 'internal'
+                        interface['topology-settings'] = {
+                            'ip-address-behind-this-interface': 'specific',
+                            'specific-network': specific_network}
             version = simple_gateway.pop('version')
             if version:
                 gw['version'] = version

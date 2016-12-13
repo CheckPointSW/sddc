@@ -56,10 +56,10 @@ The following tags should be added to gateway instances:
 
 Optionally, in AWS and in Azure, network interface objects (ENIs/networkInterfaces) can have the following tags:
 
-|Tag name|Tag value|
-|--------|---------|
-|x-chkp-topology|one of "external" or "internal"|
-|x-chkp-anti-spoofing|"true" or "false"|
+|Tag name|Tag value|Comment|
+|--------|---------|-------|
+|x-chkp-topology|one of "external", "internal" or "specific"|A qualification of the address space that is found "behind" the interface. If not specified, on single interface gateways or on interfaces that are associated with a public IP address, this value defaults to be "external" and otherwise to "internal". The value "external" means the internet address space minus the addresses specified on "internal" and "specific". The value "internal" means the address range of the subnet to which the interface is connected. The value "specific" means the addresses represented by the network object group that is specified in the "specific-network" attribute of the template in the configuration file. Alternatively, if the value is of the form "specific:NETWORK-OBJECT-GROUP", then the addresses represented by the pre-existing object named NETWORK-OBJECT-GROUP are taken (overriding the configuration file)|
+|x-chkp-anti-spoofing|"true" or "false"|Whether to enforce Anti Spoofing protection on traffic going through the interface, this is overridden to be "false" for single interface gateways|
 
 
 The script takes a configuration file in JSON format
@@ -86,6 +86,7 @@ The script takes a configuration file in JSON format
             "TEMPLATE1-NAME": {
                 "proto": "BASE-TEMPLATE-NAME",
                 "policy": "POLICY1-NAME",
+                "specific-network": "INTERNAL-NETWORK-OBJECT-GROUP (Optional)",
                 "generation": "SOME-VALUE (Optional)",
                 "proxy-ports": ["8080"],
                 "https-inspection": true,
@@ -181,7 +182,9 @@ In reference to the above configuration:
 
         * version: the gateway version (e.g. R77.30)
 
-        * policy: a name of pre-existing security policy package to be installed on the gateway
+        * policy: a name of a pre-existing security policy package to be installed on the gateway
+
+        * specific-network: an optional name of a pre-existing network object group that defines the topology settings for the interfaces marked with "specific" topology. This attribute is mandatory if any of the scanned instances has an interface with a topology set to "specific". Typically this should point to the name of a "Group with Exclusions" object, which contains a network group holding the VPC address range and excludes a network group which contains the "external" networks of the VPC, that is, networks that are connected to the internet
 
         * generation: an optional string or number that can be used to force re-applying a template to an already existing gateway. If generation is specified and its value is different than the previous value, then the template settings will be reapplied to the gateway
 
