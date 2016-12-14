@@ -1399,7 +1399,6 @@ class Management(object):
     def add_load_balancer(self, gw, policy, dns_name, protocol_ports):
         debug('\nadding %s: %s\n' % (
             dns_name, json.dumps(protocol_ports, indent=2)))
-        # FIXME: assume that it is correct to use the first interface
         private_address = gw['interfaces'][0]['ipv4-address']
         private_name = private_address + '_' + gw['name']
         if not self.get_uid(private_name):
@@ -1407,6 +1406,17 @@ class Management(object):
             self('add-host', {
                 'ignore-warnings': True,  # re-use of IP address
                 'name': private_name, 'ip-address': private_address})
+        if len(gw['interfaces']) > 1:
+            nat_address = gw['interfaces'][1]['ipv4-address']
+            nat_name = nat_address + '_' + gw['name']
+            if not self.get_uid(nat_name):
+                log('\nadding %s' % nat_name)
+                self('add-host', {
+                    'ignore-warnings': True,  # re-use of IP address
+                    'name': nat_name, 'ip-address': nat_address})
+        else:
+            nat_address = private_address
+            nat_name = private_name
         # create logical server
         logical_server = None
         for i in xrange(100):
@@ -1515,7 +1525,7 @@ class Management(object):
                 'original-source': original_source,
                 'original-destination': private_name,
                 'original-service': service_name,
-                'translated-source': private_name,
+                'translated-source': nat_name,
                 'method': 'hide',
                 'install-on': gw['name']})
 
