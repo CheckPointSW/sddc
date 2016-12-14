@@ -144,7 +144,7 @@ In reference to the above configuration:
 
     * host: the IP address or host name of the management server.
 
-    * domain: the name of UID of the management domain if applicable (optional).
+    * domain: the name or UID of the management domain if applicable (optional).
 
     * fingerprint: the SHA256 fingerprint of the management certificate. disable fingerprint checking by providing an empty string "" (insecure but reasonable if running locally on the management server). To retrieve the fingerprint, run the following command on the management server (in bash):
 
