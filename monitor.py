@@ -1081,7 +1081,8 @@ class Management(object):
             debug('\nnew session:  %s' % resp['uid'])
             for session in self('show-sessions', {'details-level': 'full'},
                                 aggregate='objects'):
-                if session['uid'] == resp['uid']:
+                if session['uid'] == resp['uid'] or (
+                        session['application'] != 'WEB_API'):
                     continue
                 log('\ndiscarding session: %s' % session['uid'])
                 self('discard', {'uid': session['uid']})
