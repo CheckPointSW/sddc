@@ -803,7 +803,7 @@ class Azure(Controller):
         anti_spoofing = (tags.get('x-chkp-anti-spoofing', 'true').lower() ==
                          'true')
         if not topology:
-            if configuration.get('publicIPAddress'):
+            if configuration.get('publicIPAddress') or index == 0:
                 topology = 'external'
             else:
                 topology = 'internal'
