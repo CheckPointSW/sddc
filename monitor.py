@@ -497,7 +497,9 @@ class AWS(Controller):
                     log('no ip address for %s\n' % instance_name)
                     continue
 
-                for interface in instance['networkInterfaceSet']:
+                for interface in sorted(
+                        instance['networkInterfaceSet'],
+                        key=lambda i: int(i['attachment']['deviceIndex'])):
                     interfaces.append(self.get_topology(
                         enis[region][interface['networkInterfaceId']],
                         subnets[region]))
