@@ -625,25 +625,35 @@ def request_curl(method, url, cert=None, body=None, headers=None,
     if max_time:
         args += ['--max-time', str(max_time)]
 
-    debug('%s\n' % args)
-
     if headers:
         for h in headers:
             args += ['--header', h]
+
+    args_no_auth =[]
+    for arg in args:
+        if arg.lower().startswith('authorization'):
+            key, col, val = arg.partition(':')
+            arg = '%s%s *' % (key, col)
+        args_no_auth.append(arg)
+    debug('%s\n' % args_no_auth)
 
     p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE)
     response, headers = p.communicate(body)
     debug('%s\n' % headers)
     if p.poll():
-        raise CurlException(headers, args)
+        raise CurlException(headers, args_no_auth)
 
     # use only the last set of headers
     lines = [h.strip() for h in headers.strip().split('\n')]
     ends = [i for i, line in enumerate(lines) if line == '']
     if len(ends) > 0:
         lines = lines[ends[-1] + 1:]
-    proto, code, reason = lines[0].split(' ', 2)
+    try:
+        proto, code, reason = lines[0].split(' ', 2)
+    except:
+        raise CurlException(
+            'Bad status line: %s' % repr(lines[0]), args_no_auth)
     headers = {'proto': proto, 'code': int(code), 'reason': reason}
     for line in lines[1:]:
         key, sep, value = line.partition(':')
