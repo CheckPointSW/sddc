@@ -188,6 +188,18 @@ class Controller(object):
     def get_instances(self):
         raise Exception('not implemented')
 
+    @staticmethod
+    @contextlib.contextmanager
+    def Tester(cls, **options):
+        controller = cls(**options)
+        yield controller
+        controller.get_instances()
+
+    @staticmethod
+    def test(cls, **options):
+        with Controller.Tester(cls, **options) as controller:
+            controller  # do nothing but keep pyflakes happy
+
 
 class AWS(Controller):
     def __init__(self, **options):
@@ -198,11 +210,29 @@ class AWS(Controller):
             key_file=options.get('cred-file'))
         self.regions = options['regions']
 
+    def request(self, service, *args, **kwargs):
+        headers, body = self.aws.request(service, *args, **kwargs)
+        if headers.get('_code') == '200':
+            return headers, body
+        error = None
+        code = None
+        if headers.get('_parsed'):
+            if 'Errors' in body:
+                errors = aws.listify(body['Errors'], 'Error')
+            else:
+                errors = [body.get('Error')]
+            error = errors[0] if errors else {}
+            code = error.get('Code')
+        if not error or not code:
+            raise Exception('UnparsedError: %s (%s)' % (
+                headers.get('_reason', '-'), headers.get('_code', '-')))
+        raise Exception('%s: %s' % (code, error.get('Message', '-')))
+
     def retrieve_subnets(self):
         subnets = {}
         for region in self.regions:
             subnets[region] = {}
-            headers, body = self.aws.request(
+            headers, body = self.request(
                 'ec2', region, 'GET', '/?Action=DescribeSubnets', '')
             for s in aws.listify(body, 'item')['subnetSet']:
                 subnets[region][s['subnetId']] = s
@@ -212,7 +242,7 @@ class AWS(Controller):
         interfaces = {}
         for region in self.regions:
             interfaces[region] = {}
-            headers, body = self.aws.request(
+            headers, body = self.request(
                 'ec2', region, 'GET',
                 '/?Action=DescribeNetworkInterfaces', '')
             for i in aws.listify(body, 'item')['networkInterfaceSet']:
@@ -223,13 +253,13 @@ class AWS(Controller):
                              by_template, by_instance):
         i2lb_names = {}
         lb_name2cidrs = {}
-        headers, body = self.aws.request(
+        headers, body = self.request(
             'elasticloadbalancing', region, 'GET',
             '/?Action=DescribeLoadBalancers', '')
         elb_list = aws.listify(body['DescribeLoadBalancersResult'][
             'LoadBalancerDescriptions'], 'member')
         for elb in elb_list:
-            headers, body = self.aws.request(
+            headers, body = self.request(
                 'elasticloadbalancing', region, 'GET',
                 '/?Action=DescribeTags&LoadBalancerNames.member.1=' +
                 elb['LoadBalancerName'], '')
@@ -286,7 +316,7 @@ class AWS(Controller):
                     i2target_groups.setdefault(i['InstanceId'], {}).setdefault(
                         target, set())
 
-        headers, body = self.aws.request(
+        headers, body = self.request(
             'elasticloadbalancing', region, 'GET',
             '/?Version=2015-12-01&Action=DescribeTargetGroups', '')
         target_groups = aws.listify(body['DescribeTargetGroupsResult'][
@@ -298,7 +328,7 @@ class AWS(Controller):
                 if target_group['TargetGroupArn'] in i2target_groups[i]:
                     i2target_groups[i][target_group['TargetGroupArn']].add(
                         default_protocol_port)
-            headers, body = self.aws.request(
+            headers, body = self.request(
                 'elasticloadbalancing', region, 'GET',
                 '/?' + urllib.urlencode({
                     'Version': '2015-12-01',
@@ -312,7 +342,7 @@ class AWS(Controller):
                         target_group['TargetGroupArn'], set()).add(
                             default_protocol + target['Target']['Port'])
 
-        headers, body = self.aws.request(
+        headers, body = self.request(
             'elasticloadbalancing', region, 'GET',
             '/?Version=2015-12-01&Action=DescribeLoadBalancers', '')
         alb_list = aws.listify(body['DescribeLoadBalancersResult'][
@@ -320,7 +350,7 @@ class AWS(Controller):
         dns_name2cidrs = {}
         target_group2dns_names = {}
         for alb in alb_list:
-            headers, body = self.aws.request(
+            headers, body = self.request(
                 'elasticloadbalancing', region, 'GET',
                 '/?' + urllib.urlencode({
                     'Version': '2015-12-01',
@@ -334,7 +364,7 @@ class AWS(Controller):
                 subnets[az['SubnetId']]['cidrBlock']
                 for az in alb['AvailabilityZones']]
             dns_name2cidrs.setdefault(dns_name, []).extend(cidrs)
-            headers, body = self.aws.request(
+            headers, body = self.request(
                 'elasticloadbalancing', region, 'GET',
                 '/?' + urllib.urlencode({
                     'Version': '2015-12-01',
@@ -346,7 +376,7 @@ class AWS(Controller):
             for listener in listeners:
                 front_protocol_ports.append('%s-%s' % (
                     listener['Protocol'], listener['Port']))
-                headers, body = self.aws.request(
+                headers, body = self.request(
                     'elasticloadbalancing', region, 'GET',
                     '/?' + urllib.urlencode({
                         'Version': '2015-12-01',
@@ -383,7 +413,7 @@ class AWS(Controller):
         for region in self.regions:
             by_template[region] = {}
             by_instance[region] = {}
-            headers, body = self.aws.request(
+            headers, body = self.request(
                 'autoscaling', region, 'GET',
                 '/?Action=DescribeAutoScalingGroups', '')
             auto_scaling_groups = aws.listify(
@@ -405,7 +435,7 @@ class AWS(Controller):
             if next_token:
                 extra_params += '&' + urllib.urlencode({
                     'NextToken', next_token})
-            headers, body = self.aws.request(
+            headers, body = self.request(
                 'ec2', region, 'GET', path + extra_params, '')
             obj = aws.listify(body, 'item')
             for r in obj[top_set]:
@@ -520,6 +550,27 @@ class AWS(Controller):
                 instance_obj.load_balancers = load_balancers
                 instances.append(instance_obj)
         return instances
+
+    @staticmethod
+    def test(cls, **options):
+        for key in ['regions']:
+            if key not in options or not options[key]:
+                raise Exception('The parameter "%s" is missing or empty' % key)
+        if not isinstance(options['regions'], list):
+            raise Exception('The parameter "regions" should be an array')
+        url = ''.join([
+            'https://', aws.get_host_service('ec2', options['regions'][0])[0],
+            '/'])
+        h, b = aws.http('GET', url, '')
+        d = h.get('date')
+        t1 = datetime.datetime(*email.utils.parsedate(d)[:6])
+        t2 = datetime.datetime.utcnow()
+        log('\nTime difference is ' + str(abs(t2 - t1)) + '\n')
+        if abs(t2 - t1) > datetime.timedelta(seconds=5):
+            raise Exception(
+                'Your system clock is not accurate, please set up NTP')
+
+        Controller.test(cls, **options)
 
 
 class OpenStack(Controller):
@@ -863,6 +914,28 @@ class Azure(Controller):
                 instance_name, ip_address, instance_interfaces,
                 tags['x-chkp-template']))
         return instances
+
+    @staticmethod
+    def test(cls, **options):
+        for key in ['subscription', 'credentials']:
+            if key not in options or not options[key]:
+                raise Exception('The parameter "%s" is missing or empty' % key)
+
+        with Controller.Tester(cls, **options) as controller:
+            try:
+                controller.azure.arm(
+                    'GET', '/subscriptions/' + options['subscription'])
+            except azure.RequestException as e:
+                if e.code == 401 or 'unauthorized_client' in e.body or (
+                        'invalid_grant' in e.body):
+                    log('\n%s' % traceback.format_exc())
+                    raise Exception('Bad credentials')
+                elif e.code == 403:
+                    log('\n%s' % traceback.format_exc())
+                    raise Exception('The credentials were not authorized '
+                                    'for any resource in the subscription')
+                else:
+                    raise
 
 
 class HTTPSConnection(httplib.HTTPSConnection):
@@ -1930,35 +2003,7 @@ def test(config_file):
         if not issubclass(cls, Controller):
             raise Exception('Unknown controller class "%s"' % c['class'])
 
-        if cls == AWS:
-            for key in ['regions']:
-                if key not in c or not c[key]:
-                    raise Exception(
-                        'The parameter "%s" is missing or empty' % key)
-            if not isinstance(c['regions'], list):
-                raise Exception(
-                    'The parameter "regions" should be an array')
-            url = ''.join([
-                'https://', aws.get_host_service('ec2', c['regions'][0])[0],
-                '/'])
-            h, b = aws.http('GET', url, '')
-            d = h.get('date')
-            t1 = datetime.datetime(*email.utils.parsedate(d)[:6])
-            t2 = datetime.datetime.utcnow()
-            log('\nTime difference is ' + str(abs(t2 - t1)) + '\n')
-            if abs(t2 - t1) > datetime.timedelta(seconds=5):
-                raise Exception(
-                    'Your system clock is not accurate, please set up NTP')
-
-        elif cls == Azure:
-            for key in ['subscription', 'credentials']:
-                if key not in c or not c[key]:
-                    raise Exception(
-                        'The parameter "%s" is missing or empty' % key)
-
-        controller = cls(
-            name=name, management=config['management']['name'], **c)
-        controller.get_instances()
+        cls.test(cls, name=name, management=config['management']['name'], **c)
 
     log('\nTesting templates...\n')
     protos = set([t.get('proto') for t in config['templates'].values()])
