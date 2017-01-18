@@ -19,397 +19,29 @@ import collections
 import contextlib
 import hashlib
 import hmac
-import httplib
 import inspect
 import json
 import os
 import re
-import ssl
 import subprocess
 import sys
 import time
 import urllib
 import urllib2
-import urlparse
 import xml.dom.minidom
 
 # services with more specific path should precede
-ARM_VERSIONS = {
-    'web/sourcecontrols': '2015-08-01',
-    'web/sites/slots/metrics': '2015-08-01',
-    'web/sites/slots/metricdefinitions': '2015-08-01',
-    'web/sites/slots/instances/extensions': '2015-08-01',
-    'web/sites/slots/instances': '2015-08-01',
-    'web/sites/slots/hostnamebindings': '2015-08-01',
-    'web/sites/slots/extensions': '2015-08-01',
-    'web/sites/slots': '2015-08-01',
-    'web/sites/recommendations': '2015-08-01',
-    'web/sites/premieraddons': '2015-08-01',
-    'web/sites/metrics': '2015-08-01',
-    'web/sites/metricdefinitions': '2015-08-01',
-    'web/sites/instances/extensions': '2015-08-01',
-    'web/sites/instances': '2015-08-01',
-    'web/sites/hostnamebindings': '2015-08-01',
-    'web/sites/extensions': '2015-08-01',
-    'web/sites': '2015-08-01-preview',
-    'web/serverfarms/metrics': '2015-08-01',
-    'web/serverfarms/metricdefinitions': '2015-08-01',
-    'web/serverfarms': '2015-08-01',
-    'web/runtimes': '2015-08-01',
-    'web/recommendations': '2015-08-01',
-    'web/publishingusers': '2015-08-01',
-    'web/operations': '2015-08-01',
-    'web/managedhostingenvironments': '2015-08-01',
-    'web/listsitesassignedtohostname': '2015-08-01',
-    'web/ishostnameavailable': '2015-08-01',
-    'web/ishostingenvironmentnameavailable': '2015-08-01',
-    'web/hostingenvironments/workerpools/metrics': '2015-08-01',
-    'web/hostingenvironments/workerpools/metricdefinitions': '2015-08-01',
-    'web/hostingenvironments/workerpools/instances/metrics': '2015-08-01',
-    'web/hostingenvironments/workerpools/instances/metricdefinitions':
-        '2015-08-01',
-    'web/hostingenvironments/workerpools/instances': '2015-08-01',
-    'web/hostingenvironments/workerpools': '2015-08-01',
-    'web/hostingenvironments/multirolepools/metrics': '2015-08-01',
-    'web/hostingenvironments/multirolepools/metricdefinitions': '2015-08-01',
-    'web/hostingenvironments/multirolepools/instances/metrics': '2015-08-01',
-    'web/hostingenvironments/multirolepools/instances/metricdefinitions':
-        '2015-08-01',
-    'web/hostingenvironments/multirolepools/instances': '2015-08-01',
-    'web/hostingenvironments/multirolepools': '2015-08-01',
-    'web/hostingenvironments/metrics': '2015-08-01',
-    'web/hostingenvironments/metricdefinitions': '2015-08-01',
-    'web/hostingenvironments': '2015-08-01',
-    'web/georegions': '2015-08-01',
-    'web/deploymentlocations': '2015-08-01',
-    'web/classicmobileservices': '2015-08-01',
-    'web/certificates': '2015-08-01-preview',
-    'web/availablestacks': '2015-08-01',
-    'visualstudio/account/project': '2014-04-01-preview',
-    'visualstudio/account': '2014-04-01-preview',
-    'support/supporttickets': '2015-07-01-Preview',
-    'support/operations': '2015-07-01-Preview',
-    'streamanalytics/streamingjobs/metricdefinitions': '2014-04-01',
-    'streamanalytics/streamingjobs/diagnosticsettings': '2014-04-01',
-    'streamanalytics/operations': '2015-10-01',
-    'streamanalytics/locations/quotas': '2015-10-01',
-    'streamanalytics/locations': '2015-10-01',
-    'storage/usages': '2015-06-15',
-    'storage/storageaccounts/services/metricdefinitions': '2014-04-01',
-    'storage/storageaccounts/services': '2014-04-01',
-    'storage/storageaccounts': '2015-06-15',
-    'storage/operations': '2015-06-15',
-    'storage/checknameavailability': '2015-06-15',
-    'sql/servers/usages': '2014-04-01-preview',
-    'sql/servers/serviceobjectives': '2014-04-01-preview',
-    'sql/servers/securityalertpolicies': '2015-05-01-preview',
-    'sql/servers/restorabledroppeddatabases': '2014-04-01-preview',
-    'sql/servers/resourcepools': '2014-04-01-preview',
-    'sql/servers/recoverabledatabases': '2014-04-01-preview',
-    'sql/servers/recommendedelasticpools': '2014-04-01-preview',
-    'sql/servers/operationresults': '2014-04-01-preview',
-    'sql/servers/importexportoperationresults': '2014-04-01-preview',
-    'sql/servers/import': '2014-04-01-preview',
-    'sql/servers/firewallrules': '2014-04-01-preview',
-    'sql/servers/elasticpools/metrics': '2014-04-01-preview',
-    'sql/servers/elasticpools/metricdefinitions': '2014-04-01-preview',
-    'sql/servers/elasticpools/advisors': '2015-05-01-preview',
-    'sql/servers/elasticpools': '2014-04-01-preview',
-    'sql/servers/elasticpoolestimates': '2015-05-01-preview',
-    'sql/servers/disasterrecoveryconfiguration': '2014-04-01-preview',
-    'sql/servers/databasesecuritypolicies': '2014-04-01-preview',
-    'sql/servers/databases/topqueries/querytext': '2014-04-01-preview',
-    'sql/servers/databases/topqueries': '2014-04-01-preview',
-    'sql/servers/databases/securityalertpolicies': '2014-04-01-preview',
-    'sql/servers/databases/metrics': '2014-04-01-preview',
-    'sql/servers/databases/metricdefinitions': '2014-04-01-preview',
-    'sql/servers/databases/datamaskingpolicies/rules': '2014-04-01-preview',
-    'sql/servers/databases/datamaskingpolicies': '2014-04-01-preview',
-    'sql/servers/databases/connectionpolicies': '2014-04-01-preview',
-    'sql/servers/databases/auditingsettings': '2015-05-01-preview',
-    'sql/servers/databases/auditingpolicies': '2014-04-01-preview',
-    'sql/servers/databases/advisors': '2015-05-01-preview',
-    'sql/servers/databases': '2015-05-01-preview',
-    'sql/servers/connectionpolicies': '2014-04-01-preview',
-    'sql/servers/communicationlinks': '2014-04-01-preview',
-    'sql/servers/auditingsettings': '2015-05-01-preview',
-    'sql/servers/auditingpolicies': '2014-04-01-preview',
-    'sql/servers/aggregateddatabasemetrics': '2014-04-01-preview',
-    'sql/servers/advisors': '2015-05-01-preview',
-    'sql/servers/administrators': '2014-04-01-preview',
-    'sql/servers/administratoroperationresults': '2014-04-01-preview',
-    'sql/servers': '2014-04-01-preview',
-    'sql/operations': '2014-04-01-preview',
-    'sql/locations/capabilities': '2014-04-01-preview',
-    'sql/locations': '2014-04-01-preview',
-    'sql/checknameavailability': '2014-04-01-preview',
-    'servicefabric/clusters': '2015-01-01-alpha',
-    'servicebus/operations': '2015-08-01',
-    'servicebus/namespaces': '2015-08-01',
-    'servicebus/checknamespaceavailability': '2015-08-01',
-    'servermanagement/nodes': '2015-07-01-preview',
-    'servermanagement/gateways': '2015-07-01-preview',
-    'security/webapplicationfirewalls': '2015-06-01-preview',
-    'security/tasks': '2015-06-01-preview',
-    'security/securitystatuses': '2015-06-01-preview',
-    'security/securitystatus/virtualmachines': '2015-06-01-preview',
-    'security/securitystatus/subnets': '2015-06-01-preview',
-    'security/securitystatus/endpoints': '2015-06-01-preview',
-    'security/securitystatus': '2015-06-01-preview',
-    'security/policies': '2015-06-01-preview',
-    'security/monitoring/patch': '2015-06-01-preview',
-    'security/monitoring/baseline': '2015-06-01-preview',
-    'security/monitoring/antimalware': '2015-06-01-preview',
-    'security/monitoring': '2015-06-01-preview',
-    'security/datacollectionresults': '2015-06-01-preview',
-    'security/datacollectionagents': '2015-06-01-preview',
-    'security/appliances': '2015-06-01-preview',
-    'security/alerts': '2015-06-01-preview',
-    'search/searchservices': '2015-08-19',
-    'search/operations': '2015-08-19',
-    'search/checkservicenameavailability': '2015-02-28',
-    'search/checknameavailability': '2015-08-19',
-    'scheduler/operations': '2014-08-01-preview',
-    'scheduler/jobcollections': '2014-08-01-preview',
-    'scheduler/flows': '2015-08-01-preview',
-    'resources/tenants': '2015-01-01',
-    'resources/subscriptions/tagnames/tagvalues': '2015-01-01',
-    'resources/subscriptions/tagnames': '2015-01-01',
-    'resources/subscriptions/resources': '2015-01-01',
-    'resources/subscriptions/resourcegroups/resources': '2015-01-01',
-    'resources/subscriptions/resourcegroups': '2015-01-01',
-    'resources/subscriptions/providers': '2015-01-01',
-    'resources/subscriptions/operationresults': '2015-01-01',
-    'resources/subscriptions/locations': '2015-01-01',
-    'resources/subscriptions': '2015-01-01',
-    'resources/resources': '2015-01-01',
-    'resources/resourcegroups': '2015-01-01',
-    'resources/providers': '2015-01-01',
-    'resources/operations': '2015-01-01',
-    'resources/links': '2015-01-01',
-    'resources/deployments/operations': '2015-11-01',
-    'resources/deployments': '2015-11-01',
-    'resources/checkresourcename': '2015-01-01',
-    'resourcehealth/availabilitystatuses': '2015-01-01',
-    'operationalinsights/workspaces': '2015-11-01-preview',
-    'operationalinsights/storageinsightconfigs': '2014-10-10',
-    'operationalinsights/operations': '2014-11-10',
-    'operationalinsights/linktargets': '2015-03-20',
-    'notificationhubs/operations': '2014-09-01',
-    'notificationhubs/namespaces/notificationhubs': '2014-09-01',
-    'notificationhubs/namespaces': '2014-09-01',
-    'notificationhubs/checknamespaceavailability': '2014-09-01',
-    'notificationhubs/billingtier': '2014-09-01',
-    'network/virtualnetworks': '2016-06-01',
-    'network/virtualnetworkgateways': '2015-06-15',
-    'network/trafficmanagerprofiles': '2015-11-01',
-    'network/routetables': '2015-06-15',
-    'network/publicipaddresses': '2015-06-15',
-    'network/operations': '2015-06-15',
-    'network/networksecuritygroups': '2015-06-15',
-    'network/networkinterfaces': '2015-06-15',
-    'network/locations/usages': '2015-06-15',
-    'network/locations/operations': '2015-06-15',
-    'network/locations/operationresults': '2015-06-15',
-    'network/locations/checkdnsnameavailability': '2015-06-15',
-    'network/locations': '2015-06-15',
-    'network/localnetworkgateways': '2015-06-15',
-    'network/loadbalancers': '2015-06-15',
-    'network/expressrouteserviceproviders': '2015-06-15',
-    'network/expressroutecircuits': '2015-06-15',
-    'network/dnszones/txt': '2015-05-04-preview',
-    'network/dnszones/srv': '2015-05-04-preview',
-    'network/dnszones/ptr': '2015-05-04-preview',
-    'network/dnszones/mx': '2015-05-04-preview',
-    'network/dnszones/cname': '2015-05-04-preview',
-    'network/dnszones/aaaa': '2015-05-04-preview',
-    'network/dnszones/a': '2015-05-04-preview',
-    'network/dnszones': '2015-05-04-preview',
-    'network/connections': '2015-06-15',
-    'network/checktrafficmanagernameavailability': '2015-11-01',
-    'network/applicationgateways': '2015-06-15',
-    'marketplaceordering/operations': '2015-06-01',
-    'marketplaceordering/agreements': '2015-06-01',
-    'logic/workflows': '2015-08-01-preview',
-    'logic/operations': '2015-08-01-preview',
-    'logic/managedapis': '2015-08-01-preview',
-    'logic/managedapiconnections': '2015-08-01-preview',
-    'logic/apioperations': '2015-08-01-preview',
-    'keyvault/vaults/secrets': '2015-06-01',
-    'keyvault/vaults': '2015-06-01',
-    'keyvault/operations': '2015-06-01',
-    'insights/webtests': '2015-05-01',
-    'insights/queries': '2015-05-01',
-    'insights/operations': '2015-04-01',
-    'insights/metricdefinitions': '2015-07-01',
-    'insights/logdefinitions': '2015-07-01',
-    'insights/locations/operationresults': '2015-04-01',
-    'insights/locations': '2015-04-01',
-    'insights/eventtypes': '2015-04-01',
-    'insights/diagnosticsettings': '2015-07-01',
-    'insights/components': '2015-05-01',
-    'insights/autoscalesettings': '2015-04-01',
-    'insights/automatedexportsettings': '2015-04-01',
-    'insights/alertrules': '2015-04-01',
-    'features/providers': '2015-12-01',
-    'features/operations': '2015-12-01',
-    'features/features': '2015-12-01',
-    'eventhub/operations': '2015-08-01',
-    'eventhub/namespaces': '2014-09-01',
-    'eventhub/checknamespaceavailability': '2015-08-01',
-    'dynamicslcs/operations': '2015-02-01-preview',
-    'dynamicslcs/lcsprojects/connectors': '2015-05-01-alpha',
-    'dynamicslcs/lcsprojects/clouddeployments': '2015-05-01-alpha',
-    'dynamicslcs/lcsprojects': '2015-05-01-alpha',
-    'domainregistration/validatedomainregistrationinformation': '2015-04-01',
-    'domainregistration/topleveldomains': '2015-04-01',
-    'domainregistration/operations': '2015-04-01',
-    'domainregistration/listdomainrecommendations': '2015-04-01',
-    'domainregistration/generatessorequest': '2015-04-01',
-    'domainregistration/domains': '2015-04-01',
-    'domainregistration/checkdomainavailability': '2015-04-01',
-    'documentdb/operations': '2015-04-08',
-    'documentdb/databaseaccounts': '2015-04-08',
-    'documentdb/databaseaccountnames': '2015-04-08',
-    'devtestlab/operations': '2015-05-21-preview',
-    'devtestlab/locations/operations': '2015-05-21-preview',
-    'devtestlab/locations': '2015-05-21-preview',
-    'devtestlab/labs/virtualmachines': '2015-05-21-preview',
-    'devtestlab/labs/environments': '2015-05-21-preview',
-    'devtestlab/labs': '2015-05-21-preview',
-    'devtestlab/environments': '2015-05-21-preview',
-    'devices/operations': '2015-08-15-preview',
-    'devices/iothubs': '2015-08-15-preview',
-    'devices/checknameavailability': '2015-08-15-preview',
-    'datalakestore/operations': '2015-10-01-preview',
-    'datalakeanalytics/operations': '2015-10-01-preview',
-    'datafactory/operations': '2015-10-01',
-    'datafactory/datafactoryschema': '2015-10-01',
-    'datafactory/datafactories/metricdefinitions': '2014-04-01',
-    'datafactory/datafactories/diagnosticsettings': '2014-04-01',
-    'datafactory/datafactories': '2015-10-01',
-    'datafactory/checkdatafactorynameavailability': '2015-05-01-preview',
-    'datafactory/checkazuredatafactorynameavailability': '2015-10-01',
-    'containerservice/operations': '2015-11-01-preview',
-    'containerservice/locations/operations': '2015-11-01-preview',
-    'containerservice/locations': '2015-11-01-preview',
-    'containerservice/containerservices': '2015-11-01-preview',
-    'compute/virtualmachinescalesets/virtualmachines/networkinterfaces':
-        '2015-06-15',
-    'compute/virtualmachinescalesets/virtualmachines': '2015-06-15',
-    'compute/virtualmachinescalesets/networkinterfaces': '2015-06-15',
-    'compute/virtualmachinescalesets/extensions': '2015-06-15',
-    'compute/virtualmachinescalesets': '2015-06-15',
-    'compute/virtualmachines/metricdefinitions': '2014-04-01',
-    'compute/virtualmachines/extensions': '2015-06-15',
-    'compute/virtualmachines/diagnosticsettings': '2014-04-01',
-    'compute/virtualmachines': '2015-06-15',
-    'compute/operations': '2015-06-15',
-    'compute/locations/vmsizes': '2015-06-15',
-    'compute/locations/usages': '2015-06-15',
-    'compute/locations/publishers': '2015-06-15',
-    'compute/locations/operations': '2015-06-15',
-    'compute/locations': '2015-06-15',
-    'compute/availabilitysets': '2015-06-15',
-    'classicstorage/storageaccounts/services/metrics': '2014-04-01',
-    'classicstorage/storageaccounts/services/metricdefinitions': '2014-04-01',
-    'classicstorage/storageaccounts/services': '2014-04-01',
-    'classicstorage/storageaccounts/metrics': '2014-04-01',
-    'classicstorage/storageaccounts/metricdefinitions': '2014-04-01',
-    'classicstorage/storageaccounts': '2015-12-01',
-    'classicstorage/quotas': '2015-12-01',
-    'classicstorage/osimages': '2015-12-01',
-    'classicstorage/operations': '2015-12-01',
-    'classicstorage/images': '2015-12-01',
-    'classicstorage/disks': '2015-12-01',
-    'classicstorage/checkstorageaccountavailability': '2015-12-01',
-    'classicstorage/capabilities': '2015-12-01',
-    'classicnetwork/virtualnetworks': '2015-12-01',
-    'classicnetwork/reservedips': '2015-12-01',
-    'classicnetwork/quotas': '2015-12-01',
-    'classicnetwork/operations': '2015-12-01',
-    'classicnetwork/networksecuritygroups': '2015-12-01',
-    'classicnetwork/gatewaysupporteddevices': '2015-12-01',
-    'classiccompute/virtualmachines/metrics': '2014-04-01',
-    'classiccompute/virtualmachines/metricdefinitions': '2014-04-01',
-    'classiccompute/virtualmachines/diagnosticsettings': '2014-04-01',
-    'classiccompute/virtualmachines': '2015-12-01',
-    'classiccompute/resourcetypes': '2015-12-01',
-    'classiccompute/quotas': '2015-12-01',
-    'classiccompute/operationstatuses': '2015-12-01',
-    'classiccompute/operations': '2015-12-01',
-    'classiccompute/movesubscriptionresources': '2015-12-01',
-    'classiccompute/domainnames/slots/roles/metrics': '2014-04-01',
-    'classiccompute/domainnames/slots/roles/metricdefinitions': '2014-04-01',
-    'classiccompute/domainnames/slots/roles': '2015-12-01',
-    'classiccompute/domainnames/slots': '2015-12-01',
-    'classiccompute/domainnames': '2015-12-01',
-    'classiccompute/checkdomainnameavailability': '2015-12-01',
-    'classiccompute/capabilities': '2015-12-01',
-    'cdn/profiles/endpoints/origins': '2015-06-01',
-    'cdn/profiles/endpoints/customdomains': '2015-06-01',
-    'cdn/profiles/endpoints': '2015-06-01',
-    'cdn/profiles': '2015-06-01',
-    'cdn/operations': '2015-06-01',
-    'cdn/operationresults/profileresults/endpointresults/originresults':
-        '2015-06-01',
-    'cdn/operationresults/profileresults/endpointresults/customdomainresults':
-        '2015-06-01',
-    'cdn/operationresults/profileresults/endpointresults': '2015-06-01',
-    'cdn/operationresults/profileresults': '2015-06-01',
-    'cdn/operationresults': '2015-06-01',
-    'cdn/edgenodes': '2015-06-01',
-    'cdn/checknameavailability': '2015-06-01',
-    'cache/redisconfigdefinition': '2015-08-01',
-    'cache/redis/metricdefinitions': '2014-04-01',
-    'cache/redis/diagnosticsettings': '2014-04-01',
-    'cache/redis': '2015-08-01',
-    'cache/operations': '2015-08-01',
-    'cache/checknameavailability': '2015-08-01',
-    'biztalkservices/biztalk': '2014-04-01-preview',
-    'bingmaps/updatecommunicationpreference': '2015-07-02',
-    'bingmaps/operations': '2015-07-02',
-    'bingmaps/mapapis': '2015-07-02',
-    'bingmaps/listcommunicationpreference': '2015-07-02',
-    'batch/operations': '2015-12-01',
-    'batch/locations/quotas': '2015-12-01',
-    'batch/locations': '2015-09-01',
-    'batch/batchaccounts': '2015-12-01',
-    'automation/operations': '2015-10-31',
-    'automation/automationaccounts/runbooks': '2015-10-31',
-    'automation/automationaccounts': '2015-10-31',
-    'authorization/roledefinitions': '2015-07-01',
-    'authorization/roleassignments': '2015-07-01',
-    'authorization/provideroperations': '2015-07-01-preview',
-    'authorization/policydefinitions': '2015-10-01-preview',
-    'authorization/policyassignments': '2015-10-01-preview',
-    'authorization/permissions': '2015-07-01',
-    'authorization/operations': '2015-07-01',
-    'authorization/locks': '2015-01-01',
-    'authorization/classicadministrators': '2015-06-01',
-    'appservice/operations': '2015-03-01-preview',
-    'appservice/gateways': '2015-03-01-preview',
-    'appservice/deploymenttemplates': '2015-03-01-preview',
-    'appservice/appidentities': '2015-03-01-preview',
-    'appservice/apiapps': '2015-03-01-preview',
-    'apimanagement/validateservicename': '2015-09-15',
-    'apimanagement/service': '2015-09-15',
-    'apimanagement/reportfeedback': '2015-09-15',
-    'apimanagement/operations': '2015-09-15',
-    'apimanagement/checkservicenameavailability': '2015-09-15',
-    'apimanagement/checknameavailability': '2015-09-15',
-    'apimanagement/checkfeedbackrequired': '2015-09-15',
-    'adhybridhealthservice/services': '2014-01-01',
-    'adhybridhealthservice/servicehealthmetrics': '2014-01-01',
-    'adhybridhealthservice/reports': '2014-01-01',
-    'adhybridhealthservice/operations': '2014-01-01',
-    'adhybridhealthservice/logs': '2014-01-01',
-    'adhybridhealthservice/configuration': '2014-01-01',
-    'adhybridhealthservice/anonymousapiusers': '2014-01-01',
-    'adhybridhealthservice/agents': '2014-01-01',
-    'adhybridhealthservice/addsservices': '2014-01-01',
-    'adhybridhealthservice/aadsupportcases': '2014-01-01',
-}
+ARM_VERSIONS = collections.OrderedDict([
+    ('storage', '2015-06-15'),
+    ('resources/deployments/operations', '2015-11-01'),
+    ('resources/deployments', '2015-11-01'),
+    ('resources/', '2015-01-01'),
+    ('network/virtualnetworks', '2016-06-01'),
+    ('network/', '2015-06-15'),
+    ('compute/', '2015-06-15'),
+    ('classicstorage/', '2015-12-01'),
+    ('classiccompute/', '2015-12-01'),
+])
 
 
 def logger(msg):
@@ -466,9 +98,16 @@ def request(method, url, cert=None, body=None, headers=None, pool=None,
     if os.environ.get('AZURE_REST_CURL'):
         headers, response = request_curl(method, url, cert, body, headers,
                                          max_time)
+    elif os.environ.get('AZURE_REST_HTTP'):
+        if 'http' not in globals():
+            global http
+            import imp
+            http = imp.load_source('http', os.environ['AZURE_REST_HTTP'])
+            http.debug = debug
+        headers, response = http.request(method, url, cert, body, headers,
+                                         pool, max_time)
     else:
-        headers, response = request_py(method, url, cert, body, headers, pool,
-                                       max_time)
+        raise Exception('No request function')
 
     if not (200 <= int(headers['code']) < 300):
         raise RequestException(
@@ -487,111 +126,6 @@ def request(method, url, cert=None, body=None, headers=None, pool=None,
         document = response
 
     return headers, document
-
-
-class SecureHTTPSConnection(httplib.HTTPSConnection):
-    def connect(self):
-        httplib.HTTPConnection.connect(self)
-        self.sock = ssl.wrap_socket(
-            self.sock, self.key_file, self.cert_file,
-            cert_reqs=ssl.CERT_REQUIRED,
-            ca_certs=os.environ.get('CURL_CA_BUNDLE'))
-        subjects = [h for t, h in self.sock.getpeercert()['subjectAltName']
-                    if t == 'DNS']
-        for subject in subjects:
-            if self.subject == subject or (
-                    subject.startswith('*.') and
-                    self.subject.endswith(subject[1:])):
-                debug('hostname matched: %s\n' % subject)
-                break
-        else:
-            raise Exception('host name mismatch')
-
-
-def request_py(method, url, cert=None, body=None, headers=None, pool=None,
-               max_time=None):
-    if max_time:
-        raise Exception('timeout is not supported')
-    url_parts = urlparse.urlparse(url)
-    port = url_parts.port
-    if not port:
-        port = 443 if url_parts.scheme == 'https' else 80
-    host = url_parts.hostname
-
-    headers_dict = {}
-    if headers is not None:
-        for h in headers:
-            name, val = h.split(':', 1)
-            name = name.strip().lower()
-            val = val.strip()
-            headers_dict[name] = val
-    if 'host' not in headers_dict:
-        headers_dict['host'] = url_parts.netloc
-
-    if body:
-        headers_dict['content-length'] = '%d' % len(body)
-    elif method == 'PUT' or method == 'POST':
-        headers_dict['content-length'] = '0'
-
-    headers_no_auth = {
-        k: headers_dict[k] for k in headers_dict if k != 'authorization'}
-    debug('%s\n' % [method, url, cert, headers_no_auth])
-
-    conn_id = (os.getpid(), host, port)
-    conn = None
-    if pool is None:
-        pool = {}
-    try:
-        conn, timestamp = pool.get(conn_id, (None, 0))
-        if conn:
-            del pool[conn_id]
-            if timestamp < time.time() - 60:
-                try:
-                    conn.close()
-                except:
-                    pass
-                conn = None
-        if not conn:
-            if 'https_proxy' in os.environ and os.environ['https_proxy']:
-                proxy_url_parts = urlparse.urlparse(os.environ['https_proxy'])
-                conn = SecureHTTPSConnection(
-                    proxy_url_parts.hostname, proxy_url_parts.port)
-                conn.set_tunnel(host, port)
-            else:
-                conn = SecureHTTPSConnection(host, port)
-            conn.subject = host
-            if cert:
-                conn.key_file = conn.cert_file = cert
-
-        conn.request(method, url_parts.path + '?' + url_parts.query,
-                     body=body, headers=headers_dict)
-        resp = conn.getresponse()
-        resp_headers = dict(resp.getheaders())
-        resp_headers['proto'] = 'HTTP/' + '.'.join(list(str(resp.version)))
-        resp_headers['code'] = resp.status
-        resp_headers['reason'] = resp.reason
-        debug('%s\n' % resp_headers)
-        resp_body = resp.read()
-
-        pool[conn_id] = (conn, time.time())
-    except:
-        def cleanup():
-            try:
-                conn.close()
-            except:
-                pass
-            try:
-                pool[conn_id].close()
-            except:
-                pass
-            try:
-                del pool[conn_id]
-            except:
-                pass
-        cleanup()
-        raise
-
-    return resp_headers, resp_body
 
 
 class CurlException(Exception):
@@ -629,7 +163,7 @@ def request_curl(method, url, cert=None, body=None, headers=None,
         for h in headers:
             args += ['--header', h]
 
-    args_no_auth =[]
+    args_no_auth = []
     for arg in args:
         if arg.lower().startswith('authorization'):
             key, col, val = arg.partition(':')
@@ -758,17 +292,26 @@ class Azure(object):
             else:
                 headers += ['content-type: application/json']
 
-        if 'api-version=' not in url:
-            version = 'api-version=2015-01-01'
-            for r in ARM_VERSIONS:
-                if '/providers/microsoft.' + r in url.lower():
-                    version = 'api-version=' + ARM_VERSIONS[r]
-                    break
+        if 'api-version=' not in path:
+            provider_prefix = '/providers/microsoft.'
+            provider_index = path.lower().find(provider_prefix)
+            if provider_index < 0:
+                if path.lower().find('/providers/') >= 0:
+                    raise Exception('unexpected provider:\n%s' % url)
+                version = ARM_VERSIONS['resources/']
+            else:
+                provider_index += len(provider_prefix)
+                for r in ARM_VERSIONS:
+                    if path.lower()[provider_index:].startswith(r):
+                        version = ARM_VERSIONS[r]
+                        break
+                else:
+                    raise Exception('no api version:\n%s' % url)
             if '?' in url:
                 url += '&'
             else:
                 url += '?'
-            url += version
+            url += 'api-version=' + version
 
         value = []
         while True:
@@ -817,26 +360,30 @@ class Azure(object):
         if account is None:
             raise Exception('storage account was not specified')
 
-        def get_accounts(provider, version, key_name):
-            accounts = self.arm(
-                'GET', '/providers/' + provider + '?api-version=' + version
-                )[1]['value']
-            for a in accounts:
-                if a['properties']['provisioningState'] != 'Succeeded':
-                    continue
-                key = self.arm(
-                    'POST',
-                    a['id'] + '/listKeys?api-version=' + version)[1][key_name]
-                self.accounts[a['name']] = {'id': a['id'], 'key': key}
+        def get_account(account, provider, key_name):
+            self.accounts.setdefault('ids', {})
+            if account not in self.accounts['ids']:
+                accounts = self.arm(
+                    'GET', '/providers/microsoft.' + provider)[1]['value']
+                for a in accounts:
+                    if a['properties']['provisioningState'] != 'Succeeded':
+                        continue
+                    self.accounts['ids'][a['name']] = a['id']
+            if account not in self.accounts['ids']:
+                return
+            self.accounts['keys'][account] = self.arm(
+                'POST',
+                self.accounts['ids'][account] + '/listKeys')[1][key_name]
 
-        if account not in self.accounts:
-            get_accounts(
-                'microsoft.storage/storageaccounts', '2015-06-15', 'key1')
-        if account not in self.accounts:
-            get_accounts(
-                'microsoft.classicstorage/storageaccounts', '2015-06-01',
-                'primaryKey')
-        return account, self.accounts[account]['key']
+        self.accounts.setdefault('keys', {})
+        if account not in self.accounts['keys']:
+            get_account(account, 'storage/storageaccounts', 'key1')
+        if account not in self.accounts['keys']:
+            get_account(account, 'classicstorage/storageaccounts',
+                        'primaryKey')
+        if account not in self.accounts['keys']:
+            raise Exception('Could not find keys for "%s"' % account)
+        return account, self.accounts['keys'][account]
 
     def blob(self, method, account, path, body=None, headers=None, tag=None):
         debug('blob: %s %s %s %s %s\n' % (
@@ -959,6 +506,41 @@ class Azure(object):
         headers += [
             'Authorization: SharedAccessSignature ' +
             'sig=%s&se=%s&skn=%s&sr=%s' % (sig, se, key_name, sr)]
+        return request(method, url, body=body, headers=headers,
+                       pool=self.pool, max_time=self.max_time)
+
+    def loganalytics(self, customer_id, key, log_type, body):
+        method = 'POST'
+        path = '/api/logs'
+        date = time.strftime('%a, %d %b %Y %H:%M:%S GMT', time.gmtime())
+        body = json.dumps(body)
+
+        customer_id = str(customer_id)
+        key = str(key)
+
+        headers = {
+            'content-length': str(len(body)),
+            'content-type': 'application/json',
+            'Log-Type': log_type,
+            'x-ms-date': date
+        }
+        string_to_sign = '\n'.join([
+            method,
+            headers['content-length'],
+            headers['content-type'],
+            'x-ms-date:' + headers['x-ms-date'],
+            path
+        ])
+        sig = base64.b64encode(hmac.new(base64.b64decode(key), string_to_sign,
+                               digestmod=hashlib.sha256).digest())
+        headers['Authorization'] = 'SharedKey %s:%s' % (customer_id, sig)
+
+        url = ''.join([
+            'https://', customer_id, '.ods.opinsights.azure.com', path,
+            '?api-version=2016-04-01'])
+
+        headers = ['%s: %s' % (name, headers[name])
+                   for name in headers if name != 'content-length']
         return request(method, url, body=body, headers=headers,
                        pool=self.pool, max_time=self.max_time)
 
