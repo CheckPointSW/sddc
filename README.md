@@ -9,7 +9,7 @@ The monitor.py script works in conjunction with:
 
 * A Check Point R80 SmartCenter Server (the management)
 
-* One or more cloud environments such as AWS or OpenStack (controllers)
+* One or more cloud environments such as AWS, Azure, GCP, or OpenStack (controllers)
 
 
 The script will:
@@ -21,7 +21,7 @@ The script will:
 * Install a security policy
 
 
-The script uses specific tags (AWS) or metadata (OpenStack) in order to:
+The script uses specific tags (AWS, Azure and GCP) or metadata (OpenStack) in order to:
 
 * Identify that an instance is as a Check Point gateway that should belong to the management
 
@@ -44,7 +44,7 @@ On any generic Linux with python 2.7 installed, download this repository.
 
 ### Tags and metadata:
 
-The following tags should be added to gateway instances:
+The following tags should be added to gateway instances (in GCP, tags do not have name/value, so these tags are specified as x-chkp-TAGNAME--TAGVALUE):
 
 |Tag name|Tag value|Comment|
 |--------|---------|-------|
@@ -54,7 +54,7 @@ The following tags should be added to gateway instances:
 |x-chkp-tags|"TAG-NAME-1=TAG-VALUE-1:TAG-NAME-2=TAG-VALUE-2..." a list of tags separated by colons, with the name and value separated by an equal sign, the name should only include the part after the "x-chkp-" prefix (e.g., "management=my-management:template=my-template:ip-address=public")|Only in AWS, use the compound tag when instances already have close to 10 tags|
 |x-chkp-interfaces|"NET-NAME-FOR-eth0:NET-NAME-FOR-eth1:..." a list of the neutron networks that are attached to each of the gateway interfaces|Only in OpenStack, Mandatory for gateways with more than one interface|
 
-Optionally, in AWS and in Azure, network interface objects (ENIs/networkInterfaces) can have the following tags:
+Optionally, in AWS and in Azure, network interface objects (ENIs/networkInterfaces) can have the following tags (in GCP these tags are specified as part of the instance tags, as x-chkp-TAGNAME-eth0--TAGVALUE):
 
 |Tag name|Tag value|Comment|
 |--------|---------|-------|
@@ -120,6 +120,11 @@ The script takes a configuration file in JSON format
                     "client_id": "THE-APP-ID",
                     "client_secret": "THE-SERVICE-PRINCIPAL-PASSWORD"
                 }
+            },
+            "GCP-DEPLOYMENT": {
+                "class": "GCP",
+                "project": "my-project",
+                "credentials": "IAM"
             },
             "OPENSTACK-DEVTEST": {
                 "class": "OpenStack",
@@ -208,7 +213,7 @@ In reference to the above configuration:
 
     * Controller attributes:
 
-        * class: either "AWS", "Azure" or "OpenStack"
+        * class: either "AWS", "Azure", "GCP", or "OpenStack"
 
         * For AWS controllers:
 
@@ -255,6 +260,12 @@ In reference to the above configuration:
                     * username: the Azure fully qualified user name
 
                     * password: the password for the user
+
+        * For GCP controllers:
+
+            * project: the GCP project ID in which to scan for VM instances
+
+            * credentials: a string with the special value "IAM" for automatic retrieval of the service account credentials from the VM instance metadata (when the management server is run in GCP; or a path to a file containing service account credentials
 
         * For OpenStack controllers:
 

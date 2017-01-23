@@ -43,6 +43,7 @@ import urlparse
 
 import aws
 import azure
+import gcp
 
 TAG = 'managed-virtual-gateway'
 WEB_DIR = os.path.dirname(sys.argv[0]) + '/web'
@@ -193,7 +194,8 @@ class Controller(object):
     def Tester(cls, **options):
         controller = cls(**options)
         yield controller
-        controller.get_instances()
+        instances = controller.get_instances()
+        debug('\n'.join([str(i) for i in instances] + ['']))
 
     @staticmethod
     def test(cls, **options):
@@ -940,6 +942,105 @@ class Azure(Controller):
                                     'for any resource in the subscription')
                 else:
                     raise
+
+
+class GCP(Controller):
+    def __init__(self, **options):
+        super(GCP, self).__init__(**options)
+        self.project = options['project']
+        if self.SEPARATOR in self.project:
+            raise Exception('Project name must not contain "%s"' % (
+                self.SEPARATOR))
+        self.gcp = gcp.GCP(
+            project=options['project'], credentials=options.get('credentials'))
+
+    def retrieve_aggregated(self, what):
+        h, body = self.gcp.rest(
+            'GET', '/projects/%s/aggregated/%s' % (self.project, what),
+            aggregate=True)
+        objs = sum([body[key].get(what, []) for key in body], [])
+        return collections.OrderedDict([
+            (obj['selfLink'], obj) for obj in objs])
+
+    def get_tags(self, obj):
+        tags = collections.OrderedDict()
+        for t in obj.get('tags', {}).get('items', []):
+            k, _, v = t.partition(self.SEPARATOR)
+            tags[k] = v
+        return tags
+
+    def get_topology(self, index, instance, subnets):
+        interface = instance['networkInterfaces'][index]
+        name = 'eth%s' % index
+        tags = self.get_tags(instance)
+        tags = {
+            k[:-len(name) - 1]: tags[k]
+            for k in tags if k.endswith('-%s' % name)}
+        topology = tags.get('x-chkp-topology', '').lower()
+        anti_spoofing = (tags.get('x-chkp-anti-spoofing', 'true').lower() ==
+                         'true')
+        if not topology:
+            access_configs = interface.get('accessConfigs', [])
+            if access_configs or index == 0:
+                topology = 'external'
+            else:
+                topology = 'internal'
+
+        instance_interface = {
+            'name': name,
+            'ipv4-address': interface['networkIP'],
+            'ipv4-mask-length': subnets[interface['subnetwork']][
+                'ipCidrRange'].partition('/')[2],
+            'anti-spoofing': anti_spoofing,
+            'topology': topology
+        }
+        return instance_interface
+
+    def get_instances(self):
+        gcp_instances = self.retrieve_aggregated('instances')
+        subnets = self.retrieve_aggregated('subnetworks')
+        instances = []
+        for instance in gcp_instances.values():
+            if self.SEPARATOR in instance['name']:
+                continue
+            tags = self.get_tags(instance)
+            if tags.get('x-chkp-management') != self.management:
+                continue
+            instance_name = self.SEPARATOR.join([
+                self.name, instance['name'], self.project])
+            instance_interfaces = []
+            ip_address = None
+            for index, interface in enumerate(instance['networkInterfaces']):
+                instance_interfaces.append(self.get_topology(
+                    index, instance, subnets))
+                if not ip_address:
+                    ip_address = tags.get('x-chkp-ip-address', 'public')
+                    if ip_address == 'private':
+                        ip_address = interface['networkIP']
+                    elif ip_address == 'public':
+                        access_configs = interface.get('accessConfigs', [])
+                        if access_configs:
+                            ip_address = access_configs[0]['natIP']
+            if not instance_interfaces:
+                log('problem in retrieving interfaces for %s\n' %
+                    instance_name)
+                continue
+            if not ip_address or ip_address == 'public':
+                log('no ip address for %s\n' % instance_name)
+                continue
+
+            instances.append(Instance(
+                instance_name, ip_address, instance_interfaces,
+                tags['x-chkp-template']))
+        return instances
+
+    @staticmethod
+    def test(cls, **options):
+        for key in ['project', 'credentials']:
+            if key not in options or not options[key]:
+                raise Exception('The parameter "%s" is missing or empty' % key)
+
+        Controller.test(cls, **options)
 
 
 class HTTPSConnection(httplib.HTTPSConnection):
@@ -2069,6 +2170,7 @@ def main(argv=None):
             conf.get('logger').setLevel(logging.DEBUG)
     aws.set_logger(log=log, debug=debug_func)
     azure.set_logger(log=log, debug=debug_func)
+    gcp.set_logger(log=log, debug=debug_func)
 
     if args.test:
         test(args.config)
