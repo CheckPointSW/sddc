@@ -927,7 +927,11 @@ class Azure(Controller):
                     'GET', '/subscriptions/' + options['subscription'])
             except azure.RequestException as e:
                 if e.code == 401 or 'unauthorized_client' in e.body or (
-                        'invalid_grant' in e.body):
+                        'invalid_grant' in e.body or
+                        'unsupported_grant_type' in e.body or
+                        'No service namespace named ' in e.body or
+                        'The request body must contain the '
+                        'following parameter: \'grant_type\'' in e.body):
                     log('\n%s' % traceback.format_exc())
                     raise Exception('Bad credentials')
                 elif e.code == 403:
