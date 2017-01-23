@@ -168,7 +168,7 @@ def http(method, url, body, req_headers=None, max_time=None):
     if isinstance(body, file):
         stdin = body
         body = None
-    cmd.append(url)
+    cmd += ['--url', url]
     debug(repr(cmd) + '\n')
     max_debug = 2048
     if body and not isinstance(body, file):
