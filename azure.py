@@ -235,6 +235,12 @@ class Azure(object):
         self.tokens = {}
         self.accounts = {}
         self.subscription = subscription
+        if isinstance(credentials, basestring):
+            if credentials.startswith('{'):
+                credentials = json.loads(credentials)
+            else:
+                with open(credentials) as f:
+                    credentials = json.load(f)
         self.credentials = credentials.copy()
         self.max_time = max_time
         if not environment:
@@ -562,15 +568,6 @@ def init(*args, **kwargs):
     if not credentials:
         if 'AZURE_CREDENTIALS' in os.environ:
             credentials = os.environ['AZURE_CREDENTIALS']
-            if credentials.startswith('{'):
-                credentials = json.loads(credentials)
-            else:
-                if not os.path.exists(
-                        credentials) and os.path.sep not in credentials:
-                    credentials = os.path.join(
-                        os.path.dirname(__file__), credentials)
-                with open(credentials) as f:
-                    credentials = json.load(f)
         elif 'AZURE_USERNAME' in os.environ and 'AZURE_PASSWORD' in os.environ:
             credentials = {
                 'username': os.environ['AZURE_USERNAME'],
