@@ -192,9 +192,12 @@ class GCP(object):
             'expires_in': 0
         }
         if isinstance(credentials, basestring):
-            with open(credentials) as f:
-                credentials = json.load(f)
-        self.credentials = credentials.copy()
+            if credentials.startswith('{'):
+                credentials = json.loads(credentials)
+            elif credentials != 'IAM':
+                with open(credentials) as f:
+                    credentials = json.load(f)
+        self.credentials = credentials
         if project is None:
             if self.credentials == 'IAM':
                 self.project = self.metadata()[0]['project']['projectId']
@@ -338,10 +341,7 @@ def init(*args, **kwargs):
 
     credentials = kwargs.get('credentials')
     if not credentials:
-        if 'GCP_CREDENTIALS' in os.environ:
-            credentials = os.environ['GCP_CREDENTIALS']
-            if credentials.startswith('{'):
-                credentials = json.loads(credentials)
+        credentials = os.environ.get('GCP_CREDENTIALS')
         if credentials:
             kwargs['credentials'] = credentials
 
