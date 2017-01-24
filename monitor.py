@@ -2161,6 +2161,7 @@ def main(argv=None):
         conf['logger'] = logger
         os.environ['AWS_NO_DOT'] = 'true'
         os.environ['AZURE_NO_DOT'] = 'true'
+        os.environ['GCP_NO_DOT'] = 'true'
 
     debug_func = None
     if args.debug:
