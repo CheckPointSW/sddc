@@ -948,9 +948,6 @@ class GCP(Controller):
     def __init__(self, **options):
         super(GCP, self).__init__(**options)
         self.project = options['project']
-        if self.SEPARATOR in self.project:
-            raise Exception('Project name must not contain "%s"' % (
-                self.SEPARATOR))
         self.gcp = gcpm.GCP(
             project=options['project'], credentials=options.get('credentials'))
 
@@ -1001,13 +998,10 @@ class GCP(Controller):
         subnets = self.retrieve_aggregated('subnetworks')
         instances = []
         for instance in gcp_instances.values():
-            if self.SEPARATOR in instance['name']:
-                continue
             tags = self.get_tags(instance)
             if tags.get('x-chkp-management') != self.management:
                 continue
-            instance_name = self.SEPARATOR.join([
-                self.name, instance['name'], self.project])
+            instance_name = self.SEPARATOR.join([self.name, instance['name']])
             instance_interfaces = []
             ip_address = None
             for index, interface in enumerate(instance['networkInterfaces']):
@@ -2100,6 +2094,9 @@ def test(config_file):
     log('\nTesting controllers...\n')
     for name, c in config['controllers'].items():
         log('\nTesting %s...\n' % name)
+        if self.SEPARATOR in name:
+            raise Exception('The controller name contains "%s"' %
+                            self.SEPARATOR)
         for key in ['class']:
             if key not in c:
                 raise Exception('The parameter "%s" is missing' % key)
