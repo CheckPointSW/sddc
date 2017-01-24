@@ -313,6 +313,11 @@ If you are using a IAM role profile, you need to provide it with the following p
     }
 
 
+## GCP service account IAM settings
+
+If a service account credentials are used, then the service account should have at least Compute Engine Read Only scope (compute.readonly).
+
+
 ## Running:
 
     ./monitor.py --port 80 conf.json
