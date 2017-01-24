@@ -72,12 +72,12 @@ class HTTPException(GCPException):
 if os.path.isfile('/etc/cp-release'):
     os.environ.setdefault('GCP_OPENSSL', 'cpopenssl')
     os.environ.setdefault('GCP_CURL', 'curl_cli')
-    if 'CURL_CA_BUNDLE' not in os.environ:
-        if 'CPDIR' not in os.environ:
-            raise EnvException(
-                'Please define CPDIR in env for the CA bundle')
-        os.environ['CURL_CA_BUNDLE'] = (os.environ['CPDIR'] +
-                                        '/conf/ca-bundle-public-cloud.crt')
+    if 'CPDIR' not in os.environ:
+        raise EnvException('Please define CPDIR in env for the CA bundle')
+    bundle_prefix = os.environ['CPDIR'] + '/conf/ca-bundle'
+    if 'CURL_CA_BUNDLE' not in os.environ or (
+            os.environ['CURL_CA_BUNDLE'] == bundle_prefix + '.crt'):
+        os.environ['CURL_CA_BUNDLE'] = bundle_prefix + '-public-cloud.crt'
 
 
 def truncate(buf, max_len):
