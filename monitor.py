@@ -43,7 +43,7 @@ import urlparse
 
 import aws
 import azure
-import gcpm
+import gcp
 
 TAG = 'managed-virtual-gateway'
 WEB_DIR = os.path.dirname(sys.argv[0]) + '/web'
@@ -948,7 +948,7 @@ class GCP(Controller):
     def __init__(self, **options):
         super(GCP, self).__init__(**options)
         self.project = options['project']
-        self.gcp = gcpm.GCP(
+        self.gcp = gcp.GCP(
             project=options['project'], credentials=options.get('credentials'))
 
     def retrieve_aggregated(self, what):
@@ -2168,7 +2168,7 @@ def main(argv=None):
             conf.get('logger').setLevel(logging.DEBUG)
     aws.set_logger(log=log, debug=debug_func)
     azure.set_logger(log=log, debug=debug_func)
-    gcpm.set_logger(log=log, debug=debug_func)
+    gcp.set_logger(log=log, debug=debug_func)
 
     if args.test:
         test(args.config)
