@@ -1989,7 +1989,7 @@ def sync(controller, management, gateways):
     log('\n'.join([str(instances[i]) for i in instances] + ['']))
     filtered_gateways = set(name for name in gateways
                             if name.startswith(
-                                controller.name + Controller.SEPARATOR))
+                                controller.name + controller.SEPARATOR))
     for name in filtered_gateways - set(instances):
         try:
             management.set_state(name, 'DELETING')
@@ -2094,9 +2094,6 @@ def test(config_file):
     log('\nTesting controllers...\n')
     for name, c in config['controllers'].items():
         log('\nTesting %s...\n' % name)
-        if self.SEPARATOR in name:
-            raise Exception('The controller name contains "%s"' %
-                            self.SEPARATOR)
         for key in ['class']:
             if key not in c:
                 raise Exception('The parameter "%s" is missing' % key)
@@ -2104,6 +2101,9 @@ def test(config_file):
         cls = globals().get(c['class'], object)
         if not issubclass(cls, Controller):
             raise Exception('Unknown controller class "%s"' % c['class'])
+        if cls.SEPARATOR in name:
+            raise Exception('The controller name contains "%s"' %
+                            cls.SEPARATOR)
 
         cls.test(cls, name=name, management=config['management']['name'], **c)
 
