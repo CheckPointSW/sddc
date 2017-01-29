@@ -74,10 +74,15 @@ if os.path.isfile('/etc/cp-release'):
     os.environ.setdefault('GCP_CURL', 'curl_cli')
     if 'CPDIR' not in os.environ:
         raise EnvException('Please define CPDIR in env for the CA bundle')
-    bundle_prefix = os.environ['CPDIR'] + '/conf/ca-bundle'
+    bundle_dir = os.environ['CPDIR'] + '/conf/'
+    if os.path.exists(bundle_dir + 'public-cloud.crt'):
+        cloud_bundle = bundle_dir + 'ca-bundle-public-cloud.crt'
+    else:
+        cloud_bundle = None
     if 'CURL_CA_BUNDLE' not in os.environ or (
-            os.environ['CURL_CA_BUNDLE'] == bundle_prefix + '.crt'):
-        os.environ['CURL_CA_BUNDLE'] = bundle_prefix + '-public-cloud.crt'
+            os.environ['CURL_CA_BUNDLE'] == bundle_dir + 'ca-bundle.crt' and
+            cloud_bundle):
+        os.environ['CURL_CA_BUNDLE'] = cloud_bundle
 
 
 def truncate(buf, max_len):
