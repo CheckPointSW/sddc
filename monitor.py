@@ -1111,6 +1111,7 @@ class Management(object):
     BAD_SESSION_PATTERNS = [
         re.compile(r'.*Wrong session id'),
         re.compile(r'.* locked[: ]'),
+        re.compile(r'.* has no permission '),
         re.compile(r'.*Operation is not allowed in read only mode')]
 
     def __init__(self, **options):
