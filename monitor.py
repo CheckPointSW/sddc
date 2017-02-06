@@ -513,8 +513,7 @@ class AWS(Controller):
                 interfaces = []
                 instance_name = self.SEPARATOR.join(
                     [self.name, instance['instanceId'], region])
-                if instance['instanceState']['name'] not in [
-                        'running', 'stopping', 'stopped']:
+                if instance['instanceState']['name'] in {'terminated'}:
                     continue
 
                 tags = self.get_tags(instance['tagSet'])
