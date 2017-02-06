@@ -195,7 +195,7 @@ class Controller(object):
         controller = cls(**options)
         yield controller
         instances = controller.get_instances()
-        debug('\n'.join([str(i) for i in instances] + ['']))
+        log('\n'.join([''] + [str(i) for i in instances] + ['']))
 
     @staticmethod
     def test(cls, **options):
