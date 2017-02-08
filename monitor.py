@@ -1232,6 +1232,9 @@ class Management(object):
                 return objects
             offset = payload['to']
 
+    def in_domain(self, obj):
+        return self.domain is None or obj['domain']['name'] == self.domain
+
     def __enter__(self):
         # FIXME: if the polling period is longer than the session timeout
         #        we need to request a longer session or add keepalive
@@ -1256,6 +1259,7 @@ class Management(object):
             for session in self('show-sessions', {'details-level': 'full'},
                                 aggregate='objects'):
                 if session['uid'] == resp['uid'] or (
+                        not self.in_domain(session) or
                         session['application'] != 'WEB_API'):
                     continue
                 log('\ndiscarding session: %s' % session['uid'])
@@ -1358,11 +1362,14 @@ class Management(object):
     def get_uid(self, name):
         objects = self('show-generic-objects', {'name': name},
                        aggregate='objects')
-        uids = [o['uid'] for o in objects if o['name'] == name]
-        if len(uids) == 1:
-            return uids[0]
-        if not len(uids):
+        by_name = [o for o in objects if o['name'] == name]
+        if len(by_name) == 1:
+            return by_name[0]['uid']
+        if not len(by_name):
             return None
+        by_domain = [o for o in by_name if self.in_domain(o)]
+        if len(by_domain) == 1:
+            return by_domain[0]['uid']
         raise Exception('more than one object named "%s"' % name)
 
     def set_proxy(self, gw, proxy_ports):
@@ -1391,14 +1398,15 @@ class Management(object):
         IPS_LAYER = 'IPS'
         log('\n%s: %s' % ('setting ips profile', ips_profile))
         profile = self('show-threat-profile', {'name': ips_profile})
+        layer = self.get_uid(IPS_LAYER)
         for rule in self(
-                'show-threat-rulebase', {'name': IPS_LAYER})['rulebase']:
+                'show-threat-rulebase', {'uid': layer})['rulebase']:
             if gw['uid'] in rule['install-on']:
                 break
         else:
             raise Exception('could not find IPS rule for gateway')
         self('set-threat-rule', {
-            'uid': rule['uid'], 'layer': IPS_LAYER, 'action': profile['uid']})
+            'uid': rule['uid'], 'layer': layer, 'action': profile['uid']})
 
     def set_identity_awareness(self, gw, enabled):
         if gw['version'] != 'R77.30':
@@ -1620,6 +1628,8 @@ class Management(object):
         self('add-generic-object', ls_obj)
         layers = []
         for layer in self('show-package', {'name': policy})['access-layers']:
+            if not self.in_domain(layer):
+                continue
             if self('show-generic-object',
                     {'uid': layer['uid']})['firewallOn']:
                 layers.append(layer)
