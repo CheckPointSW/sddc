@@ -32,8 +32,6 @@ In addition the script:
 
 * Will delete the corresponding gateway object upon the instance termination.
 
-* Exposes a simple web page providing information about the status of the provisioning of the gateways
-
 
 ## Installation
 
@@ -316,10 +314,3 @@ If you are using a IAM role profile, you need to provide it with the following p
 ## GCP service account IAM settings
 
 If a service account credentials are used, then the service account should have at least Compute Engine Read Only scope (compute.readonly).
-
-
-## Running:
-
-    ./monitor.py --port 80 conf.json
-
-The script will start a web server on port 80 where a simple status page can be viewed with a web browser.

@@ -46,8 +46,6 @@ import azure
 import gcp
 
 TAG = 'managed-virtual-gateway'
-WEB_DIR = os.path.dirname(sys.argv[0]) + '/web'
-STATE_FILE = WEB_DIR + '/gateways.json'
 
 conf = collections.OrderedDict()
 log_buffer = [None]
@@ -1965,11 +1963,6 @@ class Management(object):
             self.state[name] = status
         elif name in self.state:
             del self.state[name]
-        if not conf['webserver']:
-            return
-        with open(STATE_FILE, 'w') as f:
-            json.dump([{'name': n, 'status': self.state[n]}
-                       for n in self.state], f)
 
 
 def is_SIC_open(instance):
@@ -2049,25 +2042,6 @@ def loop(management, controllers, delay):
         time.sleep(delay)
 
 
-@contextlib.contextmanager
-def web_server():
-    port = conf.get('webserver', 0)
-    if not port:
-        yield
-        return
-    sudo = []
-    if port < 1024:
-        sudo = ['sudo']
-    server = subprocess.Popen(
-        sudo + [sys.executable, '-m', 'SimpleHTTPServer', str(port)],
-        cwd=WEB_DIR)
-    yield
-    server.terminate()
-    time.sleep(1)
-    if not server.poll():
-        server.kill()
-
-
 def start(config):
     for t in config['templates']:
         Template(t, **config['templates'][t])
@@ -2076,9 +2050,8 @@ def start(config):
         controller = config['controllers'][c]
         controllers += [globals()[controller['class']](
             name=c, management=config['management']['name'], **controller)]
-    with web_server():
-        with Management(**config['management']) as management:
-            loop(management, controllers, config['delay'])
+    with Management(**config['management']) as management:
+        loop(management, controllers, config['delay'])
 
 
 def test(config_file):
@@ -2147,8 +2120,6 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog=argv[0] if argv else None)
     parser.add_argument('config', metavar='CONFIG',
                         help='JSON-FILE or a literal json expression')
-    parser.add_argument('-p', '--port', metavar='PORT', default='0',
-                        help='Listening port for the web server')
     parser.add_argument('-d', '--debug', dest='debug', action='store_true')
     parser.add_argument('-l', '--logfile', metavar='LOGFILE',
                         help='Path to log file')
@@ -2183,8 +2154,6 @@ def main(argv=None):
     if args.test:
         test(args.config)
         sys.exit(0)
-
-    conf['webserver'] = int(args.port)
 
     if args.config[0] == '@':
         args.config = args.config[1:]
