@@ -2092,15 +2092,14 @@ def test(config_file):
 
     log('\nTesting templates...\n')
     protos = set([t.get('proto') for t in config['templates'].values()])
-    for t in config['templates']:
-        Template(t, **config['templates'][t])
-
-    for name, t in config['templates'].items():
+    for name in config['templates']:
+        Template(name, **config['templates'][name])
+    for name in config['templates']:
         if name in protos:
             continue
         log('\nTesting %s...\n' % name)
         for key in ['version', 'one-time-password', 'policy']:
-            if key not in t:
+            if not Template.get(name, key, None):
                 raise Exception('The parameter "%s" is missing' % key)
 
     log('\nTesting management configuration...\n')
