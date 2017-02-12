@@ -1237,9 +1237,6 @@ class Management(object):
         # FIXME: if the polling period is longer than the session timeout
         #        we need to request a longer session or add keepalive
         try:
-            obj = {}
-            self.put_object_tag_value(obj, self.MONITOR_PREFIX, self.name,
-                                      silent=True)
             if not self.user:
                 progress('+')
                 login_args = ['mgmt_cli', '--root', 'true', '--format', 'json',
