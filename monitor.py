@@ -511,7 +511,8 @@ class AWS(Controller):
                 interfaces = []
                 instance_name = self.SEPARATOR.join(
                     [self.name, instance['instanceId'], region])
-                if instance['instanceState']['name'] in {'terminated'}:
+                if instance['instanceState']['name'] in {
+                        'shutting-down', 'terminated'}:
                     continue
 
                 tags = self.get_tags(instance['tagSet'])
