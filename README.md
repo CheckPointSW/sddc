@@ -105,12 +105,16 @@ The script takes a configuration file in JSON format
         "controllers": {
             "AWS-PROD": {
                 "class": "AWS",
+                "domain": "DOMAIN-1 (Optional)",
+                "templates": ["TEMPLATE1-NAME"],  // Optional
                 "access-key": "AWS-ACCESS-KEY",
                 "secret-key": "AWS-SECRET-KEY",
                 "regions": ["us-east-1", "us-west-2"]
             },
             "AZURE-RESOURCES": {
                 "class": "Azure",
+                "domain": "DOMAIN-1 (Optional)",
+                "templates": ["TEMPLATE2-NAME"],  // Optional
                 "subscription": "SUBSCRIPTION-ID",
                 "credentials": {
                     "tenant": "THE-ACTIVE-DIRECTORY-TENANT-ID",
@@ -121,6 +125,7 @@ The script takes a configuration file in JSON format
             },
             "GCP-DEPLOYMENT": {
                 "class": "GCP",
+                "domain": "DOMAIN-2 (Optional)",
                 "project": "my-project",
                 "credentials": "IAM"
             },
@@ -212,6 +217,10 @@ In reference to the above configuration:
     * Controller attributes:
 
         * class: either "AWS", "Azure", "GCP", or "OpenStack"
+
+        * domain: the name or UID of the management domain if applicable (optional). In MDS, instances that are discovered by this controller, will be defined in this domain. If not specified, the domain specified in the management object (in the configuration), will be used. This attribute should not be specified if the management server is not an MDS
+
+        * templates: an optional list of of templates, which are allowed for instances that are discovered by this controller
 
         * For AWS controllers:
 

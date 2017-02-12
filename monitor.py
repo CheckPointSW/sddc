@@ -183,16 +183,21 @@ class Controller(object):
     def __init__(self, **options):
         self.name = options['name']
         self.management = options['management']
+        self.templates = options.get('templates', [])
 
     def get_instances(self):
         raise Exception('not implemented')
+
+    def filter_instances(self):
+        return [i for i in self.get_instances()
+                if not self.templates or i.template in self.templates]
 
     @staticmethod
     @contextlib.contextmanager
     def Tester(cls, **options):
         controller = cls(**options)
         yield controller
-        instances = controller.get_instances()
+        instances = controller.filter_instances()
         log('\n'.join([''] + [str(i) for i in instances] + ['']))
 
     @staticmethod
@@ -1353,7 +1358,8 @@ class Management(object):
     def gw2str(self, gw):
         return ' '.join([gw['name'],
                          '|'.join(self.get_object_tags(gw)),
-                         '|'.join(self.targets.get(gw['name'], ['-']))])
+                         '|'.join(self.targets.get(gw['name'], ['-'])),
+                         self.domain])
 
     def get_uid(self, name):
         objects = self('show-generic-objects', {'name': name},
@@ -1962,6 +1968,26 @@ class Management(object):
         elif name in self.state:
             del self.state[name]
 
+    @staticmethod
+    @contextlib.contextmanager
+    def init(domains, **config):
+        managements = collections.OrderedDict()
+        options = config['management'].copy()
+        default_domain = options.pop('domain', None)
+        try:
+            for domain in domains:
+                actual_domain = default_domain if domain is None else domain
+                if domain not in managements:
+                    managements[domain] = Management(
+                        domain=actual_domain, **options)
+            yield managements
+        finally:
+            for management in reversed(managements.values()):
+                try:
+                    management.__exit__(*sys.exc_info())
+                except Exception:
+                    log('\n%s' % traceback.format_exc())
+
 
 def is_SIC_open(instance):
     with contextlib.closing(
@@ -1983,7 +2009,7 @@ def sync(controller, management, gateways):
     if not conf.get('debug'):
         log('\n')
     instances = {}
-    for instance in controller.get_instances():
+    for instance in controller.filter_instances():
         instances[instance.name] = instance
     if conf.get('debug'):
         log('\n')
@@ -2014,42 +2040,45 @@ def sync(controller, management, gateways):
             log('\n%s' % traceback.format_exc())
 
 
-def loop(management, controllers, delay):
-    management.set_state(None, None)
-
+def loop(managements, controllers, delay):
     while True:
         try:
-            management.get_targets()
-            gateways = management.get_gateways()
-            log('\ngateways (before):\n')
-            log('\n'.join(
-                [management.gw2str(gateways[gw]) for gw in gateways] + ['']))
-            for c in controllers:
-                try:
-                    sync(c, management, gateways)
-                except Exception:
-                    log('\n%s' % traceback.format_exc())
-            log('\n')
-            gateways = management.get_gateways()
-            log('\ngateways (after):\n')
-            log('\n'.join(
-                [management.gw2str(gateways[gw]) for gw in gateways] + ['']))
+            for domain in controllers.keys():
+                management = managements[domain]
+                management.get_targets()
+                gateways = management.get_gateways()
+                log('\ngateways (before):\n')
+                log('\n'.join(
+                    [management.gw2str(gateways[gw]) for gw in gateways] +
+                    ['']))
+                for c in controllers[domain]:
+                    try:
+                        sync(c, management, gateways)
+                    except Exception:
+                        log('\n%s' % traceback.format_exc())
+                log('\n')
+                gateways = management.get_gateways()
+                log('\ngateways (after):\n')
+                log('\n'.join(
+                    [management.gw2str(gateways[gw]) for gw in gateways] +
+                    ['']))
+                log('\n')
         except Exception:
             log('\n%s' % traceback.format_exc())
-        log('\n')
         time.sleep(delay)
 
 
 def start(config):
     for t in config['templates']:
         Template(t, **config['templates'][t])
-    controllers = []
+    controllers = collections.OrderedDict()
     for c in config['controllers']:
         controller = config['controllers'][c]
-        controllers += [globals()[controller['class']](
-            name=c, management=config['management']['name'], **controller)]
-    with Management(**config['management']) as management:
-        loop(management, controllers, config['delay'])
+        controllers.setdefault(controller.get('domain'), []).append(
+            globals()[controller['class']](
+                name=c, management=config['management']['name'], **controller))
+    with Management.init(controllers.keys(), **config) as managements:
+        loop(managements, controllers, config['delay'])
 
 
 def test(config_file):
@@ -2072,7 +2101,25 @@ def test(config_file):
     if not isinstance(config['delay'], int):
         raise Exception('The parameter "delay" must be an integer\n')
 
+    log('\nTesting templates...\n')
+    protos = set([t.get('proto') for t in config['templates'].values()])
+    for name in config['templates']:
+        Template(name, **config['templates'][name])
+    templates = set(config['templates']) - protos
+    for name, controller in config['controllers'].items():
+        if not isinstance(controller['templates'], list):
+            raise Exception(
+                'The parameter "templates" in controller %s should be an array'
+                % name)
+        templates.update(controller['templates'])
+    for name in templates:
+        log('\nTesting %s...\n' % name)
+        for key in ['version', 'one-time-password', 'policy']:
+            if not Template.get(name, key, None):
+                raise Exception('The parameter "%s" is missing' % key)
+
     log('\nTesting controllers...\n')
+    domains = set()
     for name, c in config['controllers'].items():
         log('\nTesting %s...\n' % name)
         for key in ['class']:
@@ -2087,18 +2134,10 @@ def test(config_file):
                             cls.SEPARATOR)
 
         cls.test(cls, name=name, management=config['management']['name'], **c)
-
-    log('\nTesting templates...\n')
-    protos = set([t.get('proto') for t in config['templates'].values()])
-    for name in config['templates']:
-        Template(name, **config['templates'][name])
-    for name in config['templates']:
-        if name in protos:
-            continue
-        log('\nTesting %s...\n' % name)
-        for key in ['version', 'one-time-password', 'policy']:
-            if not Template.get(name, key, None):
-                raise Exception('The parameter "%s" is missing' % key)
+        domains.add(c.get('domain'))
+    if domains and None in domains and domains - {None} and (
+            not config['management'].get('domain')):
+        raise Exception('Some controllers do not have a "domain"')
 
     log('\nTesting management configuration...\n')
     for key in ['name', 'host']:
@@ -2107,8 +2146,9 @@ def test(config_file):
                 'The parameter "%s" is missing in management section\n' % key)
 
     log('\nTesting management connectivity...\n')
-    with Management(**config['management']) as management:
-        management.get_gateways()
+    with Management.init(domains, **config) as managements:
+        for management in managements.values():
+            management.get_gateways()
 
     log('\nAll Tests passed successfully\n')
 
