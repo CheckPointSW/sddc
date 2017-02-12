@@ -2045,6 +2045,8 @@ def loop(managements, controllers, delay):
         try:
             for domain in controllers.keys():
                 management = managements[domain]
+                if management.domain:
+                    log('\n%s' % management.domain)
                 management.get_targets()
                 gateways = management.get_gateways()
                 log('\ngateways (before):\n')
