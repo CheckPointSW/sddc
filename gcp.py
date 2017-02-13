@@ -77,12 +77,9 @@ if os.path.isfile('/etc/cp-release'):
     bundle_dir = os.environ['CPDIR'] + '/conf/'
     if os.path.exists(bundle_dir + 'public-cloud.crt'):
         cloud_bundle = bundle_dir + 'ca-bundle-public-cloud.crt'
-    else:
-        cloud_bundle = None
-    if 'CURL_CA_BUNDLE' not in os.environ or (
-            os.environ['CURL_CA_BUNDLE'] == bundle_dir + 'ca-bundle.crt' and
-            cloud_bundle):
-        os.environ['CURL_CA_BUNDLE'] = cloud_bundle
+        if 'CURL_CA_BUNDLE' not in os.environ or (
+                os.environ['CURL_CA_BUNDLE'] == bundle_dir + 'ca-bundle.crt'):
+            os.environ['CURL_CA_BUNDLE'] = cloud_bundle
 
 
 def truncate(buf, max_len):
@@ -291,9 +288,7 @@ class GCP(object):
 
     def rest(self, method, path, query={}, service=None, body=None,
              headers=None, aggregate=False):
-        if service is None:
-            service = 'compute/v1'
-        result = []
+        result = None
         page_token = None
 
         while True:
@@ -302,6 +297,8 @@ class GCP(object):
 
             url = ''
             if not path.startswith('https://'):
+                if service is None:
+                    service = 'compute/v1'
                 url = 'https://www.googleapis.com/%s' % service
                 if not path.startswith('/projects/'):
                     url += '/projects/%s' % self.project
@@ -328,10 +325,25 @@ class GCP(object):
             if not aggregate:
                 return h, resp
             elif resp.get('kind', '').endswith('AggregatedList'):
-                assert resp.get('nextPageToken') is None
-                return {}, resp.get('items')
-            items = resp.get('items', [])
-            result.extend(items)
+                if not result:
+                    result = collections.OrderedDict()
+                items = resp.get('items', {})
+                for key, value in items.items():
+                    result.setdefault(key, collections.OrderedDict())
+                    for k, v in value.items():
+                        if k == 'warning' and v.get(
+                                'code') == 'NO_RESULTS_ON_PAGE':
+                            continue
+                        result[key].setdefault(k, [])
+                        if isinstance(v, list):
+                            result[key][k].extend(v)
+                        else:
+                            result[key][k].append(v)
+            else:
+                if not result:
+                    result = []
+                items = resp.get('items', [])
+                result.extend(items)
             page_token = resp.get('nextPageToken')
             if not page_token:
                 return {}, result
