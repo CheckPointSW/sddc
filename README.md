@@ -38,9 +38,9 @@ In addition the script:
 On any generic Linux with python 2.7 installed, download this repository.
 
 
-## Configuration:
+## Configuration
 
-### Tags and metadata:
+### Tags and metadata
 
 The following tags should be added to gateway instances (in GCP, tags do not have name/value, so these tags are specified as x-chkp-TAGNAME--TAGVALUE):
 
@@ -59,6 +59,8 @@ Optionally, in AWS and in Azure, network interface objects (ENIs/networkInterfac
 |x-chkp-topology|one of "external", "internal" or "specific"|A qualification of the address space that is found "behind" the interface. If not specified, on single interface gateways or on interfaces that are associated with a public IP address, this value defaults to be "external" and otherwise to "internal". The value "external" means the internet address space minus the addresses specified on "internal" and "specific". The value "internal" means the address range of the subnet to which the interface is connected. The value "specific" means the addresses represented by the network object group that is specified in the "specific-network" attribute of the template in the configuration file. Alternatively, if the value is of the form "specific:NETWORK-OBJECT-GROUP", then the addresses represented by the pre-existing object named NETWORK-OBJECT-GROUP are taken (overriding the configuration file)|
 |x-chkp-anti-spoofing|"true" or "false"|Whether to enforce Anti Spoofing protection on traffic going through the interface, this is overridden to be "false" for single interface gateways|
 
+
+### Configuration file
 
 The script takes a configuration file in JSON format
 
@@ -182,7 +184,7 @@ In reference to the above configuration:
 
     * When a new gateway instance is detected, the script uses the x-chkp-template tag value to select a template from this list.
 
-    * Templates can inherit attributes from other templates through the "proto" attribute.
+    * Templates can inherit attributes from other templates through the "proto" attribute. An attribute (like "policy") can be specified either in the template object or in the template object referred in the "proto" attribute. The value in the template always overrides the parent ("proto") template value. If the attribute is also missing in the parent, it is looked up in the parent's parent (if applicable) and so on.
 
     * The selected template determines the eventual gateway configuration including:
 
@@ -212,7 +214,7 @@ In reference to the above configuration:
 
     * An object with one or more controller configuration objects.
 
-    * The name of each controller must be unique
+    * The name of each controller must be unique.
 
     * Controller attributes:
 
@@ -220,7 +222,7 @@ In reference to the above configuration:
 
         * domain: the name or UID of the management domain if applicable (optional). In MDS, instances that are discovered by this controller, will be defined in this domain. If not specified, the domain specified in the management object (in the configuration), will be used. This attribute should not be specified if the management server is not an MDS
 
-        * templates: an optional list of of templates, which are allowed for instances that are discovered by this controller
+        * templates: an optional list of of templates, which are allowed for instances that are discovered by this controller. If this attribute is missing or its value is an empty list, the meaning is that any template may be used by gateways that belong to this controller. This is useful in MDS environments, where controllers work with different domains and it is necessary to restrict a gateway to only use templates that were intended for its domain
 
         * For AWS controllers:
 
