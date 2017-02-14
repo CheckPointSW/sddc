@@ -2109,6 +2109,8 @@ def test(config_file):
         Template(name, **config['templates'][name])
     templates = set(config['templates']) - protos
     for name, controller in config['controllers'].items():
+        if 'templates' not in controller:
+            continue
         if not isinstance(controller['templates'], list):
             raise Exception(
                 'The parameter "templates" in controller %s should be an array'
