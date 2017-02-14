@@ -102,11 +102,11 @@ class VersionException(AWSException):
 if os.path.isfile('/etc/cp-release'):
     os.environ.setdefault('AWS_CURL', 'curl_cli')
     if 'CURL_CA_BUNDLE' not in os.environ:
-        if 'CPDIR' not in os.environ:
+        cpdir = os.environ.get('MDS_CPDIR', os.environ.get('CPDIR'))
+        if not cpdir:
             raise EnvException(
                 'Please define CPDIR in env for the CA bundle')
-        ca_bundle = os.environ['CPDIR'] + '/conf/ca-bundle.crt'
-        os.environ['CURL_CA_BUNDLE'] = ca_bundle
+        os.environ['CURL_CA_BUNDLE'] = cpdir + '/conf/ca-bundle.crt'
 
     if 'https_proxy' not in os.environ or 'http_proxy' not in os.environ:
         host, err = subprocess.Popen(

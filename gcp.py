@@ -72,9 +72,10 @@ class HTTPException(GCPException):
 if os.path.isfile('/etc/cp-release'):
     os.environ.setdefault('GCP_OPENSSL', 'cpopenssl')
     os.environ.setdefault('GCP_CURL', 'curl_cli')
-    if 'CPDIR' not in os.environ:
+    cpdir = os.environ.get('MDS_CPDIR', os.environ.get('CPDIR'))
+    if not cpdir:
         raise EnvException('Please define CPDIR in env for the CA bundle')
-    bundle_dir = os.environ['CPDIR'] + '/conf/'
+    bundle_dir = cpdir + '/conf/'
     if os.path.exists(bundle_dir + 'public-cloud.crt'):
         cloud_bundle = bundle_dir + 'ca-bundle-public-cloud.crt'
         if 'CURL_CA_BUNDLE' not in os.environ or (
