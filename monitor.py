@@ -1359,7 +1359,7 @@ class Management(object):
         return ' '.join([gw['name'],
                          '|'.join(self.get_object_tags(gw)),
                          '|'.join(self.targets.get(gw['name'], ['-'])),
-                         self.domain])
+                         str(self.domain)])
 
     def get_uid(self, name):
         objects = self('show-generic-objects', {'name': name},
@@ -2042,8 +2042,8 @@ def sync(controller, management, gateways):
 
 def loop(managements, controllers, delay):
     while True:
-        try:
-            for domain in controllers.keys():
+        for domain in controllers.keys():
+            try:
                 management = managements[domain]
                 if management.domain:
                     log('\n%s' % management.domain)
@@ -2065,8 +2065,8 @@ def loop(managements, controllers, delay):
                     [management.gw2str(gateways[gw]) for gw in gateways] +
                     ['']))
                 log('\n')
-        except Exception:
-            log('\n%s' % traceback.format_exc())
+            except Exception:
+                log('\n%s' % traceback.format_exc())
         time.sleep(delay)
 
 
