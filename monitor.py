@@ -1237,7 +1237,8 @@ class Management(object):
             offset = payload['to']
 
     def in_domain(self, obj):
-        return self.domain is None or obj['domain']['name'] == self.domain
+        domain = 'SMC User' if self.domain is None else self.domain
+        return obj['domain']['name'] == domain
 
     def __enter__(self):
         # FIXME: if the polling period is longer than the session timeout
