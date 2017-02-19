@@ -408,7 +408,8 @@ class AWS(Controller):
             by_instance.setdefault(i, {})
             for target_group in i2target_groups[i]:
                 for protocol_port in i2target_groups[i][target_group]:
-                    for dns_name in target_group2dns_names[target_group]:
+                    for dns_name in target_group2dns_names.get(
+                            target_group, set()):
                         by_instance[i].setdefault(protocol_port, []).extend(
                             dns_name2cidrs[dns_name])
 
