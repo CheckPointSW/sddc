@@ -770,6 +770,7 @@ class Azure(Controller):
         super(Azure, self).__init__(**options)
         self.sub = '/subscriptions/' + options['subscription']
         self.azure = azure.Azure(subscription=options['subscription'],
+                                 environment=options.get('environment'),
                                  credentials=options.get('credentials'))
 
     def retrieve_vms_and_interfaces(self):

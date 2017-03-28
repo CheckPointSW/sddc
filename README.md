@@ -118,6 +118,7 @@ The script takes a configuration file in JSON format
                 "domain": "DOMAIN-1 (Optional)",
                 "templates": ["TEMPLATE2-NAME"],  // Optional
                 "subscription": "SUBSCRIPTION-ID",
+                "environment": "AzureCloud",  // Optional
                 "credentials": {
                     "tenant": "THE-ACTIVE-DIRECTORY-TENANT-ID",
                     "grant_type": "client_credentials",
@@ -251,6 +252,8 @@ In reference to the above configuration:
         * For Azure controllers:
 
             * subscription: the Azure subscription ID
+
+            * environment: an optional attribute to specify the Azure environemnt. The default is "AzureCloud", but one of the other environments like "AzureChinaCloud", "AzureGermanCloud" or "AzureUSGovernment" can be speciied instead
 
             * credentials: an object containing one of the following alternatives (in any case the entity for which the credentials are specified (a service principal or a user) must have "read" access to the relevant resources in the subscription):
 
