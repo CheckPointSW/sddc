@@ -1269,7 +1269,7 @@ class Management(object):
                 log('\ndiscarding session: %s' % session['uid'])
                 try:
                     self('discard', {'uid': session['uid']}, silent=True)
-                except:
+                except Exception:
                     debug('\n%s' % traceback.format_exc())
                     log(': failed')
             return self
