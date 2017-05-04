@@ -1267,7 +1267,11 @@ class Management(object):
                         session['application'] != 'WEB_API'):
                     continue
                 log('\ndiscarding session: %s' % session['uid'])
-                self('discard', {'uid': session['uid']})
+                try:
+                    self('discard', {'uid': session['uid']}, silent=True)
+                except:
+                    debug('\n%s' % traceback.format_exc())
+                    log(': failed')
             return self
         except:
             self.__exit__(*sys.exc_info())
