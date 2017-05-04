@@ -137,7 +137,7 @@ The script takes a configuration file in JSON format
                 "scheme": "https",
                 "host": "IP-ADDRESS-OR-HOST-NAME:KEYSTONE-PORT",
                 "fingerprint": "sha256:FINGERPRINT-IN-HEX",
-                "user: "OPENSTACK-USER",
+                "user": "OPENSTACK-USER",
                 "password": "STRING",
                 "tenant": "TENANT-UUID"
             }
