@@ -71,7 +71,11 @@ if os.path.isfile('/etc/cp-release'):
         if not cpdir:
             raise Exception(
                 'Please define CPDIR in env for the CA bundle')
-        os.environ['CURL_CA_BUNDLE'] = cpdir + '/conf/ca-bundle.crt'
+        public_bundle = cpdir + '/conf/ca-bundle-public-cloud.crt'
+        if os.path.exists(public_bundle):
+            os.environ['CURL_CA_BUNDLE'] = public_bundle
+        else:
+            os.environ['CURL_CA_BUNDLE'] = cpdir + '/conf/ca-bundle.crt'
 
 
 class RequestException(Exception):
@@ -366,6 +370,10 @@ class Azure(object):
         if account is None:
             raise Exception('storage account was not specified')
 
+        key = os.environ.get('AZURE_STORAGE_' + account.upper())
+        if key:
+            return account, key
+
         def get_account(account, provider, key_name):
             self.accounts.setdefault('ids', {})
             if account not in self.accounts['ids']:
@@ -463,7 +471,8 @@ class Azure(object):
             headers = ['%s: %s' % (n, headers_dict[n]) for n in headers_dict]
             h, b = request(
                 method,
-                'https://' + account + '.blob.core.windows.net' + marker_path,
+                'https://' + account + '.blob.' + self.environment.core +
+                marker_path,
                 body=body,
                 headers=headers,
                 pool=self.pool,
