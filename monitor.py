@@ -1348,7 +1348,7 @@ class Management(object):
             if not t.startswith(prefix):
                 new_tags.append(t)
                 continue
-        if value:
+        if value is not None:
             new_tags.append(prefix + value)
         self.put_object_tags(obj, new_tags, in_comments=in_comments)
 
@@ -1508,8 +1508,8 @@ class Management(object):
         self.targets = targets
 
     def load_balancer_tag(self, instance):
-        load_balancers = getattr(instance, 'load_balancers', {})
-        if not load_balancers:
+        load_balancers = getattr(instance, 'load_balancers', None)
+        if load_balancers is None:
             return None
         parts = []
         for dns_name in load_balancers:
@@ -1758,11 +1758,9 @@ class Management(object):
         log(out)
         return not proc.wait()
 
-    def reset_gateway(self, name, delete=False):
-        log('\n%s: %s' % ('deleting' if delete else 'resetting', name))
-        self.customize(name)
-        gw = self.get_gateway(name)
-        self.set_policy(gw, None)
+    def delete_objects_for_gw(self, gw):
+        name = gw['name']
+        log('\n%s: %s' % ('deleting objects for', name))
         policies = [p['name']
                     for p in self('show-packages', {}, aggregate='packages')]
         for policy in policies:
@@ -1816,7 +1814,16 @@ class Management(object):
             if host['name'].endswith('_' + name):
                 log('\ndeleting %s' % host['name'])
                 self('delete-host', {'name': host['name']})
-        if delete:
+
+    def reset_gateway(self, name, delete_gw=False, delete_objects=False):
+        log('\n%s: %s' % ('deleting' if delete_gw else 'resetting', name))
+        self.customize(name)
+        gw = self.get_gateway(name)
+        self.set_policy(gw, None)
+        if delete_objects or delete_gw and self.get_object_tag_value(
+                gw, self.LOAD_BALANCER_PREFIX) is not None:
+            self.delete_objects_for_gw(gw)
+        if delete_gw:
             log('\ndeleting %s' % name)
             self('delete-simple-gateway', {'name': name})
 
@@ -1902,7 +1909,8 @@ class Management(object):
         published = False
         try:
             self.auto_publish = False
-            self.reset_gateway(instance.name)
+            self.reset_gateway(instance.name, delete_objects=(
+                instance.load_balancers is not None))
             simple_gateway['name'] = instance.name
             tags = simple_gateway.pop('tags', [])
             self.put_object_tags(simple_gateway, tags + [TAG])
@@ -1961,7 +1969,8 @@ class Management(object):
                         log('\n%s' % traceback.format_exc())
                 else:
                     try:
-                        self.reset_gateway(instance.name)
+                        self.reset_gateway(instance.name, delete_objects=(
+                            instance.load_balancers is not None))
                     except Exception:
                         log('\n%s' % traceback.format_exc())
 
@@ -2027,7 +2036,7 @@ def sync(controller, management, gateways):
     for name in filtered_gateways - set(instances):
         try:
             management.set_state(name, 'DELETING')
-            management.reset_gateway(name, delete=True)
+            management.reset_gateway(name, delete_gw=True)
         except Exception:
             log('\n%s' % traceback.format_exc())
         finally:
