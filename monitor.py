@@ -2190,7 +2190,7 @@ def main(argv=None):
                                                        backupCount=3)
         logger = logging.getLogger('MONITOR')
         handler.setFormatter(logging.Formatter(
-            '%(asctime)s-%(name)s-%(levelname)s- %(message)s'))
+            '%(asctime)s %(name)s %(levelname)s %(message)s'))
         logger.addHandler(handler)
         logger.setLevel(logging.INFO)
         conf['logger'] = logger
