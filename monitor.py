@@ -1421,7 +1421,7 @@ class Management(object):
         if gw['version'] != 'R77.30':
             log('\nidentity awarness setup is not supported for "%s"' % (
                 gw['version']))
-            return False
+            return
         uid = gw['uid']
         gw_gen = self('show-generic-object', {'uid': uid})
         was_installed = gw_gen.get('identityAwareBlade', {}).get(
@@ -1429,14 +1429,14 @@ class Management(object):
         log('\nsetting identity awareness: %s -> %s' % (
             was_installed, enabled))
         if enabled and was_installed or not enabled and not was_installed:
-            return False
+            return
         if not enabled:
             self('set-generic-object', {
                 'uid': uid,
                 'identityAwareBlade': {
                     'identityAwareBladeInstalled': 'NOT_MINUS_INSTALLED',
                     'isCollectingIdentities': False}})
-            return False
+            return
         has_portal = 'IAMUAgent' in {
             p.get('portalName') for p in gw_gen.get('portals', [])}
         has_realm = 'identity_portal' in {
@@ -1491,7 +1491,6 @@ class Management(object):
                                                 'authScheme': 'USER_PASS',
                                             }}}}}}}}})
         self('set-generic-object', gw_obj)
-        return True
 
     def get_targets(self):
         """map instance name to a policy where it is an install target"""
@@ -1920,8 +1919,7 @@ class Management(object):
             self('set-generic-object', {
                 'uid': gw['uid'],
                 'sslInspectionEnabled': https_inspection})
-            identity_awareness = self.set_identity_awareness(
-                gw, identity_awareness)
+            self.set_identity_awareness(gw, identity_awareness)
             if gw.get('ips'):
                 self('set-generic-object', {
                     'uid': gw['uid'], 'protectInternalInterfacesOnly': False})
