@@ -284,7 +284,7 @@ class Azure(object):
                 del self.tokens[resource]
             raise
 
-    def arm(self, method, path, body=None, headers=None, aggregate=False):
+    def arm(self, method, path, body=None, headers=None, no_aggregate=False):
         if not path.startswith('/tenants') and not path.startswith(
                 '/subscriptions'):
             if not self.subscription:
@@ -331,7 +331,8 @@ class Azure(object):
                 h, b = request(method, url, body=body,
                                headers=headers_with_auth, pool=self.pool,
                                max_time=self.max_time)
-            if not aggregate or method != 'GET':
+            if no_aggregate or method != 'GET' or not isinstance(
+                    b.get('value'), list):
                 return h, b
             value += b['value']
             if 'nextLink' not in b:
@@ -691,7 +692,7 @@ def main(*args):
         h, b = blob(method, account, resource, **kwargs)
     elif api == 'arm':
         kwargs = collect(4)
-        kwargs['aggregate'] = os.environ.get('AZURE_ARM_AGGREGATE')
+        kwargs['no_aggregate'] = os.environ.get('AZURE_ARM_NO_AGGREGATE')
         h, b = arm(method, args[3], **kwargs)
     elif api == 'graph':
         kwargs = collect(4)
