@@ -165,16 +165,18 @@ class Template(object):
 
 
 class Instance(object):
-    def __init__(self, name, ip_address, interfaces, template):
+    def __init__(
+            self, name, ip_address, interfaces, template, load_balancers=None):
         self.name = name
         self.ip_address = ip_address
         self.interfaces = interfaces
         self.template = template
+        self.load_balancers = load_balancers
 
     def __str__(self):
         return ' '.join([
             self.name, self.ip_address, json.dumps(self.interfaces),
-            self.template, json.dumps(getattr(self, 'load_balancers', None))])
+            self.template, json.dumps(self.load_balancers)])
 
 
 class Controller(object):
@@ -540,12 +542,10 @@ class AWS(Controller):
                         enis[region][interface['networkInterfaceId']],
                         subnets[region]))
 
-                instance_obj = Instance(
-                    instance_name, ip_address, interfaces,
-                    tags['x-chkp-template'])
+                template = tags['x-chkp-template']
                 load_balancers = {}
                 internal_elbs = elbs['by-template'].get(
-                    region, {}).get(instance_obj.template, {})
+                    region, {}).get(template, {})
                 external_elbs = elbs['by-instance'].get(region, {}).get(
                     instance['instanceId'], {})
                 for dns_name in internal_elbs:
@@ -553,8 +553,9 @@ class AWS(Controller):
                         load_balancers.setdefault(
                             dns_name, {})[protocol_port] = external_elbs.get(
                                 protocol_port, [])
-                instance_obj.load_balancers = load_balancers
-                instances.append(instance_obj)
+                instances.append(Instance(
+                    instance_name, ip_address, interfaces, template,
+                    load_balancers))
         return instances
 
     @staticmethod
@@ -1507,7 +1508,7 @@ class Management(object):
         self.targets = targets
 
     def load_balancer_tag(self, instance):
-        load_balancers = getattr(instance, 'load_balancers', None)
+        load_balancers = instance.load_balancers
         if load_balancers is None:
             return None
         parts = []
@@ -1925,8 +1926,8 @@ class Management(object):
                     'uid': gw['uid'], 'protectInternalInterfacesOnly': False})
                 if ips_profile:
                     self.set_ips_profile(gw, ips_profile)
-            load_balancers = getattr(instance, 'load_balancers', {})
-            if load_balancers:
+            load_balancers = instance.load_balancers
+            if load_balancers is not None:
                 for dns_name in load_balancers:
                     self.add_load_balancer(
                         gw, policy, dns_name, load_balancers[dns_name])
