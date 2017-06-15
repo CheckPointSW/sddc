@@ -106,7 +106,11 @@ if os.path.isfile('/etc/cp-release'):
         if not cpdir:
             raise EnvException(
                 'Please define CPDIR in env for the CA bundle')
-        os.environ['CURL_CA_BUNDLE'] = cpdir + '/conf/ca-bundle.crt'
+        public_bundle = cpdir + '/conf/ca-bundle-public-cloud.crt'
+        if os.path.exists(public_bundle):
+            os.environ['CURL_CA_BUNDLE'] = public_bundle
+        else:
+            os.environ['CURL_CA_BUNDLE'] = cpdir + '/conf/ca-bundle.crt'
 
     if 'https_proxy' not in os.environ or 'http_proxy' not in os.environ:
         host, err = subprocess.Popen(

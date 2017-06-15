@@ -72,15 +72,15 @@ class HTTPException(GCPException):
 if os.path.isfile('/etc/cp-release'):
     os.environ.setdefault('GCP_OPENSSL', 'cpopenssl')
     os.environ.setdefault('GCP_CURL', 'curl_cli')
-    cpdir = os.environ.get('MDS_CPDIR', os.environ.get('CPDIR'))
-    if not cpdir:
-        raise EnvException('Please define CPDIR in env for the CA bundle')
-    bundle_dir = cpdir + '/conf/'
-    if os.path.exists(bundle_dir + 'public-cloud.crt'):
-        cloud_bundle = bundle_dir + 'ca-bundle-public-cloud.crt'
-        if 'CURL_CA_BUNDLE' not in os.environ or (
-                os.environ['CURL_CA_BUNDLE'] == bundle_dir + 'ca-bundle.crt'):
-            os.environ['CURL_CA_BUNDLE'] = cloud_bundle
+    if 'CURL_CA_BUNDLE' not in os.environ:
+        cpdir = os.environ.get('MDS_CPDIR', os.environ.get('CPDIR'))
+        if not cpdir:
+            raise EnvException('Please define CPDIR in env for the CA bundle')
+        public_bundle = cpdir + '/conf/ca-bundle-public-cloud.crt'
+        if os.path.exists(public_bundle):
+            os.environ['CURL_CA_BUNDLE'] = public_bundle
+        else:
+            os.environ['CURL_CA_BUNDLE'] = cpdir + '/conf/ca-bundle.crt'
 
 
 def truncate(buf, max_len):
@@ -362,6 +362,8 @@ def init(*args, **kwargs):
         credentials = os.environ.get('GCP_CREDENTIALS')
         if credentials:
             kwargs['credentials'] = credentials
+        else:
+            raise EnvException('Please define GCP_CREDENTIALS')
 
     max_time = kwargs.get('max_time')
     if not max_time:
@@ -372,7 +374,7 @@ def init(*args, **kwargs):
     proxy = kwargs.get('proxy')
     if not proxy:
         proxy = os.environ.get('https_proxy')
-        if not proxy:
+        if not proxy and os.path.isfile('/etc/cp-release'):
             host, err = subprocess.Popen(
                 ['dbget', 'proxy:ip-address'], stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()

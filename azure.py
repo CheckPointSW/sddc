@@ -108,8 +108,11 @@ def request(method, url, cert=None, body=None, headers=None, pool=None,
             import imp
             http = imp.load_source('http', os.environ['AZURE_REST_HTTP'])
             http.debug = debug
-        headers, response = http.request(method, url, cert, body, headers,
-                                         pool, max_time)
+        try:
+            headers, response = http.request(method, url, cert, body, headers,
+                                             pool, max_time)
+        except http.AlarmException:
+            raise CurlException('Timeout', None)
     else:
         raise Exception('No request function')
 
@@ -332,7 +335,7 @@ class Azure(object):
                                headers=headers_with_auth, pool=self.pool,
                                max_time=self.max_time)
             if no_aggregate or method != 'GET' or not isinstance(
-                    b.get('value'), list):
+                    b, dict) or not isinstance(b.get('value'), list):
                 return h, b
             value += b['value']
             if 'nextLink' not in b:
