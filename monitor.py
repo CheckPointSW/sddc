@@ -1098,6 +1098,7 @@ class Management(object):
     DUMMY_PREFIX = MONITOR_PREFIX + 'dummy-'
     SECTION = MONITOR_PREFIX + 'section'
     GATEWAY_PREFIX = '__gateway__'
+    VSEC_DUMMY_HOST = DUMMY_PREFIX + 'vsec_internal_host'
 
     CPMI_IDENTITY_AWARE_BLADE = (
         'com.checkpoint.objects.classes.dummy.CpmiIdentityAwareBlade')
@@ -1113,12 +1114,17 @@ class Management(object):
         'com.checkpoint.objects.realms_schema.dummy.CpmiRealmAuthScheme')
     CPMI_LOGICAL_SERVER = (
         'com.checkpoint.objects.classes.dummy.CpmiLogicalServer')
+    CPMI_PLAIN_HOST = (
+        'com.checkpoint.objects.classes.dummy.CpmiHostPlain')
 
     BAD_SESSION_PATTERNS = [
         re.compile(r'.*Wrong session id'),
         re.compile(r'.* locked[: ]'),
         re.compile(r'.* has no permission '),
         re.compile(r'.*Operation is not allowed in read only mode')]
+
+    IDA_API_MAIN_URI = 'https://0.0.0.0/_IA_API'
+    IDA_API_MAIN_URI_R77_30 = 'https://0.0.0.0/_IA_MU_Agent'
 
     def __init__(self, **options):
         self.name = options['name']
@@ -1134,6 +1140,7 @@ class Management(object):
         self.custom_script = options.get('custom-script')
         self.auto_publish = True
         self.sid = None
+        self.local_host_uid = None
         self.targets = {}
         if 'proxy' in options:
             os.environ['https_proxy'] = options['proxy']
@@ -1418,30 +1425,8 @@ class Management(object):
         self('set-threat-rule', {
             'uid': rule['uid'], 'layer': layer, 'action': profile['uid']})
 
-    def set_identity_awareness(self, gw, enabled):
-        if gw['version'] != 'R77.30':
-            log('\nidentity awarness setup is not supported for "%s"' % (
-                gw['version']))
-            return
+    def init_identity_awareness_r77_30(self, gw):
         uid = gw['uid']
-        gw_gen = self('show-generic-object', {'uid': uid})
-        was_installed = gw_gen.get('identityAwareBlade', {}).get(
-            'identityAwareBladeInstalled') == 'INSTALLED'
-        log('\nsetting identity awareness: %s -> %s' % (
-            was_installed, enabled))
-        if enabled and was_installed or not enabled and not was_installed:
-            return
-        if not enabled:
-            self('set-generic-object', {
-                'uid': uid,
-                'identityAwareBlade': {
-                    'identityAwareBladeInstalled': 'NOT_MINUS_INSTALLED',
-                    'isCollectingIdentities': False}})
-            return
-        has_portal = 'IAMUAgent' in {
-            p.get('portalName') for p in gw_gen.get('portals', [])}
-        has_realm = 'identity_portal' in {
-            p.get('ownedName') for p in gw_gen.get('realmsForBlades', [])}
         with open('/dev/urandom') as f:
             psk = base64.b64encode(f.read(12))
         gw_obj = {
@@ -1456,42 +1441,114 @@ class Management(object):
                     'citrixSettings': {
                         'preSharedSecret': psk},
                     'idcSettings': [],
-                    'isCollectingIdentities': True,
-                    'identityAwareBladeInstalled': 'INSTALLED'}}}
-        if not has_portal:
-            gw_obj.update({
-                'portals': {
-                    'add': {
-                        'create': self.CPMI_PORTAL_SETTINGS,
-                        'owned-object': {
-                            'internalPort': 8886,
-                            'portalName': 'IAMUAgent',
-                            'portalAccess': 'ALL_INTERFACES',
-                            'mainUrl': 'https://0.0.0.0/_IA_MU_Agent',
-                            'ipAddress': '0.0.0.0'}}}})
-        if not has_realm:
-            gw_obj.update({
-                'realmsForBlades': {
-                    'add': {
-                        'create': self.CPMI_REALM_BLADE_ENTRY,
-                        'owned-object': {
-                            'ownedName': 'identity_portal',
-                            'displayString': 'Identity Portal Realm',
-                            'requirePasswordInFirstChallenge': True,
-                            'directory': {
-                                'fetchOptions': {
-                                    'create': self.CPMI_REALM_FETCH_OPTIONS}},
-                            'authentication': {
-                                'create': self.CPMI_REALM_AUTHENTICATION,
-                                'owned-object': {
-                                    'authSchemes': {
-                                        'add': {
-                                            'create':
-                                                self.CPMI_REALM_AUTH_SCHEME,
-                                            'owned-object': {
-                                                'authScheme': 'USER_PASS',
-                                            }}}}}}}}})
+                    'isCollectingIdentities': False,
+                    'identityAwareBladeInstalled': 'NOT_MINUS_INSTALLED'}}}
+
+        gw_obj.update(
+            self.get_ida_portal(
+                'IAMUAgent', self.IDA_API_MAIN_URI_R77_30))
+
+        gw_obj.update(self.get_ida_realm())
         self('set-generic-object', gw_obj)
+
+    def get_ida_realm(self):
+        return {'realmsForBlades': {
+            'add': {
+                'create': self.CPMI_REALM_BLADE_ENTRY,
+                'owned-object': {
+                    'ownedName': 'identity_portal',
+                    'displayString': 'Identity Portal Realm',
+                    'requirePasswordInFirstChallenge': True,
+                    'directory': {
+                        'fetchOptions': {
+                            'create': self.CPMI_REALM_FETCH_OPTIONS}},
+                    'authentication': {
+                        'create': self.CPMI_REALM_AUTHENTICATION,
+                        'owned-object': {
+                            'authSchemes': {
+                                'add': {
+                                    'create':
+                                        self.CPMI_REALM_AUTH_SCHEME,
+                                    'owned-object': {
+                                        'authScheme': 'USER_PASS',
+                                        }}}}}}}}}
+
+    def get_ida_portal(self, portal_name, main_uri_suffix):
+        return {'portals': {
+            'add': {
+                'create': self.CPMI_PORTAL_SETTINGS,
+                'owned-object': {
+                    'internalPort': 8886,
+                    'portalName': portal_name,
+                    'portalAccess': 'ALL_INTERFACES',
+                    'mainUrl': 'https://0.0.0.0/' + main_uri_suffix,
+                    'ipAddress': '0.0.0.0'}}}}
+
+    def set_identity_awareness(self, gw_uid, enable):
+        self('set-generic-object', {
+            'uid': gw_uid,
+            'identityAwareBlade': {
+                'identityAwareBladeInstalled':
+                    'INSTALLED' if enable else 'NOT_MINUS_INSTALLED',
+                'isCollectingIdentities':
+                    True if enable else False}})
+
+    def init_identity_awareness(self, gw):
+        uid = gw['uid']
+
+        gw_obj = {
+            'uid': uid,
+            'cdmModule': 'NOT_MINUS_INSTALLED',
+            'identityAwareBlade': {
+                'create': self.CPMI_IDENTITY_AWARE_BLADE,
+                'owned-object': {
+                    'enableIdaApi': True,
+                    'idcSettings': [],
+                    'isCollectingIdentities': False,
+                    'identityAwareBladeInstalled': 'NOT_MINUS_INSTALLED'}}}
+
+        gw_obj.update(
+            self.get_ida_portal(
+                'IAAPI', self.IDA_API_MAIN_URI))
+
+        gw_obj.update(self.get_ida_realm())
+
+        self('set-generic-object', gw_obj)
+
+        gw_obj = self('show-generic-object', {'uid': uid})
+        clientVerificationSettingUid = gw_obj['identityAwareBlade'][
+            'idaApiSettings']['idaApiClientVerificationSettings'][0]['objId']
+
+        with open('/dev/urandom') as f:
+            psk = base64.b64encode(f.read(12))
+
+        if not self.local_host_uid:
+            self.local_host_uid = self.get_uid(self.VSEC_DUMMY_HOST)
+            if not self.local_host_uid:
+                host_body = self('add-host', {
+                    'name': self.VSEC_DUMMY_HOST,
+                    'ip-address': '127.0.0.1',
+                    'ignore-warnings': True})
+                self.local_host_uid = host_body.get('uid')
+
+        client_obj = {
+            'uid': uid,
+            'identityAwareBlade': {
+                'idaApiSettings': {
+                    'idaApiClientVerificationSettings': {
+                        'set': {
+                            'uid': clientVerificationSettingUid,
+                            'owned-object': {
+                                'preSharedSecret': psk,
+                                'whiteListClient': self.local_host_uid
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self('set-generic-object', client_obj)
 
     def get_targets(self):
         """map instance name to a policy where it is an install target"""
@@ -1903,8 +1960,18 @@ class Management(object):
                 gw['version'] = version
             self.put_object_tags(gw, [TAG])
             self('add-simple-gateway', gw)
+            gw = self.get_gateway(instance.name)
         else:
             self.set_state(instance.name, 'UPDATING')
+
+        if gw['version'] == 'R77.30':
+            self.init_identity_awareness_r77_30(gw)
+        else:
+            self.init_identity_awareness(gw)
+
+        if not self.get_object_tag_value(gw, self.TEMPLATE_PREFIX):
+            self.set_initial_policy(gw)
+
         success = False
         published = False
         try:
@@ -1920,7 +1987,8 @@ class Management(object):
             self('set-generic-object', {
                 'uid': gw['uid'],
                 'sslInspectionEnabled': https_inspection})
-            self.set_identity_awareness(gw, identity_awareness)
+            if identity_awareness:
+                self.set_identity_awareness(gw['uid'], True)
             if gw.get('ips'):
                 self('set-generic-object', {
                     'uid': gw['uid'], 'protectInternalInterfacesOnly': False})
@@ -1938,7 +2006,8 @@ class Management(object):
             published = True
             self.auto_publish = True
             self.set_policy(gw, policy)
-            if identity_awareness:
+
+            if gw['version'] == 'R77.30' and identity_awareness:
                 cmd = 'pdp api enable'
                 log('\nrunning: "%s" on %s' % (cmd, instance.name))
                 response = self('run-script', {
@@ -1972,6 +2041,24 @@ class Management(object):
                             instance.load_balancers is not None))
                     except Exception:
                         log('\n%s' % traceback.format_exc())
+
+    def set_initial_policy(self, gw):
+        log('\nsetting autoprovision initial policy on gw')
+        self('install-policy', {
+            'policy-package': self.get_initial_policy(),
+            'targets': gw['name']})
+
+    def get_initial_policy(self):
+        if hasattr(self, 'initial_policy'):
+            return self.initial_policy
+
+        policy_name = self.MONITOR_PREFIX + 'initial-policy'
+        policies = self('show-packages', {}, aggregate='packages')
+        if not any(p['name'] == policy_name for p in policies):
+            self('add-package', {'name': policy_name})
+
+        self.initial_policy = policy_name
+        return self.initial_policy
 
     def set_state(self, name, status):
         if not hasattr(self, 'state'):
