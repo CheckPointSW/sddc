@@ -1121,7 +1121,8 @@ class Management(object):
         re.compile(r'.*Wrong session id'),
         re.compile(r'.* locked[: ]'),
         re.compile(r'.* has no permission '),
-        re.compile(r'.*Operation is not allowed in read only mode')]
+        re.compile(r'.*Operation is not allowed in read only mode'),
+        re.compile(r'.*Work session was not found')]
 
     IDA_API_MAIN_URI = 'https://0.0.0.0/_IA_API'
     IDA_API_MAIN_URI_R77_30 = 'https://0.0.0.0/_IA_MU_Agent'
@@ -1191,6 +1192,7 @@ class Management(object):
                 except Exception:
                     msg = ''
                 if any(p.match(msg) for p in self.BAD_SESSION_PATTERNS):
+                    log('\nresetting session id')
                     self.sid = None
                 raise Exception('failed API call: %s%s' % (command, msg))
             if resp_body:
@@ -1267,7 +1269,7 @@ class Management(object):
                     login_data['domain'] = self.domain
                 resp = self('login', login_data)
             self.sid = resp['sid']
-            debug('\nnew session:  %s' % resp['uid'])
+            log('\nnew session:  %s' % resp['uid'])
             for session in self('show-sessions', {'details-level': 'full'},
                                 aggregate='objects'):
                 if session['uid'] == resp['uid'] or (
