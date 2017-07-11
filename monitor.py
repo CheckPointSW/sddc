@@ -1114,8 +1114,11 @@ class Management(object):
         'com.checkpoint.objects.realms_schema.dummy.CpmiRealmAuthScheme')
     CPMI_LOGICAL_SERVER = (
         'com.checkpoint.objects.classes.dummy.CpmiLogicalServer')
-    CPMI_PLAIN_HOST = (
-        'com.checkpoint.objects.classes.dummy.CpmiHostPlain')
+    CPMI_INTERFACE = (
+        'com.checkpoint.objects.classes.dummy.CpmiInterface')
+    CPMI_INTERFACE_SECURITY = (
+        'com.checkpoint.objects.classes.dummy.CpmiInterfaceSecurity')
+    CPMI_NETACCESS = 'com.checkpoint.objects.classes.dummy.CpmiNetaccess'
 
     BAD_SESSION_PATTERNS = [
         re.compile(r'.*Wrong session id'),
@@ -1269,6 +1272,7 @@ class Management(object):
                     login_data['domain'] = self.domain
                 resp = self('login', login_data)
             self.sid = resp['sid']
+
             log('\nnew session:  %s' % resp['uid'])
             for session in self('show-sessions', {'details-level': 'full'},
                                 aggregate='objects'):
@@ -1398,20 +1402,76 @@ class Management(object):
             self('set-generic-object', {'uid': uid, 'proxyOnGwEnabled': False})
             return
 
-        ports = self('show-generic-object', {'uid': uid})[
-            'proxyOnGwSettings']['ports']
-        # FIXME: would not be needed when we can assign to an empty value
+        gw_gen = self('show-generic-object', {'uid': uid})
+
+        body = None
+        ports = gw_gen['proxyOnGwSettings']['ports']
+        # FIXME: would not be needed when we can assign to an empty value.
         if not ports:
             ports = {'add': proxy_ports}
         else:
             ports = proxy_ports
-        self('set-generic-object', {
-            'uid': uid,
-            'proxyOnGwEnabled': True,
-            'proxyOnGwSettings': {
-                'interfacesType': 'ALL_INTERFACES',
-                'ports': ports,
-                'tarnsparentMode': False}})
+
+        if gw['version'] == 'R77.30':
+            body = {
+                'uid': uid,
+                'proxyOnGwEnabled': True,
+                'proxyOnGwSettings': {
+                    'interfacesType': 'ALL_INTERFACES',
+                    'ports': ports,
+                    'tarnsparentMode': False}}
+        else:
+            body = {
+                'uid': uid,
+                'proxyOnGwEnabled': True,
+                'proxyOnGwSettings': {
+                    'interfacesType': 'INTERNAL_INTERFACES',
+                    'ports': ports,
+                    'tarnsparentMode': False}}
+            if (len(gw['interfaces']) == 1):
+                body['proxyOnGwSettings'][
+                    'interfacesType'] = 'SPECIFIC_INTERFACES'
+                body['proxyOnGwSettings'][
+                    'interfacesList'] = [
+                        self.build_proxy_interface(gw_gen['interfaces'][0])]
+
+        self('set-generic-object', body)
+
+    def build_proxy_interface(self, gw_interface):
+        interface = {}
+        interface['create'] = self.CPMI_INTERFACE
+        interface['owned-object'] = {}
+
+        attributes_to_ignore = ('folder', 'domainId', 'folderPath', 'objId',
+                                'text', 'checkPointObjId')
+        for field in gw_interface:
+            if field in attributes_to_ignore:
+                continue
+            elif field == 'security':
+                security = {
+                    'create': self.CPMI_INTERFACE_SECURITY, 'owned-object': {}}
+                gw_security = gw_interface['security']
+                for field in gw_security:
+                    if field in attributes_to_ignore:
+                        continue
+                    elif field == 'netaccess':
+                        net_access = {
+                            'create': self.CPMI_NETACCESS, 'owned-object': {}}
+                        gw_net_access = gw_security['netaccess']
+                        for field in gw_net_access:
+                            if field in attributes_to_ignore:
+                                continue
+                            else:
+                                net_access['owned-object'][
+                                    field] = gw_net_access[field]
+                        security['owned-object'][
+                            'netaccess'] = net_access
+                    else:
+                        security[field] = gw_security[field]
+                interface['owned-object']['security'] = security
+            else:
+                interface['owned-object'][field] = gw_interface[field]
+        return interface
 
     def set_ips_profile(self, gw, ips_profile):
         IPS_LAYER = 'IPS'
@@ -1473,7 +1533,7 @@ class Management(object):
                                         self.CPMI_REALM_AUTH_SCHEME,
                                     'owned-object': {
                                         'authScheme': 'USER_PASS',
-                                        }}}}}}}}}
+                                    }}}}}}}}}
 
     def get_ida_portal(self, portal_name, main_uri_suffix):
         return {'portals': {
