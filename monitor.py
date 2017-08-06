@@ -926,7 +926,10 @@ class Azure(Controller):
                 vm_nics = vm['properties']['networkProfile'][
                     'networkInterfaces']
                 for nic in vm_nics:
-                    interface = vmss_nics[nic['id']]
+                    interface = vmss_nics.get(nic['id'])
+                    if not interface:
+                        log('no interface %s for %s\n' % nic['id'], vm['name'])
+                        break
                     ifname = interface['name']
                     config = self.get_primary_configuration(interface)
                     if not config:
