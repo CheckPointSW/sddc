@@ -794,28 +794,6 @@ class Azure(Controller):
         for interface in body['value']:
             interfaces[interface['id']] = interface
 
-        headers, body = self.azure.arm(
-            'GET',
-            '%s/providers/Microsoft.Compute/virtualMachineScaleSets' %
-            self.sub)
-        for vmss in body['value']:
-            if vmss.get('tags', {}).get(
-                    'x-chkp-management') != self.management:
-                continue
-            vmss_vms = self.azure.arm(
-                'GET', vmss['id'] +
-                '/virtualMachines/?$expand=instanceView')[1]['value']
-            for vm in vmss_vms:
-                vms[vm['id']] = vm
-
-            for interface in self.azure.arm(
-                    'GET', vmss['id'] + '/networkInterfaces')[1]['value']:
-                interface.setdefault('tags', {})
-                interface['tags'].setdefault(
-                    'x-chkp-topology',
-                    vmss.get('tags', {}).get('x-chkp-topology', 'external'))
-                interfaces[interface['id']] = interface
-
         return vms, interfaces
 
     def retrieve_interfaces(self):
@@ -881,6 +859,101 @@ class Azure(Controller):
 
         return interface
 
+    def get_vmss_address(self, address_type, config, vmss_pips):
+        if address_type == 'private':
+            return config.get('privateIPAddress')
+        elif address_type == 'public':
+            id = config.get('publicIPAddress', {}).get('id')
+            if not id:
+                log('no public address for interface\n')
+                return None
+            pip = vmss_pips.get(id)
+            if not pip:
+                log('no public address with id %s\n' % id)
+                return None
+            return pip['properties'].get('ipAddress')
+        else:
+            log('unsupported address type %s\n' % address_type)
+            return None
+
+    def get_vmss(self, subnets):
+        instances = []
+
+        vmsss = self.azure.arm(
+            'GET',
+            '%s/providers/Microsoft.Compute/virtualMachineScaleSets' %
+            self.sub)[1]['value']
+        for vmss in vmsss:
+            tags = vmss.get('tags', {})
+            if tags.get('x-chkp-management') != self.management:
+                continue
+
+            address_type = tags.get('x-chkp-ip-address', 'private')
+            anti_spoofing = {}
+            for s in tags.get('x-chkp-anti-spoofing', ''):
+                ifname, _, val = s.partition(':')
+                if val.lower() == 'false':
+                    anti_spoofing[ifname] = False
+                else:
+                    anti_spoofing[ifname] = True
+
+            topology = {}
+            for t in tags.get('x-chkp-topology', '').split(','):
+                ifname, _, val = t.partition(':')
+                topology[ifname] = val
+
+            vms = self.azure.arm(
+                'GET', vmss['id'] + '/virtualMachines')[1]['value']
+
+            if self.azure.environment.name == 'AzureCloud':
+                api = '?api-version=2017-03-30'
+                vmss_pips = self.azure.arm(
+                    'GET', vmss['id'] + '/publicipaddresses' + api)[1]['value']
+                vmss_pips = {pip['id']: pip for pip in vmss_pips}
+            else:
+                api = ''
+                vmss_pips = {}
+
+            vmss_nics = self.azure.arm(
+                'GET', vmss['id'] + '/networkInterfaces' + api)[1]['value']
+            vmss_nics = {nic['id']: nic for nic in vmss_nics}
+
+            for vm in vms:
+                name = self.SEPARATOR.join([
+                    self.name, vm['name'], vm['id'].split('/')[4]])
+                interfaces = []
+                ip_address = None
+                vm_nics = vm['properties']['networkProfile'][
+                    'networkInterfaces']
+                for nic in vm_nics:
+                    interface = vmss_nics[nic['id']]
+                    ifname = interface['name']
+                    config = self.get_primary_configuration(interface)
+                    if not config:
+                        log('no primary interface config for %s\n' % vm[
+                            'name'])
+                        break
+                    interfaces.append({
+                        'name': ifname,
+                        'ipv4-address': config['privateIPAddress'],
+                        'ipv4-mask-length':
+                            int(subnets[config['subnet']['id']]['properties'][
+                                'addressPrefix'].partition('/')[2]),
+                        'anti-spoofing': anti_spoofing.get(ifname, True),
+                        'topology': topology.get(ifname, 'external')
+                    })
+                    if len(vm_nics) == 1 or nic['properties'].get('primary'):
+                        ip_address = self.get_vmss_address(
+                            address_type, config, vmss_pips)
+                        if not ip_address:
+                            log('no address for %s\n' % vm['name'])
+                            break
+                else:
+                    instances.append(Instance(
+                        name, ip_address, interfaces, tags['x-chkp-template']))
+
+        return instances
+
     def get_instances(self):
         vms, interfaces = self.retrieve_vms_and_interfaces()
         public_addresses = self.retrieve_public_addresses()
@@ -921,6 +994,8 @@ class Azure(Controller):
             instances.append(Instance(
                 instance_name, ip_address, instance_interfaces,
                 tags['x-chkp-template']))
+
+        instances += self.get_vmss(subnets)
         return instances
 
     @staticmethod
