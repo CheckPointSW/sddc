@@ -1631,6 +1631,8 @@ class Management(object):
                 'identityAwareBladeInstalled':
                     'INSTALLED' if enable else 'NOT_MINUS_INSTALLED',
                 'isCollectingIdentities':
+                    True if enable else False,
+                'enableAppiProxyUsersDetection':
                     True if enable else False}})
 
     def init_identity_awareness(self, gw):
