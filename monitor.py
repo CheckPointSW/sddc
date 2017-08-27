@@ -1720,27 +1720,23 @@ class Management(object):
         return ':'.join(sorted(parts))
 
     def get_flat_rules(self, command, body):
-        body['limit'] = 1
+        body['limit'] = 100
         body['offset'] = 0
-        last_section = None
+        rules = collections.OrderedDict()
         while True:
             response = self(command, body)
             top_rules = response['rulebase']
             if not top_rules:
-                return
+                break
             for top_rule in top_rules:
-                if top_rule['type'].endswith('-section'):
-                    sub_rules = top_rule.pop('rulebase')
-                    if top_rule['uid'] != last_section:
-                        last_section = top_rule['uid']
-                        yield top_rule
-                    for sub_rule in sub_rules:
-                        yield sub_rule
-                else:
-                    yield top_rule
+                sub_rules = top_rule.pop('rulebase', [])
+                rules[top_rule['uid']] = top_rule
+                for sub_rule in sub_rules:
+                    rules[sub_rule['uid']] = sub_rule
             if body['offset'] + body['limit'] > response['total']:
-                return
-            body['offset'] = response['to']
+                break
+            body['offset'] = response['to'] - 1
+        return rules.values()
 
     def get_rulebase(self, rulebase, nat=False, sections=False):
         if nat:
