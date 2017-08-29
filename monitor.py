@@ -1175,6 +1175,7 @@ class Management(object):
     MONITOR_PREFIX = '__monitor__-'
     DUMMY_PREFIX = MONITOR_PREFIX + 'dummy-'
     SECTION = MONITOR_PREFIX + 'section'
+    RESTRICTIVE_POLICY = MONITOR_PREFIX + 'restrictive-policy'
     GATEWAY_PREFIX = '__gateway__'
     VSEC_DUMMY_HOST = DUMMY_PREFIX + 'vsec_internal_host'
 
@@ -1203,7 +1204,8 @@ class Management(object):
         re.compile(r'.* locked[: ]'),
         re.compile(r'.* has no permission '),
         re.compile(r'.*Operation is not allowed in read only mode'),
-        re.compile(r'.*Work session was not found')]
+        re.compile(r'.*Work session was not found'),
+        re.compile(r'.*Management server failed to execute command')]
 
     IDA_API_MAIN_URI = 'https://0.0.0.0/_IA_API'
     IDA_API_MAIN_URI_R77_30 = 'https://0.0.0.0/_IA_MU_Agent'
@@ -1232,7 +1234,7 @@ class Management(object):
         no_proxy |= {'127.0.0.1', 'localhost'}
         os.environ['no_proxy'] = ','.join(no_proxy)
 
-    def __call__(self, command, body, login=True, aggregate=None,
+    def __call__(self, command, body, aggregate=None,
                  silent=False):
         # FIXME: need to "censor" session ids in login replies and other
         #        requests
@@ -1261,7 +1263,7 @@ class Management(object):
             if aggregate:
                 body['limit'] = 500
             resp_headers, resp_body = http(
-                'POST', 'https://%s/web_api/%s' % (self.host, command),
+                'POST', 'https://%s/web_api/v1/%s' % (self.host, command),
                 self.fingerprint, headers, json.dumps(body))
             if resp_headers['_status'] != 200:
                 if not silent:
@@ -2084,6 +2086,9 @@ class Management(object):
         policy = simple_gateway.pop('policy')
         otp = simple_gateway.pop('one-time-password')
         custom_parameters = simple_gateway.pop('custom-parameters', [])
+        restrictive_policy = simple_gateway.pop('restrictive-policy',
+                                                self.RESTRICTIVE_POLICY)
+
         # FIXME: network info is not updated once the gateway exists
         if not gw:
             self.set_state(instance.name, 'ADDING')
@@ -2107,8 +2112,9 @@ class Management(object):
         else:
             self.init_identity_awareness(gw)
 
-        if not self.get_object_tag_value(gw, self.TEMPLATE_PREFIX):
-            self.set_initial_policy(gw)
+        if restrictive_policy is not None:
+            if not self.get_object_tag_value(gw, self.TEMPLATE_PREFIX):
+                self.set_restrictive_policy(gw, restrictive_policy)
 
         success = False
         published = False
@@ -2180,23 +2186,25 @@ class Management(object):
                     except Exception:
                         log('\n%s' % traceback.format_exc())
 
-    def set_initial_policy(self, gw):
-        log('\nsetting autoprovision initial policy on gw')
-        self('install-policy', {
-            'policy-package': self.get_initial_policy(),
-            'targets': gw['name']})
+    def set_restrictive_policy(self, gw, restrictive_policy):
+        default_policy = restrictive_policy == self.RESTRICTIVE_POLICY
 
-    def get_initial_policy(self):
-        if hasattr(self, 'initial_policy'):
-            return self.initial_policy
+        log('\nsetting autoprovision restrictive policy name "%s" on gw.'
+            % restrictive_policy)
 
-        policy_name = self.MONITOR_PREFIX + 'initial-policy'
         policies = self('show-packages', {}, aggregate='packages')
-        if not any(p['name'] == policy_name for p in policies):
-            self('add-package', {'name': policy_name})
+        if not any(p['name'] == restrictive_policy for p in policies):
+            if default_policy:
+                self('add-package', {'name': restrictive_policy})
+            else:
+                raise Exception(
+                    'Cannot find policy name "%s".' %
+                    restrictive_policy +
+                    ' restricitive policy should be manually configured \n')
 
-        self.initial_policy = policy_name
-        return self.initial_policy
+        self('install-policy', {
+            'policy-package': restrictive_policy,
+            'targets': gw['name']})
 
     def set_state(self, name, status):
         if not hasattr(self, 'state'):
