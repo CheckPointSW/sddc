@@ -98,11 +98,11 @@ def dump(obj):
 
 # avoid printing sensitive data
 @contextlib.contextmanager
-def censor(active, log, pattern, replacement):
+def redact(active, log, redact_patterns):
     line = []
     if active:
         stdout = sys.stdout
-        pattern = re.compile(pattern)
+        redact_patterns = [(re.compile(p), r) for p, r in redact_patterns]
 
         def write(buf):
             while buf:
@@ -111,9 +111,10 @@ def censor(active, log, pattern, replacement):
                 if not newline:
                     return
                 buf = ''.join(line) + '\n'
-                m = pattern.match(buf)
-                if m:
-                    buf = buf[:m.start(1)] + replacement + buf[m.end(1):]
+                for pattern, replacement in redact_patterns:
+                    m = pattern.match(buf)
+                    if m:
+                        buf = buf[:m.start(1)] + replacement + buf[m.end(1):]
                 log('%s' % buf)
                 line[:] = []
                 buf = start
@@ -599,7 +600,9 @@ class OpenStack(Controller):
         self.services = None
 
     def __call__(self, service, method, path, data=None, desired_status=200):
-        # FIXME: need to "censor" tokens in auth reply and other requests
+        # FIXME: need to redact tokens in auth reply and other requests
+        redact_patterns = [(r'send: .*"password":\s*"([^"]*)".*$', '***')]
+
         def check_http(desired_status, path, url, resp_headers, resp_body):
             if resp_headers['_status'] != desired_status:
                 log('\n%s\n' % url)
@@ -640,7 +643,7 @@ class OpenStack(Controller):
             auth_url = self.scheme + '://' + self.host + auth_path
             resp_headers, resp_body = http(
                 'POST', auth_url, self.fingerprint,
-                headers, json.dumps(auth_data))
+                headers, json.dumps(auth_data), redact_patterns)
             check_http(201, auth_path, auth_url, resp_headers, resp_body)
             resp_data = json.loads(resp_body)
             self.token = resp_headers['x-subject-token']
@@ -663,7 +666,7 @@ class OpenStack(Controller):
             data = json.dumps(data)
         url = self.services[service] + path
         resp_headers, resp_body = http(
-            method, url, self.fingerprint, headers, data)
+            method, url, self.fingerprint, headers, data, redact_patterns)
         check_http(desired_status, path, url, resp_headers, resp_body)
         if resp_body:
             return json.loads(resp_body)
@@ -1135,7 +1138,7 @@ class HTTPSConnection(httplib.HTTPSConnection):
                 raise Exception('fingerprint mismatch: %s' % fingerprint)
 
 
-def http(method, url, fingerprint, headers, body):
+def http(method, url, fingerprint, headers, body, redact_patterns=None):
     url_parts = urlparse.urlsplit(url)
     path = url_parts.path
     if url_parts.query:
@@ -1148,8 +1151,8 @@ def http(method, url, fingerprint, headers, body):
     with contextlib.closing(connection(url_parts.netloc)) as conn:
         conn.fingerprint = fingerprint
         debuglevel = 2 if conf.get('debug') else 0
-        with censor(debuglevel > 0, debug,
-                    r'send: .*"password":\s*"([^"]*)".*$', '***'):
+        with redact(debuglevel > 0, debug,
+                    redact_patterns if redact_patterns else []):
             conn.set_debuglevel(debuglevel)
             conn.connect()
             conn.request(method, path, body=body, headers=headers)
@@ -1158,9 +1161,9 @@ def http(method, url, fingerprint, headers, body):
             headers['_status'] = resp.status
             headers['_reason'] = resp.reason
             headers['_version'] = resp.version
-        body = resp.read()
-        if debuglevel > 1:
-            debug('body: %s\n' % repr(body))
+            body = resp.read()
+            if debuglevel > 1:
+                print 'body: %s' % repr(body)
     return headers, body
 
 
@@ -1236,9 +1239,11 @@ class Management(object):
 
     def __call__(self, command, body, aggregate=None,
                  silent=False):
-        # FIXME: need to "censor" session ids in login replies and other
-        #        requests
+        redact_patterns = [(r'send: .*x-chkp-sid\s*:\s*([^\\]*)\\.*$', '***')]
         if command == 'login':
+            redact_patterns = [
+                (r'send: .*"password"\s*:\s*"([^"]*)".*$', '***'),
+                (r'body: .*"sid"\s*:\s*"([^"]*)".*$', '***')]
             c = '+'
         elif command == 'logout':
             if not self.sid:
@@ -1264,7 +1269,7 @@ class Management(object):
                 body['limit'] = 500
             resp_headers, resp_body = http(
                 'POST', 'https://%s/web_api/v1/%s' % (self.host, command),
-                self.fingerprint, headers, json.dumps(body))
+                self.fingerprint, headers, json.dumps(body), redact_patterns)
             if resp_headers['_status'] != 200:
                 if not silent:
                     log('\n%s\n' % command)
