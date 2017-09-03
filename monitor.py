@@ -1389,6 +1389,9 @@ class Management(object):
                     'create an instance of com.checkpoint.management.' +
                     'dlecommon.ngm_api.CpmiOwned '):
                 return None
+            elif 'Operations with SMB gateways are unsupported' in str(
+                    sys.exc_info()[1]):
+                return None
             else:
                 raise
         if TAG not in self.get_object_tags(gw):
