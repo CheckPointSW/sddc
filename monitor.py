@@ -312,7 +312,7 @@ class AWS(Controller):
             by_instance.setdefault(i, {})
             for lb_name in i2lb_names[i]:
                 for protocol_port in lb_name2cidrs.get(lb_name, {}):
-                    by_instance[i].setdefault(protocol_port, []).extend(
+                    by_instance[i].setdefault(protocol_port, set()).update(
                         lb_name2cidrs[lb_name].get(protocol_port, []))
 
     def retrieve_application_lbs(self, region, subnets, auto_scaling_groups,
@@ -413,7 +413,7 @@ class AWS(Controller):
                 for protocol_port in i2target_groups[i][target_group]:
                     for dns_name in target_group2dns_names.get(
                             target_group, set()):
-                        by_instance[i].setdefault(protocol_port, []).extend(
+                        by_instance[i].setdefault(protocol_port, set()).update(
                             dns_name2cidrs[dns_name])
 
     def retrieve_elbs(self, subnets):
@@ -552,8 +552,8 @@ class AWS(Controller):
                 for dns_name in internal_elbs:
                     for protocol_port in internal_elbs[dns_name]:
                         load_balancers.setdefault(
-                            dns_name, {})[protocol_port] = external_elbs.get(
-                                protocol_port, [])
+                            dns_name, {})[protocol_port] = list(
+                                external_elbs.get(protocol_port, set()))
                 instances.append(Instance(
                     instance_name, ip_address, interfaces, template,
                     load_balancers))
