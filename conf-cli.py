@@ -174,7 +174,7 @@ def get_value_path(key, args):
             return ['controllers', args.controllers_name]
         if len(path) == 2:
             return ['controllers', args.controllers_name, path[1]]
-        if len(path) == 3:
+        if len(path) >= 3:
             # Maximum depth is 3,
             # join accommodates Azure's underscore keys such as grant_type
             return ['controllers',
@@ -592,7 +592,12 @@ def create_del_templates_arguments(del_template_subparser, conf):
         dest='templates_application-control',
         help='enable/Disable the Application Control blade')
     optional_group.add_argument(
-        '--ips-profile', '-ip', dest='templates_ips-profile',
+        '--ips', '-ips', dest='templates_ips',
+        action='store_true',
+        help='an optional boolean attribute indicating '
+             'whether to enable the IPS feature on the gateway')
+    optional_group.add_argument(
+        '--ips-profile', '-ipf', dest='templates_ips-profile',
         action='store_true',
         help='an optional IPS profile name to '
              'associate with a pre-R80 gateway')
@@ -891,7 +896,11 @@ def create_set_templates_arguments(set_template_subparser, conf):
         dest='templates_application-control',
         help='enable/Disable the Application Control blade')
     optional_group.add_argument(
-        '--ips-profile', '-ip', dest='templates_ips-profile',
+        '--ips', '-ips', type=validate_bool,
+        dest='templates_ips',
+        help='enable/Disable the IPS feature on the gateway')
+    optional_group.add_argument(
+        '--ips-profile', '-ipf', dest='templates_ips-profile',
         help='an optional IPS profile name to '
              'associate with a pre-R80 gateway')
     optional_group.add_argument(
@@ -1247,7 +1256,12 @@ def create_add_templates_arguments(add_template_subparser):
         dest='templates_application-control',
         help='enable/Disable the Application Control blade')
     optional_group.add_argument(
-        '--ips-profile', '-ip', dest='templates_ips-profile',
+        '--ips', '-ips', type=validate_bool,
+        dest='templates_application-control',
+        help='an optional IPS profile name to '
+             'associate with a pre-R80 gateway')
+    optional_group.add_argument(
+        '--ips-profile', '-ipf', dest='templates_ips-profile',
         help='an optional IPS profile name to associate '
              'with a pre-R80 gateway')
     optional_group.add_argument(
