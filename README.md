@@ -88,6 +88,7 @@ The script takes a configuration file in JSON format
                 "policy": "POLICY1-NAME",
                 "specific-network": "INTERNAL-NETWORK-OBJECT-GROUP (Optional)",
                 "generation": "SOME-VALUE (Optional)",
+                "restrictive-policy": "RESTRICTIVE-POLICY-NAME",
                 "proxy-ports": ["8080"],
                 "https-inspection": true,
                 "identity-awareness": true,
@@ -199,9 +200,12 @@ In reference to the above configuration:
 
         * generation: an optional string or number that can be used to force re-applying a template to an already existing gateway. If generation is specified and its value is different than the previous value, then the template settings will be reapplied to the gateway
 
+        * restrictive-policy: an optional name of a pre-existing policy package to be installed as the first policy on a new provisioned gateway. (Created to avoid a limitation in which Access Policy and Threat Prevention Policy cannot be installed at the first time together). In the case where no attribute is provided, a default policy will be used (the default policy has only the implied rules and a drop-all cleanup rule). The value null can be used to explicitly avoid any such policy.
+
         * proxy-ports: an optional list of TCP ports on which to enable the proxy on gateway feature
 
-        * https-inspection: an optional boolean attribute indicating whether to enable the HTTP Inspection feature on the gateway
+        * https-inspection: an optional boolean attribute indicating whether to enable the HTTPS Inspection feature on the gateway
+
         * identity-awareness: an optional boolean attribute indicating whether to enable the Identity Awareness feature on the gateway
 
         * ips-profile: an optional IPS profile name to associate with a pre-R80 gateway
