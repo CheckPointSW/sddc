@@ -257,6 +257,28 @@ class AWS(Controller):
                 interfaces[region][i['networkInterfaceId']] = i
         return interfaces
 
+    def filter_protocol_ports(self, protocol_ports, tags):
+        ignore_ports = tags.get('x-chkp-ignore-ports', [])
+        if ignore_ports:
+            ignore_ports = set(ignore_ports.split(':'))
+        http_ports = tags.get('x-chkp-http-ports', [])
+        if http_ports:
+            http_ports = set(http_ports.split(':'))
+        https_ports = tags.get('x-chkp-https-ports', [])
+        if https_ports:
+            https_ports = set(https_ports.split(':'))
+        protocol_ports, old = [], protocol_ports
+        for pp in old:
+            protocol, _, port = pp.partition('-')
+            if port in ignore_ports:
+                continue
+            if port in http_ports:
+                protocol = 'HTTP'
+            if port in https_ports:
+                protocol = 'HTTPS'
+            protocol_ports.append('%s-%s' % (protocol, port))
+        return protocol_ports
+
     def retrieve_classic_lbs(self, region, subnets, auto_scaling_groups,
                              by_template, by_instance):
         i2lb_names = {}
@@ -277,22 +299,16 @@ class AWS(Controller):
             cidrs = [subnets[s]['cidrBlock'] for s in elb['Subnets']]
             dns_name = elb['DNSName']
             front_protocol_ports = []
-            back_protocol_ports = []
+            back_ports = []
             for listener in elb['ListenerDescriptions']:
                 front_protocol_ports.append('%s-%s' % (
                     listener['Listener']['Protocol'],
                     listener['Listener']['LoadBalancerPort']))
-                back_protocol_ports.append('%s-%s' % (
-                    listener['Listener']['InstanceProtocol'],
-                    listener['Listener']['InstancePort']))
+                back_ports.append('%s' % listener['Listener']['InstancePort'])
             if tags.get('x-chkp-management') == self.management:
                 template = tags.get('x-chkp-template')
-                ignore_ports = tags.get('x-chkp-ignore-ports', [])
-                if ignore_ports:
-                    ignore_ports = set(ignore_ports.split(':'))
-                front_protocol_ports = [
-                    pp for pp in front_protocol_ports
-                    if pp.split('-')[1] not in ignore_ports]
+                front_protocol_ports = self.filter_protocol_ports(
+                    front_protocol_ports, tags)
                 by_template.setdefault(template, {})
                 by_template[template][dns_name] = front_protocol_ports
             lb_name = elb['LoadBalancerName']
@@ -300,8 +316,8 @@ class AWS(Controller):
                 i2lb_names.setdefault(i['InstanceId'], set()).add(
                     elb['LoadBalancerName'])
             lb_name2cidrs.setdefault(lb_name, {})
-            for protocol_port in back_protocol_ports:
-                lb_name2cidrs[lb_name][protocol_port] = cidrs
+            for port in back_ports:
+                lb_name2cidrs[lb_name][port] = cidrs
 
         for group in auto_scaling_groups:
             for i in group['Instances']:
@@ -311,12 +327,12 @@ class AWS(Controller):
         for i in i2lb_names:
             by_instance.setdefault(i, {})
             for lb_name in i2lb_names[i]:
-                for protocol_port in lb_name2cidrs.get(lb_name, {}):
-                    by_instance[i].setdefault(protocol_port, set()).update(
-                        lb_name2cidrs[lb_name].get(protocol_port, []))
+                for port in lb_name2cidrs.get(lb_name, {}):
+                    by_instance[i].setdefault(port, set()).update(
+                        lb_name2cidrs[lb_name].get(port, []))
 
-    def retrieve_application_lbs(self, region, subnets, auto_scaling_groups,
-                                 by_template, by_instance):
+    def retrieve_v2_lbs(self, region, subnets, auto_scaling_groups,
+                        by_template, by_instance):
         i2target_groups = {}
         for auto_scale_group in auto_scaling_groups:
             for i in auto_scale_group['Instances']:
@@ -330,12 +346,11 @@ class AWS(Controller):
         target_groups = aws.listify(body['DescribeTargetGroupsResult'][
             'TargetGroups'], 'member')
         for target_group in target_groups:
-            default_protocol = '%s-' % target_group['Protocol']
-            default_protocol_port = default_protocol + target_group['Port']
+            default_port = target_group['Port']
             for i in i2target_groups:
                 if target_group['TargetGroupArn'] in i2target_groups[i]:
                     i2target_groups[i][target_group['TargetGroupArn']].add(
-                        default_protocol_port)
+                        default_port)
             headers, body = self.request(
                 'elasticloadbalancing', region, 'GET',
                 '/?' + urllib.urlencode({
@@ -348,36 +363,38 @@ class AWS(Controller):
                 i2target_groups.setdefault(
                     target['Target']['Id'], {}).setdefault(
                         target_group['TargetGroupArn'], set()).add(
-                            default_protocol + target['Target']['Port'])
+                            target['Target']['Port'])
 
         headers, body = self.request(
             'elasticloadbalancing', region, 'GET',
             '/?Version=2015-12-01&Action=DescribeLoadBalancers', '')
-        alb_list = aws.listify(body['DescribeLoadBalancersResult'][
-            'LoadBalancers'], 'member')
+        v2lb_dict = {
+            v2lb['DNSName']: v2lb
+            for v2lb in aws.listify(body['DescribeLoadBalancersResult'][
+                'LoadBalancers'], 'member')}
         dns_name2cidrs = {}
         target_group2dns_names = {}
-        for alb in alb_list:
+        for v2lb in v2lb_dict.values():
             headers, body = self.request(
                 'elasticloadbalancing', region, 'GET',
                 '/?' + urllib.urlencode({
                     'Version': '2015-12-01',
                     'Action': 'DescribeTags',
-                    'ResourceArns.member.1': alb['LoadBalancerArn']}), '')
+                    'ResourceArns.member.1': v2lb['LoadBalancerArn']}), '')
             tags = self.get_tags(aws.listify(
                 body['DescribeTagsResult']['TagDescriptions'],
                 'member')[0]['Tags'])
-            dns_name = alb['DNSName']
+            dns_name = v2lb['DNSName']
             cidrs = [
                 subnets[az['SubnetId']]['cidrBlock']
-                for az in alb['AvailabilityZones']]
+                for az in v2lb['AvailabilityZones']]
             dns_name2cidrs.setdefault(dns_name, []).extend(cidrs)
             headers, body = self.request(
                 'elasticloadbalancing', region, 'GET',
                 '/?' + urllib.urlencode({
                     'Version': '2015-12-01',
                     'Action': 'DescribeListeners',
-                    'LoadBalancerArn': alb['LoadBalancerArn']}), '')
+                    'LoadBalancerArn': v2lb['LoadBalancerArn']}), '')
             listeners = aws.listify(
                 body['DescribeListenersResult']['Listeners'], 'member')
             front_protocol_ports = []
@@ -398,23 +415,23 @@ class AWS(Controller):
                             action['TargetGroupArn'], set()).add(dns_name)
             if tags.get('x-chkp-management') == self.management:
                 template = tags.get('x-chkp-template')
-                ignore_ports = tags.get('x-chkp-ignore-ports', [])
-                if ignore_ports:
-                    ignore_ports = set(ignore_ports.split(':'))
-                front_protocol_ports = [
-                    pp for pp in front_protocol_ports
-                    if pp.split('-')[1] not in ignore_ports]
+                front_protocol_ports = self.filter_protocol_ports(
+                    front_protocol_ports, tags)
                 by_template.setdefault(template, {})
                 by_template[template][dns_name] = front_protocol_ports
 
         for i in i2target_groups:
             by_instance.setdefault(i, {})
             for target_group in i2target_groups[i]:
-                for protocol_port in i2target_groups[i][target_group]:
+                for port in i2target_groups[i][target_group]:
                     for dns_name in target_group2dns_names.get(
                             target_group, set()):
-                        by_instance[i].setdefault(protocol_port, set()).update(
+                        by_instance[i].setdefault(port, set()).update(
                             dns_name2cidrs[dns_name])
+                        if v2lb_dict[dns_name]['Type'] == 'network':
+                            by_instance[i][port].add(None)
+            by_instance[i] = {
+                k: v for k, v in by_instance[i].iteritems() if None not in v}
 
     def retrieve_elbs(self, subnets):
         by_template = {}
@@ -431,7 +448,7 @@ class AWS(Controller):
             self.retrieve_classic_lbs(
                 region, subnets[region], auto_scaling_groups,
                 by_template[region], by_instance[region])
-            self.retrieve_application_lbs(
+            self.retrieve_v2_lbs(
                 region, subnets[region], auto_scaling_groups,
                 by_template[region], by_instance[region])
         return {'by-template': by_template, 'by-instance': by_instance}
@@ -553,7 +570,8 @@ class AWS(Controller):
                     for protocol_port in internal_elbs[dns_name]:
                         load_balancers.setdefault(
                             dns_name, {})[protocol_port] = list(
-                                external_elbs.get(protocol_port, set()))
+                                external_elbs.get(protocol_port.split('-')[1],
+                                                  set()))
                 instances.append(Instance(
                     instance_name, ip_address, interfaces, template,
                     load_balancers))
