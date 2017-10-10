@@ -1987,25 +1987,30 @@ class Management(object):
         policies = [p['name']
                     for p in self('show-packages', {}, aggregate='packages')]
         for policy in policies:
-            # remove nat rules installed on the deleted gateway
-            rules = self.get_rulebase(policy, nat=True)
-            for rule in rules:
-                if gw['uid'] in rule['install-on']:
-                    log('\ndeleting %s in "%s"' % (rule['comments'], policy))
-                    self('delete-nat-rule', {
-                        'uid': rule['uid'], 'package': policy})
-            # remove access rules installed on the deleted gateway
-            layers = self(
-                'show-package', {'name': policy})['access-layers']
-            for layer in layers:
-                rules = self.get_rulebase(layer['uid'])
+            try:
+                # remove nat rules installed on the deleted gateway
+                rules = self.get_rulebase(policy, nat=True)
                 for rule in rules:
                     if gw['uid'] in rule['install-on']:
                         log('\ndeleting %s in "%s"' % (
-                            rule.get('comments', rule.get('name')),
-                            layer['name']))
-                        self('delete-access-rule',
-                             {'uid': rule['uid'], 'layer': layer['uid']})
+                            rule['comments'], policy))
+                        self('delete-nat-rule', {
+                            'uid': rule['uid'], 'package': policy})
+                # remove access rules installed on the deleted gateway
+                layers = self(
+                    'show-package', {'name': policy})['access-layers']
+                for layer in layers:
+                    rules = self.get_rulebase(layer['uid'])
+                    for rule in rules:
+                        if gw['uid'] in rule['install-on']:
+                            log('\ndeleting %s in "%s"' % (
+                                rule.get('comments', rule.get('name')),
+                                layer['name']))
+                            self('delete-access-rule',
+                                 {'uid': rule['uid'], 'layer': layer['uid']})
+            except Exception:
+                log('\n%s' % traceback.format_exc())
+                log('\nskipping policy "%s"' % policy)
         # remove groups defined for the gateway
         for group in self('show-groups', {}, aggregate='objects'):
             if group['name'].endswith('_' + name):
