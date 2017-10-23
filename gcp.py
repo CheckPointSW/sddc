@@ -194,16 +194,25 @@ class GCP(object):
         self.token = {
             'expires_in': 0
         }
+        metadata = None
         if isinstance(credentials, basestring):
             if credentials.startswith('{'):
                 credentials = json.loads(credentials)
             elif credentials != 'IAM':
                 with open(credentials) as f:
                     credentials = json.load(f)
+            else:
+                try:
+                    metadata = self.metadata(timeout_sec=1)[0]
+                except Exception as e:
+                    if isinstance(e, CurlException) or isinstance(
+                            e, HTTPException):
+                        raise EnvException('Failed to access the metadata')
+                    raise
         self.credentials = credentials
         if project is None:
-            if self.credentials == 'IAM':
-                self.project = self.metadata()[0]['project']['projectId']
+            if metadata:
+                self.project = metadata['project']['projectId']
             else:
                 self.project = self.credentials['project_id']
         else:
