@@ -283,11 +283,9 @@ class AWS(Controller):
                              by_template, by_instance):
         i2lb_names = {}
         lb_name2cidrs = {}
-        headers, body = self.request(
-            'elasticloadbalancing', region, 'GET',
-            '/?Action=DescribeLoadBalancers', '')
-        elb_list = aws.listify(body['DescribeLoadBalancersResult'][
-            'LoadBalancerDescriptions'], 'member')
+        elb_list = self.retrieve_all(
+            'elasticloadbalancing', region, '/?Action=DescribeLoadBalancers',
+            'DescribeLoadBalancersResult', 'LoadBalancerDescriptions')
         for elb in elb_list:
             headers, body = self.request(
                 'elasticloadbalancing', region, 'GET',
@@ -340,11 +338,10 @@ class AWS(Controller):
                     i2target_groups.setdefault(i['InstanceId'], {}).setdefault(
                         target, set())
 
-        headers, body = self.request(
-            'elasticloadbalancing', region, 'GET',
-            '/?Version=2015-12-01&Action=DescribeTargetGroups', '')
-        target_groups = aws.listify(body['DescribeTargetGroupsResult'][
-            'TargetGroups'], 'member')
+        target_groups = self.retrieve_all(
+            'elasticloadbalancing', region,
+            '/?Version=2015-12-01&Action=DescribeTargetGroups',
+            'DescribeTargetGroupsResult', 'TargetGroups')
         for target_group in target_groups:
             default_port = target_group['Port']
             for i in i2target_groups:
@@ -365,13 +362,12 @@ class AWS(Controller):
                         target_group['TargetGroupArn'], set()).add(
                             target['Target']['Port'])
 
-        headers, body = self.request(
-            'elasticloadbalancing', region, 'GET',
-            '/?Version=2015-12-01&Action=DescribeLoadBalancers', '')
         v2lb_dict = {
             v2lb['DNSName']: v2lb
-            for v2lb in aws.listify(body['DescribeLoadBalancersResult'][
-                'LoadBalancers'], 'member')}
+            for v2lb in self.retrieve_all(
+                'elasticloadbalancing', region,
+                '/?Version=2015-12-01&Action=DescribeLoadBalancers',
+                'DescribeLoadBalancersResult', 'LoadBalancers')}
         dns_name2cidrs = {}
         target_group2dns_names = {}
         for v2lb in v2lb_dict.values():
@@ -389,26 +385,24 @@ class AWS(Controller):
                 subnets[az['SubnetId']]['cidrBlock']
                 for az in v2lb['AvailabilityZones']]
             dns_name2cidrs.setdefault(dns_name, []).extend(cidrs)
-            headers, body = self.request(
-                'elasticloadbalancing', region, 'GET',
+            listeners = self.retrieve_all(
+                'elasticloadbalancing', region,
                 '/?' + urllib.urlencode({
                     'Version': '2015-12-01',
                     'Action': 'DescribeListeners',
-                    'LoadBalancerArn': v2lb['LoadBalancerArn']}), '')
-            listeners = aws.listify(
-                body['DescribeListenersResult']['Listeners'], 'member')
+                    'LoadBalancerArn': v2lb['LoadBalancerArn']}),
+                'DescribeListenersResult', 'Listeners')
             front_protocol_ports = []
             for listener in listeners:
                 front_protocol_ports.append('%s-%s' % (
                     listener['Protocol'], listener['Port']))
-                headers, body = self.request(
-                    'elasticloadbalancing', region, 'GET',
+                rules = self.retrieve_all(
+                    'elasticloadbalancing', region,
                     '/?' + urllib.urlencode({
                         'Version': '2015-12-01',
                         'Action': 'DescribeRules',
-                        'ListenerArn': listener['ListenerArn']}), '')
-                rules = aws.listify(
-                    body['DescribeRulesResult']['Rules'], 'member')
+                        'ListenerArn': listener['ListenerArn']}),
+                    'DescribeRulesResult', 'Rules')
                 for rule in rules:
                     for action in rule['Actions']:
                         target_group2dns_names.setdefault(
@@ -439,12 +433,9 @@ class AWS(Controller):
         for region in self.regions:
             by_template[region] = {}
             by_instance[region] = {}
-            headers, body = self.request(
-                'autoscaling', region, 'GET',
-                '/?Action=DescribeAutoScalingGroups', '')
-            auto_scaling_groups = aws.listify(
-                body['DescribeAutoScalingGroupsResult']['AutoScalingGroups'],
-                'member')
+            auto_scaling_groups = self.retrieve_all(
+                'autoscaling', region, '/?Action=DescribeAutoScalingGroups',
+                'DescribeAutoScalingGroupsResult', 'AutoScalingGroups')
             self.retrieve_classic_lbs(
                 region, subnets[region], auto_scaling_groups,
                 by_template[region], by_instance[region])
@@ -453,21 +444,34 @@ class AWS(Controller):
                 by_template[region], by_instance[region])
         return {'by-template': by_template, 'by-instance': by_instance}
 
-    def retrieve_all(self, region, path, top_set, collect_set):
+    def retrieve_all(self, service, region, path, top_set, collect_set):
+        MEMBER = {'ec2': 'item'}.get(service, 'member')
+        MARKER = {
+            'autoscaling': 'NextToken',
+            'ec2': 'NextToken',
+            'elasticloadbalancing': 'Marker'}[service]
+        NEXT_MARKER = {
+            'autoscaling': 'NextToken',
+            'ec2': 'nextToken',
+            'elasticloadbalancing': 'NextMarker'}[service]
         objects = []
-        next_token = None
+        marker = None
         while True:
             extra_params = ''
-            if next_token:
-                extra_params += '&' + urllib.urlencode({
-                    'NextToken', next_token})
+            if marker:
+                extra_params += '&' + urllib.urlencode({MARKER: marker})
             headers, body = self.request(
-                'ec2', region, 'GET', path + extra_params, '')
-            obj = aws.listify(body, 'item')
-            for r in obj[top_set]:
+                service, region, 'GET', path + extra_params, '')
+            obj = aws.listify(body, MEMBER)
+            top = obj[top_set]
+            if top and not isinstance(top, list):
+                marker = top.get(NEXT_MARKER)
+                top = [top]
+            else:
+                marker = obj.get(NEXT_MARKER)
+            for r in top:
                 objects += r[collect_set]
-            next_token = obj.get('nextToken')
-            if not next_token:
+            if not marker:
                 break
         return objects
 
@@ -475,11 +479,13 @@ class AWS(Controller):
         instances = {}
         for region in self.regions:
             instances[region] = self.retrieve_all(
+                'ec2',
                 region,
                 '/?Action=DescribeInstances' +
                 '&Filter.1.Name=tag-key&Filter.1.Value=x-chkp-management',
                 'reservationSet', 'instancesSet')
             instances[region] += self.retrieve_all(
+                'ec2',
                 region,
                 '/?Action=DescribeInstances' +
                 '&Filter.2.Name=tag-key&Filter.2.Value=x-chkp-tags',
