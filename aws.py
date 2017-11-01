@@ -132,6 +132,8 @@ if os.path.isfile('/etc/cp-release'):
 
 
 def truncate(buf, max_len):
+    if max_len <= 0:
+        return '[Redacted]'
     first_truncated = repr(buf[:max_len * 4])
     second_truncated = first_truncated[:max_len]
     was_truncated = len(buf) > max_len * 4 or len(first_truncated) > max_len
@@ -181,6 +183,8 @@ def http(method, url, body, req_headers=None, max_time=None):
                          stderr=subprocess.PIPE)
     out, err = p.communicate(body)
     debug(err + '\n')
+    if 'SecretAccessKey' in out:
+        max_debug = -1
     debug(truncate(out, max_debug) + '\n')
     rc = p.wait()
     if rc:
@@ -276,21 +280,24 @@ def listify(obj, key):
     return listified
 
 
+def get_iam_credentials(role=''):
+    url = META_DATA + '/iam/security-credentials/' + role
+    h, b = http('GET', url, '')
+    if h.get('_code') != '200':
+        if not role:
+            raise RoleException('no role in meta-data')
+        if h.get('_code') != '404':
+            raise RoleException('cannot get credentials: %s %s' % (
+                h.get('_code'), h.get('_reason')))
+        return None
+    return b
+
+
 class AWS(object):
     def __init__(self, key=None, secret=None, token=None, key_file=None,
+                 sts_role=None, sts_ext_id=None, sts_session=None,
                  max_time=None):
         self.max_time = max_time
-
-        def read_file(f_name):
-            f_key, f_secret = None, None
-            with open(f_name) as f:
-                for line in f:
-                    k, v = line.strip().split('=', 1)
-                    if k == 'AWSAccessKeyId':
-                        f_key = v
-                    elif k == 'AWSSecretKey':
-                        f_secret = v
-            return f_key, f_secret
 
         self.creds = {}
 
@@ -299,18 +306,29 @@ class AWS(object):
                 http('GET', META_DATA + '/ami-id', '', max_time=15)
             except:
                 raise RoleException('not in AWS')
-            url = META_DATA + '/iam/security-credentials/'
-            h, b = http('GET', url, '')
-            if h.get('_code') != '200':
-                raise RoleException('no role in meta-data')
-            self.creds['role'] = b
-            return
+            self.creds['iam_role'] = get_iam_credentials()
+            self.creds['iam_expiration'] = 0.0
 
-        if key_file:
-            key, secret = read_file(key_file)
+        elif key_file:
+            with open(key_file) as f:
+                for line in f:
+                    k, v = line.strip().split('=', 1)
+                    if k == 'AWSAccessKeyId':
+                        key = v
+                    elif k == 'AWSSecretKey':
+                        secret = v
+                    elif k == 'AWSSessionToken':
+                        token = v
+                    elif k == 'AWSSTSRole':
+                        sts_role = v
+                    elif k == 'AWSSTSExternalId':
+                        sts_ext_id = v
+                    elif k == 'AWSSTSSession':
+                        sts_session = v
 
-        if not key or not secret:
-            raise EnvException("""
+        if key_file != 'IAM':
+            if not key or not secret:
+                raise EnvException("""
 Please specify a source for credentials in env:
 
 AWS_KEY_FILE - text file with AWSAccessKeyId=..., AWSSecretKey=...,
@@ -321,31 +339,91 @@ AWS_ACCESS_KEY_ID or AWS_ACCESS_KEY
 AWS_SECRET_ACCESS_KEY or AWS_SECRET_KEY
 AWS_SESSION_TOKEN - (optional)
 """)
-        self.creds['access_key'] = key
-        self.creds['secret_key'] = secret
-        if token:
-            self.creds['token'] = token
+            self.creds['access_key'] = key
+            self.creds['secret_key'] = secret
+            if token:
+                self.creds['token'] = token
 
-    def refresh_credentials(self):
-        if not self.creds.get('role'):
-            return
+        if sts_role:
+            self.creds['sts_role'] = sts_role
+            self.creds['sts_ext_id'] = sts_ext_id
+            if sts_session is None:
+                raise RoleException('no role session name')
+            self.creds['sts_session'] = sts_session
+            for k in ('access_key', 'secret_key', 'token',
+                      'iam_role', 'iam_expiration'):
+                if k in self.creds:
+                    self.creds['sts:' + k] = self.creds.get(k)
+                    del self.creds[k]
+            self.creds['sts_expiration'] = 0.0
 
-        tstamp = self.creds.get('tstamp', 0.0)
-        if tstamp <= time.time() < tstamp + 300:
-            return
+    def get_credentials(self, region):
 
-        url = META_DATA + '/iam/security-credentials/' + self.creds.get('role')
-        headers, body = http('GET', url, '')
-        cred = json.loads(body)
-        self.creds['access_key'] = cred['AccessKeyId']
-        self.creds['secret_key'] = cred['SecretAccessKey']
-        self.creds['token'] = cred['Token']
-        self.creds['tstamp'] = time.time()
+        def need_refresh(expiration_key):
+            expiration = self.creds.get(expiration_key)
+            if expiration is None:
+                return False
+            if time.time() < expiration - 300:
+                return False
+            return True
+
+        def set_creds(cred, token_key, prefix):
+            self.creds[prefix + 'access_key'] = cred['AccessKeyId']
+            self.creds[prefix + 'secret_key'] = cred['SecretAccessKey']
+            self.creds[prefix + 'token'] = cred[token_key]
+            return (
+                datetime.datetime.strptime(cred['Expiration'],
+                                           '%Y-%m-%dT%H:%M:%SZ') -
+                datetime.datetime(1970, 1, 1)).total_seconds()
+
+        for_sts = hasattr(self, 'for_sts')
+        prefix = 'sts:' if for_sts else ''
+        if prefix + 'iam_role' in self.creds:
+            if need_refresh(prefix + 'iam_expiration'):
+                body = get_iam_credentials(self.creds[prefix + 'iam_role'])
+                if body is None:
+                    log('\nCannot find credentials for role: "%s"\n' % (
+                        self.creds[prefix + 'iam_role']))
+                    self.creds[prefix + 'iam_role'] = get_iam_credentials()
+                    log('\nFound role: "%s"\n' % (
+                        self.creds[prefix + 'iam_role']))
+                    body = get_iam_credentials(self.creds[prefix + 'iam_role'])
+                set_creds(json.loads(body), 'Token', prefix)
+                self.creds[prefix + 'iam_expiration'] = time.time() + 600
+
+        key, secret, token = [self.creds.get(prefix + k)
+                              for k in 'access_key', 'secret_key', 'token']
+
+        if 'sts_role' not in self.creds or for_sts:
+            return key, secret, token
+
+        if need_refresh('sts_expiration'):
+            params = {
+                'Action': 'AssumeRole',
+                'Version': '2011-06-15',
+                'RoleArn': self.creds['sts_role'],
+                'RoleSessionName': self.creds['sts_session']}
+            if self.creds['sts_ext_id']:
+                params['ExternalId'] = self.creds['sts_ext_id']
+            try:
+                setattr(self, 'for_sts', None)
+                h, b = self.request(
+                    'sts', region, 'GET', '/?' + urllib.urlencode(params), '')
+            finally:
+                delattr(self, 'for_sts')
+            if h['_code'] != '200':
+                msg = '%s %s' % (h.get('_code'), h.get('_reason'))
+                if h.get('_parsed') and 'Error' in b:
+                    msg = '%s: %s: %s' % (
+                        msg, b['Error'].get('Code'), b['Error'].get('Message'))
+                raise RoleException(msg)
+            self.creds['sts_expiration'] = set_creds(
+                b['AssumeRoleResult']['Credentials'], 'SessionToken', '')
+
+        return [self.creds.get(k) for k in 'access_key', 'secret_key', 'token']
 
     def get_url(self, service, region, method, url, payload, expiration=30,
                 header_list=None):
-
-        self.refresh_credentials()
 
         url_parts = urlparse.urlsplit(url)
         query = {}
@@ -394,19 +472,20 @@ AWS_SESSION_TOKEN - (optional)
                 headers['X-Amz-Target'] = target
         if content_type is not None:
             headers['Content-Type'] = content_type
-        credential = self.creds['access_key'] + '/' + scope
+        access_key, secret_key, token = self.get_credentials(region)
+        credential = access_key + '/' + scope
         if header_list is None:
             query['X-Amz-Algorithm'] = ALGORITHM
             query['X-Amz-Credential'] = credential
             query['X-Amz-Date'] = now
             query['X-Amz-Expires'] = str(expiration)
             query['X-Amz-SignedHeaders'] = 'host'
-            if 'token' in self.creds:
-                query['X-Amz-Security-Token'] = self.creds['token']
+            if token:
+                query['X-Amz-Security-Token'] = token
         else:
             headers['X-Amz-Date'] = now
-            if 'token' in self.creds:
-                headers['X-Amz-Security-Token'] = self.creds['token']
+            if token:
+                headers['X-Amz-Security-Token'] = token
             if service.endswith('s3'):
                 headers['X-Amz-Content-Sha256'] = hashed_payload
         canonical_header_name_pairs = sorted([(n.lower(), n) for n in headers])
@@ -423,8 +502,7 @@ AWS_SESSION_TOKEN - (optional)
         req = '\n'.join([method, url_parts.path, query_string,
                          canonical_headers, signed_headers, hashed_payload])
         signature = sign(
-            calculate_key(self.creds['secret_key'], now[:8], region,
-                          signing_name),
+            calculate_key(secret_key, now[:8], region, signing_name),
             '\n'.join([ALGORITHM, now, scope,
                        hashlib.sha256(req).hexdigest()]),
             hex=True)
@@ -505,6 +583,9 @@ def init(*args, **kwargs):
     set_from_env('key', ['AWS_ACCESS_KEY_ID', 'AWS_ACCESS_KEY'])
     set_from_env('secret', ['AWS_SECRET_ACCESS_KEY', 'AWS_SECRET_KEY'])
     set_from_env('token', ['AWS_SESSION_TOKEN'])
+    set_from_env('sts_role', ['AWS_STS_ROLE'])
+    set_from_env('sts_ext_id', ['AWS_STS_EXTERNAL_ID'])
+    set_from_env('sts_session', ['AWS_STS_SESSION'])
     set_from_env('key_file', ['AWS_KEY_FILE'])
     set_from_env('max_time', ['AWS_MAX_TIME'])
 

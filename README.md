@@ -112,6 +112,13 @@ The script takes a configuration file in JSON format
                 "templates": ["TEMPLATE1-NAME"],  // Optional
                 "access-key": "AWS-ACCESS-KEY",
                 "secret-key": "AWS-SECRET-KEY",
+                "sub-creds": {  // Optional
+                    "SUB-ACCOUNT1": {
+                        "access-key": "AWS-ACCESS-KEY",
+                        "secret-key": "AWS-SECRET-KEY"
+                    },
+                    ...
+                },
                 "regions": ["us-east-1", "us-west-2"]
             },
             "AZURE-RESOURCES": {
@@ -252,6 +259,16 @@ In reference to the above configuration:
                 * Using an IAM role profile:
 
                     * cred-file: "IAM"
+
+                * Using an STS assumed role:
+
+                    * accesss-key/secret-key or cred-file (path to file or "IAM") for retreiving the STS temporary credentials
+
+                    * sts-role: the STS RoleArn of the role to assume
+
+                    * sts-external-id: optional STS ExternalId to use when assuming the role
+
+            * sub-creds: an optional object containing credentials specified with the options above (access-key/secret-key or cred-file, optionally with STS role to assume)
 
         * For Azure controllers:
 

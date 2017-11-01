@@ -212,14 +212,39 @@ class Controller(object):
 class AWS(Controller):
     def __init__(self, **options):
         super(AWS, self).__init__(**options)
+        sts_session = 'autoprovision-%s' % (
+            datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ'))
         self.aws = aws.AWS(
             key=options.get('access-key'), secret=options.get('secret-key'),
-            token=options.get('session-token'),
-            key_file=options.get('cred-file'))
+            key_file=options.get('cred-file'),
+            sts_role=options.get('sts-role'),
+            sts_ext_id=options.get('sts-external-id'),
+            sts_session=sts_session if 'sts-role' in options else None)
+        self.sub_creds = {}
+        if 'sub-creds' in options:
+            for sub_cred in options['sub-creds']:
+                val = options['sub-creds'][sub_cred]
+                if 'sts-role' in val:
+                    keys = 'access-key', 'secret-key', 'cred-file'
+                    if all([k not in val for k in keys]):
+                        for k in keys:
+                            if k in options:
+                                val[k] = options[k]
+                self.sub_creds[sub_cred] = aws.AWS(
+                    key=val.get('access-key'),
+                    secret=val.get('secret-key'),
+                    key_file=val.get('cred-file'),
+                    sts_role=val.get('sts-role'),
+                    sts_ext_id=val.get('sts-external-id'),
+                    sts_session=sts_session if 'sts-role' in val else None)
         self.regions = options['regions']
 
     def request(self, service, *args, **kwargs):
-        headers, body = self.aws.request(service, *args, **kwargs)
+        aws = self.aws
+        sub_cred = kwargs.pop('sub_cred', None)
+        if sub_cred is not None:
+            aws = self.sub_creds[sub_cred]
+        headers, body = aws.request(service, *args, **kwargs)
         if headers.get('_code') == '200':
             return headers, body
         error = None
@@ -257,7 +282,10 @@ class AWS(Controller):
                 interfaces[region][i['networkInterfaceId']] = i
         return interfaces
 
-    def filter_protocol_ports(self, protocol_ports, tags):
+    def register_internal_lb(self, lb, by_template):
+        tags = lb['Tags']
+        if tags.get('x-chkp-management') != self.management:
+            return
         ignore_ports = tags.get('x-chkp-ignore-ports', [])
         if ignore_ports:
             ignore_ports = set(ignore_ports.split(':'))
@@ -267,8 +295,8 @@ class AWS(Controller):
         https_ports = tags.get('x-chkp-https-ports', [])
         if https_ports:
             https_ports = set(https_ports.split(':'))
-        protocol_ports, old = [], protocol_ports
-        for pp in old:
+        protocol_ports = []
+        for pp in lb['Front']:
             protocol, _, port = pp.partition('-')
             if port in ignore_ports:
                 continue
@@ -277,38 +305,73 @@ class AWS(Controller):
             if port in https_ports:
                 protocol = 'HTTPS'
             protocol_ports.append('%s-%s' % (protocol, port))
-        return protocol_ports
+        template = tags.get('x-chkp-template')
+        by_template.setdefault(template, {})
+        by_template[template][lb['DNSName']] = protocol_ports
 
-    def retrieve_classic_lbs(self, region, subnets, auto_scaling_groups,
-                             by_template, by_instance):
-        i2lb_names = {}
-        lb_name2cidrs = {}
+    def retrieve_all_elbs(self, region, sub_cred=None):
         elb_list = self.retrieve_all(
             'elasticloadbalancing', region, '/?Action=DescribeLoadBalancers',
-            'DescribeLoadBalancersResult', 'LoadBalancerDescriptions')
+            'DescribeLoadBalancersResult', 'LoadBalancerDescriptions',
+            sub_cred=sub_cred)
         for elb in elb_list:
             headers, body = self.request(
                 'elasticloadbalancing', region, 'GET',
                 '/?Action=DescribeTags&LoadBalancerNames.member.1=' +
-                elb['LoadBalancerName'], '')
-            tags = self.get_tags(aws.listify(
+                elb['LoadBalancerName'], '', sub_cred=sub_cred)
+            elb['Tags'] = self.get_tags(aws.listify(
                 body['DescribeTagsResult']['TagDescriptions'],
                 'member')[0]['Tags'])
-            cidrs = [subnets[s]['cidrBlock'] for s in elb['Subnets']]
-            dns_name = elb['DNSName']
-            front_protocol_ports = []
-            back_ports = []
+            protocol_ports = []
             for listener in elb['ListenerDescriptions']:
-                front_protocol_ports.append('%s-%s' % (
+                protocol_ports.append('%s-%s' % (
                     listener['Listener']['Protocol'],
                     listener['Listener']['LoadBalancerPort']))
+            elb['Front'] = protocol_ports
+
+        v2lb_dict = {
+            v2lb['DNSName']: v2lb
+            for v2lb in self.retrieve_all(
+                'elasticloadbalancing', region,
+                '/?Version=2015-12-01&Action=DescribeLoadBalancers',
+                'DescribeLoadBalancersResult', 'LoadBalancers',
+                sub_cred=sub_cred)}
+        for v2lb in v2lb_dict.values():
+            headers, body = self.request(
+                'elasticloadbalancing', region, 'GET',
+                '/?' + urllib.urlencode({
+                    'Version': '2015-12-01',
+                    'Action': 'DescribeTags',
+                    'ResourceArns.member.1': v2lb['LoadBalancerArn']}), '',
+                sub_cred=sub_cred)
+            v2lb['Tags'] = self.get_tags(aws.listify(
+                body['DescribeTagsResult']['TagDescriptions'],
+                'member')[0]['Tags'])
+            v2lb['Listeners'] = self.retrieve_all(
+                'elasticloadbalancing', region,
+                '/?' + urllib.urlencode({
+                    'Version': '2015-12-01',
+                    'Action': 'DescribeListeners',
+                    'LoadBalancerArn': v2lb['LoadBalancerArn']}),
+                'DescribeListenersResult', 'Listeners', sub_cred=sub_cred)
+            protocol_ports = []
+            for listener in v2lb['Listeners']:
+                protocol_ports.append('%s-%s' % (
+                    listener['Protocol'], listener['Port']))
+            v2lb['Front'] = protocol_ports
+
+        return elb_list, v2lb_dict
+
+    def retrieve_classic_lbs(self, region, subnets, auto_scaling_groups,
+                             elb_list, by_template, by_instance):
+        i2lb_names = {}
+        lb_name2cidrs = {}
+        for elb in elb_list:
+            cidrs = [subnets[s]['cidrBlock'] for s in elb['Subnets']]
+            back_ports = []
+            for listener in elb['ListenerDescriptions']:
                 back_ports.append('%s' % listener['Listener']['InstancePort'])
-            if tags.get('x-chkp-management') == self.management:
-                template = tags.get('x-chkp-template')
-                front_protocol_ports = self.filter_protocol_ports(
-                    front_protocol_ports, tags)
-                by_template.setdefault(template, {})
-                by_template[template][dns_name] = front_protocol_ports
+            self.register_internal_lb(elb, by_template)
             lb_name = elb['LoadBalancerName']
             for i in elb['Instances']:
                 i2lb_names.setdefault(i['InstanceId'], set()).add(
@@ -329,7 +392,7 @@ class AWS(Controller):
                     by_instance[i].setdefault(port, set()).update(
                         lb_name2cidrs[lb_name].get(port, []))
 
-    def retrieve_v2_lbs(self, region, subnets, auto_scaling_groups,
+    def retrieve_v2_lbs(self, region, subnets, auto_scaling_groups, v2lb_dict,
                         by_template, by_instance):
         i2target_groups = {}
         for auto_scale_group in auto_scaling_groups:
@@ -362,40 +425,15 @@ class AWS(Controller):
                         target_group['TargetGroupArn'], set()).add(
                             target['Target']['Port'])
 
-        v2lb_dict = {
-            v2lb['DNSName']: v2lb
-            for v2lb in self.retrieve_all(
-                'elasticloadbalancing', region,
-                '/?Version=2015-12-01&Action=DescribeLoadBalancers',
-                'DescribeLoadBalancersResult', 'LoadBalancers')}
         dns_name2cidrs = {}
         target_group2dns_names = {}
         for v2lb in v2lb_dict.values():
-            headers, body = self.request(
-                'elasticloadbalancing', region, 'GET',
-                '/?' + urllib.urlencode({
-                    'Version': '2015-12-01',
-                    'Action': 'DescribeTags',
-                    'ResourceArns.member.1': v2lb['LoadBalancerArn']}), '')
-            tags = self.get_tags(aws.listify(
-                body['DescribeTagsResult']['TagDescriptions'],
-                'member')[0]['Tags'])
             dns_name = v2lb['DNSName']
             cidrs = [
                 subnets[az['SubnetId']]['cidrBlock']
                 for az in v2lb['AvailabilityZones']]
             dns_name2cidrs.setdefault(dns_name, []).extend(cidrs)
-            listeners = self.retrieve_all(
-                'elasticloadbalancing', region,
-                '/?' + urllib.urlencode({
-                    'Version': '2015-12-01',
-                    'Action': 'DescribeListeners',
-                    'LoadBalancerArn': v2lb['LoadBalancerArn']}),
-                'DescribeListenersResult', 'Listeners')
-            front_protocol_ports = []
-            for listener in listeners:
-                front_protocol_ports.append('%s-%s' % (
-                    listener['Protocol'], listener['Port']))
+            for listener in v2lb['Listeners']:
                 rules = self.retrieve_all(
                     'elasticloadbalancing', region,
                     '/?' + urllib.urlencode({
@@ -407,12 +445,7 @@ class AWS(Controller):
                     for action in rule['Actions']:
                         target_group2dns_names.setdefault(
                             action['TargetGroupArn'], set()).add(dns_name)
-            if tags.get('x-chkp-management') == self.management:
-                template = tags.get('x-chkp-template')
-                front_protocol_ports = self.filter_protocol_ports(
-                    front_protocol_ports, tags)
-                by_template.setdefault(template, {})
-                by_template[template][dns_name] = front_protocol_ports
+            self.register_internal_lb(v2lb, by_template)
 
         for i in i2target_groups:
             by_instance.setdefault(i, {})
@@ -427,6 +460,15 @@ class AWS(Controller):
             by_instance[i] = {
                 k: v for k, v in by_instance[i].iteritems() if None not in v}
 
+    def retrieve_foreign_internal_lbs(self, region, by_template):
+        for sub_cred in self.sub_creds:
+            elb_list, v2lb_dict = self.retrieve_all_elbs(
+                region, sub_cred=sub_cred)
+            for elb in elb_list:
+                self.register_internal_lb(elb, by_template)
+            for v2lb in v2lb_dict.values():
+                self.register_internal_lb(v2lb, by_template)
+
     def retrieve_elbs(self, subnets):
         by_template = {}
         by_instance = {}
@@ -436,15 +478,18 @@ class AWS(Controller):
             auto_scaling_groups = self.retrieve_all(
                 'autoscaling', region, '/?Action=DescribeAutoScalingGroups',
                 'DescribeAutoScalingGroupsResult', 'AutoScalingGroups')
+            elb_list, v2lb_dict = self.retrieve_all_elbs(region)
             self.retrieve_classic_lbs(
-                region, subnets[region], auto_scaling_groups,
+                region, subnets[region], auto_scaling_groups, elb_list,
                 by_template[region], by_instance[region])
             self.retrieve_v2_lbs(
-                region, subnets[region], auto_scaling_groups,
+                region, subnets[region], auto_scaling_groups, v2lb_dict,
                 by_template[region], by_instance[region])
+            self.retrieve_foreign_internal_lbs(region, by_template[region])
         return {'by-template': by_template, 'by-instance': by_instance}
 
-    def retrieve_all(self, service, region, path, top_set, collect_set):
+    def retrieve_all(self, service, region, path, top_set, collect_set,
+                     sub_cred=None):
         MEMBER = {'ec2': 'item'}.get(service, 'member')
         MARKER = {
             'autoscaling': 'NextToken',
@@ -461,7 +506,8 @@ class AWS(Controller):
             if marker:
                 extra_params += '&' + urllib.urlencode({MARKER: marker})
             headers, body = self.request(
-                service, region, 'GET', path + extra_params, '')
+                service, region, 'GET', path + extra_params, '',
+                sub_cred=sub_cred)
             obj = aws.listify(body, MEMBER)
             top = obj[top_set]
             if top and not isinstance(top, list):
