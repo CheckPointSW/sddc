@@ -261,15 +261,12 @@ def delete_arguments(conf, args):
         if arg not in AUXILIARY_ARGUMENTS and getattr(args, arg):
             path = get_value_path(arg, args)
             if not nested_get(conf, path):
-                sys.stderr.write(
-                    '%s does not exist in %s.\n' % (path[-1], (path[-2])))
-                sys.exit(2)
-            if args.force or prompt('Are you sure you want to delete %s\'s '
-                                    '%s?' % (path[-2], path[-1])):
+                sys.stdout.write('%s does not exist in %s.\n' %
+                                 (path[-1], (path[-2])))
+            elif args.force or prompt('Are you sure you want to delete %s\'s '
+                                      '%s?' % (path[-2], path[-1])):
                 nested_delete(conf, path)
-                removed_inner_argument = True
-            else:
-                sys.exit(0)
+            removed_inner_argument = True
 
     # Did not remove inner arguments, removing entire branch
     if not removed_inner_argument:
@@ -280,8 +277,6 @@ def delete_arguments(conf, args):
         if args.force or prompt('Are you sure you want to delete %s?' %
                                 path[-1]):
             nested_delete(conf, path)
-        else:
-            sys.exit(0)
 
 
 def nested_get(dic, keys):
@@ -496,19 +491,22 @@ def is_adding_an_existing_object(conf, args):
 
 
 def handle_change_of_branch_name(conf, args):
-    if hasattr(args, 'templates_new-name'):
-        template_new_name = getattr(args, 'templates_new-name')
-        if template_new_name is not None:
-            conf['templates'][template_new_name] = conf['templates'].pop(
-                args.templates_name)
-            args.templates_name = template_new_name
+    template_new_name = getattr(args, 'templates_new-name', None)
+    controller_new_name = getattr(args, 'controllers_new-name', None)
 
-    if hasattr(args, 'controllers_new-name'):
-        controller_new_name = getattr(args, 'controllers_new-name')
-        if controller_new_name is not None:
-            conf['controllers'][controller_new_name] = conf['controllers'].pop(
-                args.controllers_name)
-            args.controllers_name = controller_new_name
+    if template_new_name:
+        conf['templates'][template_new_name] = conf['templates'].pop(
+            args.templates_name)
+        args.templates_name = template_new_name
+        return True
+
+    if controller_new_name:
+        conf['controllers'][controller_new_name] = conf['controllers'].pop(
+            args.controllers_name)
+        args.controllers_name = controller_new_name
+        return True
+
+    return False
 
 
 def get_value_path(key, args):
@@ -638,8 +636,8 @@ def process_arguments(conf, args):
             sys.exit(0)
 
     if args.mode == 'set':
-        handle_change_of_branch_name(conf, args)
-        if not set_all_none_control_args(conf, args):
+        if not (handle_change_of_branch_name(conf, args) or
+                set_all_none_control_args(conf, args)):
             sys.stdout.write(
                 'Too few arguments. No changes were made.\n')
             sys.exit(0)
@@ -720,7 +718,7 @@ def validate_guid_uuid(value):
         re.IGNORECASE)
 
     if not pattern.match(value):
-        raise argparse.ArgumentTypeError('value %s is not a GUID' % value)
+        raise argparse.ArgumentTypeError('value %s is not a GUID.' % value)
 
     return value
 
@@ -749,7 +747,7 @@ def validate_filepath(value):
     if os.path.exists(value):
         return value
 
-    raise argparse.ArgumentTypeError('File %s does not exist' % value)
+    raise argparse.ArgumentTypeError('File %s does not exist.' % value)
 
 
 def validate_iam_or_filepath(value):
@@ -771,7 +769,8 @@ def validate_hex(value):
     try:
         int(value, 16)
     except ValueError:
-        raise argparse.ArgumentTypeError('Value %s is not hexadecimal' % value)
+        raise argparse.ArgumentTypeError('Value %s is not hexadecimal.' %
+                                         value)
 
     return value
 
@@ -923,7 +922,7 @@ def create_del_templates_arguments(del_template_subparser, conf):
              'that defines the topology settings for the interfaces marked '
              'with "specific" topology. This attribute is mandatory '
              'if any of the scanned instances has an interface '
-             'with a topology set to "specific". ')
+             'with a topology set to "specific"')
     optional_group.add_argument(
         '-g',
         action='store_true',
@@ -1000,7 +999,7 @@ def create_del_templates_arguments(del_template_subparser, conf):
              'time together). In the case where no attribute is provided, '
              'a default policy will be used (the default policy has only '
              'the implied rules and a drop-all cleanup rule). '
-             'The value null can be used to explicitly avoid any such policy.')
+             'The value null can be used to explicitly avoid any such policy')
     optional_group.add_argument(
         '-nk', nargs=1,
         dest='templates_new-key',
@@ -1177,7 +1176,7 @@ def create_set_templates_arguments(set_template_subparser, conf):
 
     optional_group.add_argument(
         '-nn', dest='templates_new-name',
-        help='the new name of the template. The name must be unique.')
+        help='the new name of the template. The name must be unique')
     optional_group.add_argument(
         '-otp', type=validate_SIC,
         dest='templates_one-time-password',
@@ -1276,7 +1275,7 @@ def create_set_templates_arguments(set_template_subparser, conf):
              'time together). In the case where no attribute is provided, '
              'a default policy will be used (the default policy has only '
              'the implied rules and a drop-all cleanup rule). '
-             'The value null can be used to explicitly avoid any such policy.')
+             'The value null can be used to explicitly avoid any such policy')
 
     optional_group.add_argument(
         '-nk', nargs=2,
@@ -1361,7 +1360,7 @@ def create_add_gcp_arguments(gcp_parser):
         '-n', required=True,
         dest='controllers_name',
         help='The name of the cloud environment controller. The name must be '
-             'unique.')
+             'unique')
     required_group.add_argument(
         '-proj', required=True, dest='controllers_project',
         help='The GCP project ID in which to scan for VM instances')
@@ -1389,7 +1388,7 @@ def create_add_azure_arguments(azure_parser):
         '-n', required=True,
         dest='controllers_name',
         help='The name of the cloud environment controller. '
-             'The name must be unique.')
+             'The name must be unique')
     required_group.add_argument('-sb', required=True,
                                 dest='controllers_subscription',
                                 type=validate_guid_uuid,
@@ -1454,7 +1453,7 @@ def create_add_aws_arguments(aws_parser):
     required_group.add_argument(
         '-n', required=True, dest='controllers_name',
         help='The name of the cloud environment controller. '
-             'The name must be unique.')
+             'The name must be unique')
     required_group.add_argument(
         '-r', required=True, dest='controllers_regions',
         help='A comma-separated list of AWS regions, '
@@ -1495,12 +1494,12 @@ def create_add_templates_arguments(add_template_subparser):
 
     required_group.add_argument(
         '-n', required=True, dest='templates_name',
-        help='The name of the template. The name must be unique.')
+        help='The name of the template. The name must be unique')
     optional_group.add_argument(
         '-otp', type=validate_SIC,
         dest='templates_one-time-password',
         help='A random string consisting of at least %s '
-             'alphanumeric characters.' % repr(MIN_SIC_LENGTH))
+             'alphanumeric characters' % repr(MIN_SIC_LENGTH))
     optional_group.add_argument(
         '-v',
         dest='templates_version', choices=AVAILABLE_VERSIONS,
@@ -1595,7 +1594,7 @@ def create_add_templates_arguments(add_template_subparser):
              'time together). In the case where no attribute is provided, '
              'a default policy will be used (the default policy has only '
              'the implied rules and a drop-all cleanup rule). '
-             'The value null can be used to explicitly avoid any such policy.')
+             'The value null can be used to explicitly avoid any such policy')
     optional_group.add_argument(
         '-nk', nargs=2,
         dest='templates_new-key',
@@ -1620,16 +1619,16 @@ def create_init_azure_arguments(azure_init_subparser):
 
     required_init_group.add_argument(
         '-mn', required=True, dest='management_name',
-        help='The name of the management server.')
+        help='The name of the management server')
 
     required_init_group.add_argument(
         '-tn', required=True, dest='templates_name',
-        help='The name of a gateway configuration template.')
+        help='The name of a gateway configuration template')
     required_init_group.add_argument(
         '-otp', type=validate_SIC, required=True,
         dest='templates_one-time-password',
         help='A random string consisting of at least '
-             '%s alphanumeric characters.' % repr(MIN_SIC_LENGTH))
+             '%s alphanumeric characters' % repr(MIN_SIC_LENGTH))
     required_init_group.add_argument(
         '-v', required=True,
         dest='templates_version', choices=AVAILABLE_VERSIONS,
@@ -1637,10 +1636,10 @@ def create_init_azure_arguments(azure_init_subparser):
     required_init_group.add_argument(
         '-po', required=True, dest='templates_policy',
         help='The name of an existing security policy '
-             'intended to be installed on the gateways.')
+             'intended to be installed on the gateways')
     required_init_group.add_argument(
         '-cn', required=True, dest='controllers_name',
-        help='The name of the cloud environment controller.')
+        help='The name of the cloud environment controller')
     required_init_group.add_argument(
         '-sb', required=True,
         dest='controllers_subscription',
@@ -1699,16 +1698,16 @@ def create_init_aws_arguments(aws_init_subparser):
 
     required_init_group.add_argument(
         '-mn', required=True, dest='management_name',
-        help='The name of the management server.')
+        help='The name of the management server')
 
     required_init_group.add_argument(
         '-tn', required=True, dest='templates_name',
-        help='The name of a gateway configuration template.')
+        help='The name of a gateway configuration template')
     required_init_group.add_argument(
         '-otp', type=validate_SIC,
         required=True, dest='templates_one-time-password',
         help='A random string consisting of at least '
-             '%s alphanumeric characters.' % repr(MIN_SIC_LENGTH))
+             '%s alphanumeric characters' % repr(MIN_SIC_LENGTH))
     required_init_group.add_argument(
         '-v', required=True,
         dest='templates_version', choices=AVAILABLE_VERSIONS,
@@ -1716,10 +1715,10 @@ def create_init_aws_arguments(aws_init_subparser):
     required_init_group.add_argument(
         '-po', required=True, dest='templates_policy',
         help='The name of an existing security policy '
-             'intended to be installed on the gateways.')
+             'intended to be installed on the gateways')
     required_init_group.add_argument(
         '-cn', required=True, dest='controllers_name',
-        help='The name of the cloud environment controller.')
+        help='The name of the cloud environment controller')
     required_init_group.add_argument(
         '-r',
         required=True, dest='controllers_regions',
@@ -1811,7 +1810,7 @@ def build_parsers(main_parser, conf):
         'template',
         help='add a gateway configuration template. When a new gateway '
              'instance is detected, the template\'s name is used to '
-             'determines the eventual gateway configuration.',
+             'determines the eventual gateway configuration',
         epilog='Usage examples: \n' + '\n'.join(
             USAGE_EXAMPLES['add_template']),
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1821,7 +1820,7 @@ def build_parsers(main_parser, conf):
         'controller',
         help='Add a controller configuration. '
              'These settings will be used to connect to cloud environments '
-             'such as AWS, Azure, GCP or OpenStack.')
+             'such as AWS, Azure, GCP or OpenStack')
     add_controller_subparser._optionals.title = 'Global arguments'
     subparsers = add_controller_subparser.add_subparsers(
         help='Available controller classes')
@@ -1904,7 +1903,7 @@ def build_parsers(main_parser, conf):
         'Set controllers optional arguments')
     optional_group.add_argument(
         '-nn', dest='controllers_new-name', metavar='new name',
-        help='The new name of the controller. The name must be unique.')
+        help='The new name of the controller. The name must be unique')
     optional_group.add_argument(
         '-d', dest='controllers_domain', metavar='domain',
         help='The name or UID of the management domain if '
@@ -1993,7 +1992,7 @@ def build_parsers(main_parser, conf):
              'may be used by gateways that belong to this controller. '
              'This is useful in MDS environments, where controllers work '
              'with different domains and it is necessary to restrict a gateway'
-             'to only use templates that were intended for its domain. ')
+             'to only use templates that were intended for its domain')
 
     delete_aws_parser = subparsers.add_parser(
         'AWS', help='AWS controller', parents=[common_parser],
@@ -2044,10 +2043,10 @@ def load_configuration():
         if prompt('Failed to read configuration file: %s. '
                   'Would you like to delete it?' % CONFPATH):
             os.remove(CONFPATH)
-            sys.exit(2)
         else:
-            raise Exception('Failed to read configuration file: %s\n' %
-                            CONFPATH)
+            sys.stderr.write('Failed to read configuration file: %s\n' %
+                             CONFPATH)
+        sys.exit(2)
 
     return conf
 
