@@ -24,14 +24,6 @@ import subprocess
 import shutil
 import sys
 
-MANDATORY_KEYS = {
-    'management': ['name', 'host'],
-    'templates': ['one-time-password', 'version', 'policy'],
-    'AWS': ['class', 'regions'],
-    'Azure': ['class', 'subscription'],
-    'GCP': ['class', 'project', 'credentials']
-}
-
 AZURE_ENVIRONMENTS = ['AzureCloud',
                       'AzureChinaCloud',
                       'AzureGermanCloud',
@@ -56,16 +48,6 @@ AWS_REGIONS = ['us-east-2',
                'cn-north-1',
                'us-gov-west-1']
 
-# Auxiliary args to ignore when inserting in to configuration
-AUXILIARY_ARGUMENTS = ['mode',
-                       'branch',
-                       'force',
-                       'templates_name',
-                       'controllers_name',
-                       'templates_new-name',
-                       'templates_new-key',
-                       'controllers_new-name']
-
 MIN_SIC_LENGTH = 8
 
 USAGE_EXAMPLES = {
@@ -73,27 +55,28 @@ USAGE_EXAMPLES = {
                  '-tn <TEMPLATE-NAME> -otp <SIC-KEY> -v {R77.30,R80.10} '
                  '-po <POLICY-NAME> -cn <CONTROLLER-NAME> '
                  '-r eu-west-1,us-east-1,eu-central-1 '
-                 'file <FILE-PATH>',
+                 '-fi <FILE-PATH>',
                  'init AWS -mn <MANAGEMENT-NAME> '
                  '-tn <TEMPLATE-NAME> -otp <SIC-KEY> -v {R77.30,R80.10} '
                  '-po <POLICY-NAME> -cn <CONTROLLER-NAME> '
                  '-r eu-west-1,us-east-1,eu-central-1 '
-                 'explicit -ak <ACCESS-KEY> -sk <SECRET-KEY>',
+                 '-ak <ACCESS-KEY> -sk <SECRET-KEY> -sr <STS-ROLE> -se '
+                 '<STS-EXTERNAL-ID>',
                  'init AWS -mn <MANAGEMENT-NAME> '
                  '-tn <TEMPLATE-NAME> -otp <SIC-KEY> -v {R77.30,R80.10} '
                  '-po <POLICY-NAME> -cn <CONTROLLER-NAME> '
-                 '-r eu-west-1,us-east-1,eu-central-1 IAM'
+                 '-r eu-west-1,us-east-1,eu-central-1 -iam'
                  ],
     'init_azure': ['init Azure -mn <MANAGEMENT-NAME> '
                    '-tn <TEMPLATE-NAME> -otp <SIC-KEY> -v {R77.30,R80.10} '
                    '-po <POLICY-NAME> -cn <CONTROLLER-NAME> '
                    '-sb <SUBSCRIPTION> '
-                   'sp -at <TENANT> -aci <CLIENT-ID> -acs <CLIENT-SECRET>',
+                   '-at <TENANT> -aci <CLIENT-ID> -acs <CLIENT-SECRET>',
                    'init Azure -mn <MANAGEMENT-NAME> '
                    '-tn <TEMPLATE-NAME> -otp <SIC-KEY> -v {R77.30,R80.10} '
                    '-po <POLICY-NAME> -cn <CONTROLLER-NAME> '
                    '-sb <SUBSCRIPTION> '
-                   'user -au <USERNAME> -ap <PASSWORD>'
+                   '-au <USERNAME> -ap <PASSWORD>'
                    ],
     'init_GCP': [],
     'show': ['show all',
@@ -106,18 +89,18 @@ USAGE_EXAMPLES = {
                      'add template -n <TEMPLATE-NAME> '
                      '-otp <SIC-KEY> -v {R77.30,R80.10} -po <POLICY-NAME> '
                      '[-hi true] [-ia true] [-appi true]'],
-    'add_controller_AWS': ['add controller AWS '
-                           '-n <NAME> '
+    'add_controller_AWS': ['add controller AWS -n <NAME> '
                            '-r eu-west-1,us-east-1,eu-central-1 '
                            'file <FILE-PATH>',
-                           'add controller AWS '
-                           '-n <NAME> '
+                           'add controller AWS -n <NAME> '
                            '-r eu-west-1,eu-central-1 '
                            'explicit -ak <ACCESS-KEY> '
                            '-sk <SECRET-KEY>',
                            'add controller AWS '
-                           '-n <NAME> '
-                           '-r eu-west-1 IAM'
+                           '-n <NAME> -r eu-west-1 IAM -sn '
+                           '<SUB-ACCOUNT-NAME> -sak '
+                           '<SUB-ACCOUNT-ACCESS-KEY> -ssk '
+                           '<SUB-ACCOUNT-SECRET-KEY>'
                            ],
     'add_controller_Azure': ['add controller '
                              'Azure -n <NAME> '
@@ -155,13 +138,13 @@ USAGE_EXAMPLES = {
     'set_controller_AWS': ['set controller AWS '
                            '-n <NAME> [-nn <NEW-NAME>]',
                            'set controller AWS '
-                           '-n <NAME> [-cf <FILE-PATH> | -iam]'],
+                           '-n <NAME> [-fi <FILE-PATH> | -iam]'],
     'set_controller_Azure': ['set controller Azure '
                              '-n <NAME> [-nn <NEW-NAME>] '
                              '[-au <USERNAME>] '
                              '[-ap <PASSWORD>]',
                              'set controller Azure '
-                             '-n <NAME> [-d <DOMAIN>]'
+                             '-n <NAME> [-cd <DOMAIN>]'
                              ],
     'set_controller_GCP': ['set controller GCP -n <NAME> '
                            '[-nn <NEW-NAME>] '
@@ -180,12 +163,12 @@ USAGE_EXAMPLES = {
     'delete_template': [
         'delete template -n <NAME>',
         'delete template -n <NAME> [-pr] [-cp]'
-        ],
+    ],
     'delete_controller_AWS': [
         'delete controller AWS -n <NAME> ',
         'delete controller AWS '
-        '-n <NAME> [-d] [-cf]'
-        ],
+        '-n <NAME> [-cd] [-ct]'
+    ],
     'delete_controller_Azure': ['delete controller Azure '
                                 '-n <NAME> ',
                                 'delete controller Azure '
@@ -194,22 +177,17 @@ USAGE_EXAMPLES = {
     'delete_controller_GCP': [
         'delete controller GCP -n <NAME> ',
         'delete controller GCP '
-        '-n <NAME> [-t] [-cr]'
-        ],
+        '-n <NAME> [-ct] [-cr]'
+    ],
     'delete_controller_OpenStack': [
         'delete controller OpenStack '
         '-n <NAME> ',
         'delete controller OpenStack '
-        '-n <NAME> [-d] [-sc]'
-        ],
+        '-n <NAME> [-cd] [-sc]'
+    ],
 }
 
 CONFPATH = os.environ['FWDIR'] + '/conf/autoprovision.json'
-
-
-def my_error(self, message):
-    self.print_help(sys.stderr)
-    self.exit(2, ('\n%s: error: %s\n') % (self.prog, message))
 
 
 def my_check_value(self, action, value):
@@ -222,14 +200,935 @@ def my_check_value(self, action, value):
         tup = value, ', '.join(map(str, action.choices))
         if not action.choices:
             msg = (
-                'Invalid choice: no values to set or delete, please add first')
+                'invalid choice: no values to set or delete, please add first')
         else:
-            msg = ('Invalid choice: %r (choose from %s)') % tup
+            msg = ('invalid choice: %r (choose from %s)') % tup
         raise argparse.ArgumentError(action, msg)
 
 
 argparse.ArgumentParser._check_value = my_check_value
-argparse.ArgumentParser.error = my_error
+
+REQUIRED_GROUP, OPTIONAL_GROUP = 'required arguments', 'optional group'
+
+SHOW, INIT, ADD, SET, DELETE = 'show', 'init', 'add', 'set', 'delete'
+
+DELAY = 'delay'
+MANAGEMENT = 'management'
+TEMPLATE = 'template'
+CONTROLLER = 'controller'
+TEMPLATES = 'templates'
+CONTROLLERS = 'controllers'
+
+AWS, AZURE, GCP = 'AWS', 'Azure', 'GCP'
+
+TEMPLATE_NAME = 'template name'
+CONTROLLER_NAME = 'controller name'
+SUBCREDENTIALS_NAME = 'sub-credentials name'
+TEMPLATE_NEW_NAME = 'template new name'
+CONTROLLER_NEW_NAME = 'controller new name'
+NEW_KEY = 'new key'
+SUBCREDS = 'sub-creds'
+
+KEYS_TO_UPDATE_WITH_USER_INPUT = (TEMPLATE_NAME, CONTROLLER_NAME,
+                                  SUBCREDENTIALS_NAME, NEW_KEY)
+NON_CONFIG_KEYS = (TEMPLATE_NAME, CONTROLLER_NAME, SUBCREDENTIALS_NAME,
+                   'force', 'mode', 'branch')
+MANDATORY_KEYS = {
+    MANAGEMENT: ['name', 'host'],
+    TEMPLATES: ['one-time-password', 'version', 'policy'],
+    AWS: ['class', 'regions'],
+    AZURE: ['class', 'subscription'],
+    GCP: ['class', 'project', 'credentials']
+}
+AWS_SUBACCOUNT_ARGS = (SUBCREDENTIALS_NAME,
+                       'AWS sub-credentials access key',
+                       'AWS sub-credentials secret key',
+                       'AWS sub-credentials file path',
+                       'AWS sub-credentials role',
+                       'AWS sub-credentials STS external id')
+
+
+def get_templates(conf):
+    """Return an array of names of existing templates."""
+    try:
+        return conf['templates'].keys()
+    except KeyError:
+        return []
+
+
+def get_controllers(conf, clazz):
+    """Return an array of names of existing 'clazz' controllers."""
+    try:
+        lst = [c for c in conf[CONTROLLERS]
+               if conf[CONTROLLERS][c]['class'] == clazz]
+        return lst
+    except KeyError:
+        return []
+
+
+def create_parser_dict(conf):
+    """
+    Structure of dictionary:
+    {parser_name: [positional argument, mandatory arguments, optional
+    arguments, help, epilog, defaults]
+
+    Override default argument's kwargs by specifying a tuple (argument name,
+    kwargs) instead of just the name
+    """
+
+    parsers = {
+        SHOW: [SHOW, [], ['branch'],
+               'show all or specific configuration settings',
+               'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['show']), None],
+        INIT: [INIT, [], [],
+               'initialize auto-provision settings', None, None],
+        ADD: [ADD, [], [], 'add a template or a controller', None, None],
+        SET: [SET, [], [],
+              'set configurations of a management, a template or a controller',
+              None, None],
+        DELETE: [DELETE, [], [],
+                 'delete configurations of a management, a template or a '
+                 'controller', None, None
+                 ],
+        'init_aws': [
+            AWS,
+            ['Management name', TEMPLATE_NAME, 'one time password', 'version',
+             'policy', CONTROLLER_NAME, 'regions'],
+            ['AWS access key', 'AWS secret key', 'AWS role',
+             'AWS credentials file path', 'STS role', 'STS external id'],
+            'initialize autoprovision settings for AWS',
+            'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['init_aws']),
+            {'delay': 30, 'class': 'AWS', 'host': 'localhost'}],
+        'init_azure': [
+            AZURE, ['Management name', TEMPLATE_NAME, 'one time password',
+                    'version', 'policy', CONTROLLER_NAME, 'subscription'],
+            ['Service Principal credentials tenant',
+             'Service Principal credentials client id',
+             'Service Principal credentials client secret', 'Azure username',
+             'Azure password'],
+            'initialize autoprovision settings for Azure',
+            'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['init_azure']),
+            {'delay': 30, 'class': 'Azure', 'host':
+                'localhost'}
+        ],
+        'init_gcp': [GCP, [], [],
+                     'support for GCP will be added in the future',
+                     'usage examples: \n' + '\n'.join(USAGE_EXAMPLES[
+                                                      'init_GCP']), None],
+        'add_template': [
+            TEMPLATE, [TEMPLATE_NAME],
+            ['one time password', 'version', 'policy', 'custom parameters',
+             'prototype', 'specific network', 'generation', 'proxy ports',
+             'HTTPS Inspection', 'Identity Awareness', 'Application Control',
+             'Intrusion Prevention', 'IPS Profile', 'URL Filtering',
+             'Anti-Bot',
+             'Anti-Virus', 'restrictive policy'],
+            'add a gateway configuration template. When a new gateway '
+            'instance is detected, the template\'s name is used to '
+            'determines the eventual gateway configuration',
+            'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['add_template']),
+            None
+        ],
+        'add_controller': [
+            CONTROLLER, [], [],
+            'add a controller configuration. These settings will be used to '
+            'connect to cloud environments such as AWS, Azure or GCP', None,
+            None
+        ],
+        'add_controller_aws': [
+            AWS, [CONTROLLER_NAME, 'regions'],
+            ['controller templates', 'controller domain', 'AWS access key',
+             'AWS secret key', 'AWS role', 'AWS credentials file path',
+             'STS role', 'STS external id', SUBCREDENTIALS_NAME,
+             'AWS sub-credentials access key',
+             'AWS sub-credentials secret key',
+             'AWS sub-credentials file path', 'AWS sub-credentials role',
+             'AWS sub-credentials STS external id'],
+            'add AWS Controller',
+            'usage examples: \n' + '\n'.join(
+                USAGE_EXAMPLES['add_controller_AWS']),
+            {'class': 'AWS'}
+        ],
+        'add_controller_azure': [
+            AZURE, [CONTROLLER_NAME, 'subscription'],
+            ['controller templates', 'controller domain', 'environment',
+             'Service Principal credentials tenant',
+             'Service Principal credentials client id',
+             'Service Principal credentials client secret',
+             'Azure username', 'Azure password'], 'add Azure controller',
+            'usage examples: \n' + '\n'.join(USAGE_EXAMPLES[
+                                             'add_controller_Azure']),
+            {'class': 'Azure'}
+        ],
+        'add_controller_gcp': [
+            GCP, [CONTROLLER_NAME, 'GCP project', 'GCP credentials'],
+            ['controller templates', 'controller domain'],
+            'add GCP Controller',
+            'usage examples: \n' + '\n'.join(
+                USAGE_EXAMPLES['add_controller_GCP']),
+            {'class': 'GCP'}
+        ],
+        'set_delay': [
+            DELAY, [], [DELAY], 'set delay',
+            'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['set_delay']), None
+        ],
+        'set_management': [
+            MANAGEMENT, [],
+            ['Management name', 'host', 'domain', 'fingerprint',
+             'Management password', 'Management password 64bit', 'proxy',
+             'custom script'], 'set management arguments',
+            'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['set_management']),
+            None
+        ],
+        'set_template': [
+            TEMPLATE, [(TEMPLATE_NAME, {'choices': get_templates(conf),
+                                        'dest': TEMPLATE_NAME})],
+            [TEMPLATE_NEW_NAME, 'one time password', 'version', 'policy',
+             'custom parameters', 'prototype', 'specific network',
+             'generation',
+             'proxy ports', 'HTTPS Inspection', 'Identity Awareness',
+             'Application Control', 'Intrusion Prevention', 'IPS Profile',
+             'URL Filtering', 'Anti-Bot', 'Anti-Virus', 'restrictive policy',
+             NEW_KEY],
+            'set template arguments', 'usage examples: \n' + '\n'.join(
+                USAGE_EXAMPLES['set_template']), None
+        ],
+        'set_controller': [
+            CONTROLLER, [], [],
+            'set an existing controller configuration. These settings will be '
+            'used to connect to cloud environments such as AWS, Azure or GCP',
+            None, None
+        ],
+        'set_controller_aws': [
+            AWS, [(CONTROLLER_NAME, {'choices': get_controllers(conf, AWS),
+                                     'dest': CONTROLLER_NAME})],
+            [CONTROLLER_NEW_NAME, 'controller templates', 'controller domain',
+             'regions', 'AWS access key', 'AWS secret key', 'AWS role',
+             'AWS credentials file path', 'STS role', 'STS external id',
+             SUBCREDENTIALS_NAME, 'AWS sub-credentials access key',
+             'AWS sub-credentials secret key',
+             'AWS sub-credentials file path', 'AWS sub-credentials role',
+             'AWS sub-credentials STS external id'],
+            'set AWS controller values',
+            'usage examples: \n' + '\n'.join(
+                USAGE_EXAMPLES['set_controller_AWS']),
+            None
+        ],
+        'set_controller_azure': [
+            AZURE,
+            [(CONTROLLER_NAME, {'choices': get_controllers(conf, AZURE),
+                                'dest': CONTROLLER_NAME})],
+            [CONTROLLER_NEW_NAME, 'controller templates',
+             'controller domain', 'subscription', 'environment',
+             'Service Principal credentials tenant',
+             'Service Principal credentials client id',
+             'Service Principal credentials client secret',
+             'Azure username', 'Azure password'],
+            'set Azure controller values',
+            'usage examples: \n' + '\n'.join(USAGE_EXAMPLES[
+                                             'set_controller_Azure']),
+            None
+        ],
+        'set_controller_gcp': [
+            GCP, [(CONTROLLER_NAME, {'choices': get_controllers(conf, GCP),
+                                     'dest': CONTROLLER_NAME})],
+            [CONTROLLER_NEW_NAME, 'controller templates', 'controller domain',
+             'GCP project', 'GCP credentials'], 'set GCP controller values',
+            'usage examples: \n' + '\n'.join(
+                USAGE_EXAMPLES['set_controller_GCP']),
+            None
+        ],
+        'delete_management': [
+            MANAGEMENT, [],
+            [('Management name', {'action': 'store_true'}),
+             ('host', {'action': 'store_true'}),
+             ('domain', {'action': 'store_true'}),
+             ('fingerprint', {'action': 'store_true'}),
+             ('Management password', {'action': 'store_true'}),
+             ('Management password 64bit', {'action': 'store_true'}),
+             ('proxy', {'action': 'store_true'}),
+             ('custom script', {'action': 'store_true'})],
+            'delete management arguments',
+            'usage examples: \n' + '\n'.join(
+                USAGE_EXAMPLES['delete_management']),
+            None
+        ],
+        'delete_template': [
+            TEMPLATE, [(TEMPLATE_NAME, {'choices': get_templates(conf)})],
+            [('one time password', {'action': 'store_true'}),
+             ('version', {'action': 'store_true'}),
+             ('policy', {'action': 'store_true'}),
+             ('custom parameters', {'action': 'store_true'}),
+             ('prototype', {'action': 'store_true'}),
+             ('specific network', {'action': 'store_true'}),
+             ('generation', {'action': 'store_true'}),
+             ('proxy ports', {'action': 'store_true'}),
+             ('HTTPS Inspection', {'action': 'store_true'}),
+             ('Identity Awareness', {'action': 'store_true'}),
+             ('Application Control', {'action': 'store_true'}),
+             ('Intrusion Prevention', {'action': 'store_true'}),
+             ('IPS Profile', {'action': 'store_true'}),
+             ('URL Filtering', {'action': 'store_true'}),
+             ('Anti-Bot', {'action': 'store_true'}),
+             ('Anti-Virus', {'action': 'store_true'}),
+             ('restrictive policy', {'action': 'store_true'}),
+             (
+                 NEW_KEY,
+                 {'nargs': 1, 'help': 'optional attributes of a gateway. '
+                                      'Usage -nk [KEY]'})],
+            'delete a template or its values',
+            'usage examples: \n' + '\n'.join(
+                USAGE_EXAMPLES['delete_template']),
+            None
+        ],
+        'delete_controller': [
+            CONTROLLER, [], [],
+            'delete a controller or existing controller values. These '
+            'settings are used to connect to cloud environments such as AWS, '
+            'Azure or GCP', None, None
+        ],
+        'delete_controller_aws': [
+            AWS, [(CONTROLLER_NAME, {'choices': get_controllers(conf, AWS),
+                                     'dest': CONTROLLER_NAME})],
+            [('controller templates', {'action': 'store_true'}),
+             ('controller domain', {'action': 'store_true'}),
+             ('regions', {'action': 'store_true'}),
+             ('AWS access key', {'action': 'store_true'}),
+             ('AWS secret key', {'action': 'store_true'}),
+             ('AWS role', {'action': 'store_true'}),
+             ('AWS credentials file path', {'action': 'store_true'}),
+             ('STS role', {'action': 'store_true'}),
+             ('STS external id', {'action': 'store_true'}),
+             SUBCREDENTIALS_NAME,
+             ('AWS sub-credentials access key', {'action': 'store_true'}),
+             ('AWS sub-credentials secret key', {'action': 'store_true'}),
+             ('AWS sub-credentials file path', {'action': 'store_true'}),
+             ('AWS sub-credentials role', {'action': 'store_true'}),
+             ('AWS sub-credentials STS external id', {'action': 'store_true'})
+             ], 'delete an AWS controller or its values',
+            'usage examples: \n' + '\n'.join(USAGE_EXAMPLES[
+                                             'delete_controller_AWS']),
+            None
+        ],
+        'delete_controller_azure': [
+            AZURE, [(CONTROLLER_NAME,
+                     {'choices': get_controllers(conf, AZURE)})],
+            [('controller templates', {'action': 'store_true'}),
+             ('controller domain', {'action': 'store_true'}),
+             ('subscription', {'action': 'store_true'}),
+             ('environment', {'action': 'store_true'}),
+             ('Service Principal credentials tenant',
+              {'action': 'store_true'}),
+             ('Service Principal credentials client id',
+              {'action': 'store_true'}),
+             ('Service Principal credentials client secret',
+              {'action': 'store_true'}),
+             ('Azure username', {'action': 'store_true'}),
+             ('Azure password', {'action': 'store_true'})],
+            'delete an Azure controller or its values',
+            'usage examples: \n' + '\n'.join(USAGE_EXAMPLES[
+                                             'delete_controller_Azure']),
+            None
+        ],
+        'delete_controller_gcp': [
+            GCP, [(CONTROLLER_NAME, {'choices': get_controllers(conf, GCP)})],
+            [('controller templates', {'action': 'store_true'}),
+             ('controller domain', {'action': 'store_true'}),
+             ('GCP project', {'action': 'store_true'}),
+             ('GCP credentials', {'action': 'store_true'})],
+            'delete a GCP controller or its values',
+            'usage examples: \n' + '\n'.join(USAGE_EXAMPLES[
+                                             'delete_controller_GCP']),
+            None
+        ]
+    }
+    return parsers
+
+
+def validate_SIC(value):
+    """Validates length and char restrictions of the SIC value."""
+
+    if len(value) < MIN_SIC_LENGTH:
+        raise argparse.ArgumentTypeError(
+            'one time password should consist of at least %s characters'
+            % repr(MIN_SIC_LENGTH))
+    if not value.isalnum():
+        raise argparse.ArgumentTypeError(
+            'one time password should contain only alphanumeric characters')
+    return value
+
+
+def validate_guid_uuid(value):
+    pattern = re.compile(
+        '^[0-9A-F]{8}[-]?([0-9A-F]{4}[-]?){3}[0-9A-F]{12}$',
+        re.IGNORECASE)
+
+    if not pattern.match(value):
+        raise argparse.ArgumentTypeError('value %s is not a GUID' % value)
+
+    return value
+
+
+def validate_ports(value):
+    ports = value.split(',')
+    for port in ports:
+        if not port.isdigit():
+            raise argparse.ArgumentTypeError('port %s is invalid' % port)
+    return ports
+
+
+def validate_bool(value):
+    if value.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif value.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('boolean value expected')
+
+
+def validate_filepath(value):
+    if os.path.exists(value):
+        return value
+
+    raise argparse.ArgumentTypeError('file %s does not exist' % value)
+
+
+def validate_iam_or_filepath(value):
+    if value == 'IAM':
+        return value
+
+    return validate_filepath(value)
+
+
+def validate_hex(value):
+    try:
+        int(value, 16)
+    except ValueError:
+        raise argparse.ArgumentTypeError('value %s is not hexadecimal' %
+                                         value)
+    return value
+
+
+# Structure of dictionary:
+# {argument_name(unique): [flag (must be unique within each parser), path in
+#  the configuration file, help, constraints (dict of type= or choices=)
+
+ARGUMENTS = {
+    'branch': ['branch', [], 'the branch of the configuration to show',
+               {'choices': ['all', 'management', 'templates', 'controllers']}],
+    DELAY: [DELAY, [DELAY],
+            'time to wait in seconds after each poll cycle',
+            {'type': int}],
+    'Management name': [
+        '-mn',
+        [MANAGEMENT, 'name'],
+        'the name of the management server', None
+    ],
+    'host': [
+        '-mh', [MANAGEMENT, 'host'],
+        '"IP-ADDRESS-OR-HOST-NAME[:PORT]" - of the management server', None
+    ],
+    'domain': [
+        '-d', [MANAGEMENT, 'domain'],
+        'the name or UID of the management domain if applicable', None
+    ],
+    'fingerprint': [
+        '-fp', [MANAGEMENT, 'fingerprint'],
+        '"sha256:FINGERPRINT-IN-HEX" - the SHA256 fingerprint '
+        'of the management certificate. '
+        'disable fingerprint checking by providing an empty string "" '
+        '(insecure but reasonable if running locally '
+        'on the management server). '
+        'To retrieve the fingerprint, '
+        'run the following command on the management server (in bash): '
+        'cpopenssl s_client -connect 127.0.0.1:443 2>/dev/null '
+        '</dev/null | cpopenssl x509 -outform DER '
+        r'| sha256sum | awk "{printf "sha256:%%s\n", $1}"',
+        {'type': validate_hex}
+    ],
+    'Management password': [
+        '-pass', [MANAGEMENT, 'password'],
+        'the password associated with the user', None
+    ],
+    'Management password 64bit': [
+        '-pass64', [MANAGEMENT, 'b64password'],
+        'the base64 encoded password associated with the user', None
+    ],
+    'proxy': [
+        '-pr', [MANAGEMENT, 'proxy'],
+        '"http://PROXY-HOST-NAME-OR-ADDRESS:PROXY-PORT" '
+        '- an optional value for the https_proxy environment variable',
+        None
+    ],
+    'custom script': [
+        '-cs', [MANAGEMENT, 'custom-script'],
+        '"PATH-TO-CUSTOMIZATION-SCRIPT" - '
+        'an optional script to run just after the policy is installed '
+        'when a gateway is provisioned, and at the beginning '
+        'of the deprovisioning process. '
+        'When a gateway is added the script will be run with '
+        'the keyword "add", '
+        'with the gateway name and the custom-parameters '
+        'attribute in the template. '
+        'When a gateway is deleted the script will run with the keyword '
+        '"delete" and the gateway name. '
+        'In the case of a configuration update '
+        '(for example, a load balancing configuration change '
+        'or a template/generation change), '
+        'the custom script will be run with "delete" '
+        'and later again with "add" and the custom parameters', None
+    ],
+    TEMPLATE_NAME: [
+        '-tn', [TEMPLATES],
+        'the name of the template. The name must be unique', None
+    ],
+    TEMPLATE_NEW_NAME: [
+        '-nn', [],
+        'the new name of the template. The name must be unique', None
+    ],
+    'one time password': [
+        '-otp', [TEMPLATES, TEMPLATE_NAME, 'one-time-password'],
+        'a random string consisting of at least %s alphanumeric characters'
+        % repr(MIN_SIC_LENGTH), {'type': validate_SIC}
+    ],
+    'version': [
+        '-v', [TEMPLATES, TEMPLATE_NAME, 'version'],
+        'the gateway version (e.g. R77.30)',
+        {'choices': AVAILABLE_VERSIONS}
+    ],
+    'policy': [
+        '-po', [TEMPLATES, TEMPLATE_NAME, 'policy'],
+        'the name of an existing security policy intended to be installed on '
+        'the gateways', None
+    ],
+    'custom parameters': [
+        '-cp', [TEMPLATES, TEMPLATE_NAME, 'custom-parameters'],
+        'an optional string with space separated parameters or '
+        'a list of string parameters to specify when a gateway is added '
+        'and a custom script is specified in the management section', None
+    ],
+    'prototype': ['-pr', [TEMPLATES, TEMPLATE_NAME, 'proto'],
+                  'a prototype for this template', None
+                  ],
+    'specific network': [
+        '-sn', [TEMPLATES, TEMPLATE_NAME, 'specific-network'],
+        'an optional name of a pre-existing network object group '
+        'that defines the topology settings for the interfaces marked '
+        'with "specific" topology. This attribute is mandatory '
+        'if any of the scanned instances has an interface '
+        'with a topology set to "specific". '
+        'Typically this should point to the name of a '
+        '"Group with Exclusions" object, '
+        'which contains a network group holding the VPC '
+        'address range and excludes a network group which contains '
+        'the "external" networks of the VPC, that is,'
+        'networks that are connected to the internet', None
+    ],
+    'generation': [
+        '-g', [TEMPLATES, TEMPLATE_NAME, 'generation'],
+        'an optional string or number that can be used to force '
+        're-applying a template to an already existing gateway. '
+        'If generation is specified and its value is different '
+        'than the previous value, then the template settings '
+        'will be reapplied to the gateway', None
+    ],
+    'proxy ports': [
+        '-pp', [TEMPLATES, TEMPLATE_NAME, 'proxy-ports'],
+        'an optional comma-separated list of list of TCP ports '
+        'on which to enable the proxy on gateway feature. e.g. "8080,8443"',
+        {'type': validate_ports}
+    ],
+    'HTTPS Inspection': [
+        '-hi', [TEMPLATES, TEMPLATE_NAME, 'https-inspection'],
+        'an optional boolean attribute indicating '
+        'whether to enable the HTTPS Inspection blade on the gateway',
+        {'type': validate_bool}
+    ],
+    'Identity Awareness': [
+        '-ia', [TEMPLATES, TEMPLATE_NAME, 'identity-awareness'],
+        'an optional boolean attribute indicating '
+        'whether to enable the Identity Awareness blade on the gateway',
+        {'type': validate_bool}
+    ],
+    'Application Control': [
+        '-appi', [TEMPLATES, TEMPLATE_NAME, 'application-control'],
+        'an optional boolean attribute indicating whether to enable the '
+        'Application Control blade on the gateway',
+        {'type': validate_bool}
+    ],
+    'Intrusion Prevention': [
+        '-ips', [TEMPLATES, TEMPLATE_NAME, 'ips'],
+        'an optional boolean attribute indicating whether to enable the '
+        'Intrusion Prevention System blade on the gateway',
+        {'type': validate_bool}
+    ],
+    'IPS Profile': [
+        '-ipf', [TEMPLATES, TEMPLATE_NAME, 'ips-profile'],
+        'an optional IPS profile name to associate with a pre-R80 gateway',
+        None
+    ],
+    'URL Filtering': [
+        '-uf', [TEMPLATES, TEMPLATE_NAME, 'url-filtering'],
+        'an optional boolean attribute indicating whether to enable the URL '
+        'Filtering Awareness blade on the gateway',
+        {'type': validate_bool}
+    ],
+    'Anti-Bot': [
+        '-ab', [TEMPLATES, TEMPLATE_NAME, 'anti-bot'],
+        'an optional boolean attribute indicating whether to enable the '
+        'Anti-Bot blade on the gateway', {'type': validate_bool}
+    ],
+    'Anti-Virus': [
+        '-av', [TEMPLATES, TEMPLATE_NAME, 'anti-virus'],
+        'an optional boolean attribute indicating whether to enable the '
+        'Anti-Virus blade on the gateway', {'type': validate_bool}
+    ],
+    'restrictive policy': [
+        '-rp', [TEMPLATES, TEMPLATE_NAME, 'restrictive-policy'],
+        'an optional name of a pre-existing policy package to be '
+        'installed as the first policy on a new provisioned gateway. '
+        '(Created to avoid a limitation in which Access Policy and '
+        'Threat Prevention Policy cannot be installed at the first '
+        'time together). In the case where no attribute is provided, '
+        'a default policy will be used (the default policy has only '
+        'the implied rules and a drop-all cleanup rule). '
+        'The value null can be used to explicitly avoid any such policy',
+        None
+    ],
+    NEW_KEY: [
+        '-nk', [TEMPLATES, TEMPLATE_NAME, NEW_KEY],
+        'an optional attributes of a gateway. Usage -nk [KEY] [VALUE]',
+        {'nargs': 2}
+    ],
+    CONTROLLER_NAME: [
+        '-cn', [CONTROLLERS],
+        'the name of the cloud environment controller. The name must be '
+        'unique', None
+    ],
+    CONTROLLER_NEW_NAME: [
+        '-nn', [], 'the new name of the controller. The name must be '
+                   'unique', None
+    ],
+    'class': [
+        '-cc', [CONTROLLERS, CONTROLLER_NAME, 'class'],
+        'either "AWS", "Azure", "GCP"', None
+    ],
+    'controller domain': [
+        '-cd', [CONTROLLERS, CONTROLLER_NAME, 'domain'],
+        'the name or UID of the management domain if applicable (optional). '
+        'In MDS, instances that are discovered by this controller, '
+        'will be defined in this domain. If not specified, '
+        'the domain specified in the management object '
+        '(in the configuration), will be used. This attribute should not be '
+        'specified if the management server is not an MDS', None
+    ],
+    'controller templates': [
+        '-ct', [CONTROLLERS, CONTROLLER_NAME, 'templates'],
+        'an optional list of of templates, which are allowed for instances '
+        'that are discovered by this controller. If this attribute is '
+        'missing or its value is an empty list, the meaning is that any '
+        'template may be used by gateways that belong to this controller. '
+        'This is useful in MDS environments, where controllers work with '
+        'different domains and it is necessary to restrict a gateway to only '
+        'use templates that were intended for its domain. e.g. '
+        'TEMPLATE1-NAME TEMPLATE2-NAME', {'nargs': '+'}
+    ],
+    'regions': ['-r', [CONTROLLERS, CONTROLLER_NAME, 'regions'],
+                'a comma-separated list of AWS regions, in which the '
+                'gateways are being deployed. For example: eu-west-1,'
+                'us-east-1,eu-central-1', None
+                ],
+    'AWS access key': [
+        '-ak', [CONTROLLERS, CONTROLLER_NAME, 'access-key'],
+        'AWS access key', None
+    ],
+    'AWS secret key': ['-sk', [CONTROLLERS, CONTROLLER_NAME, 'secret-key'],
+                       'AWS secret key', None
+                       ],
+    'AWS credentials file path': [
+        '-fi', [CONTROLLERS, CONTROLLER_NAME, 'cred-file'],
+        'the path to a text file containing AWS credentials',
+        {'type': validate_filepath}
+    ],
+    'AWS role': ['-iam', [CONTROLLERS, CONTROLLER_NAME, 'cred-file'],
+                 'use this flag to specify whether to use an IAM role profile',
+                 {'action': 'store_const', 'const': 'IAM'}
+                 ],
+    'STS role': ['-sr', [CONTROLLERS, CONTROLLER_NAME, 'sts-role'],
+                 'the STS RoleArn of the role to assume', None
+                 ],
+    'STS external id': [
+        '-se', [CONTROLLERS, CONTROLLER_NAME, 'external-id'],
+        'an optional STS ExternalId to use when assuming the role', None
+    ],
+    SUBCREDENTIALS_NAME: [
+        '-sn', [CONTROLLERS, CONTROLLER_NAME, SUBCREDS],
+        'the name of the sub credentials object. The name must be '
+        'unique', None
+    ],
+    'AWS sub-credentials access key': [
+        '-sak', [CONTROLLERS, CONTROLLER_NAME, SUBCREDS,
+                 SUBCREDENTIALS_NAME, 'access-key'],
+        'AWS access key for the sub-account', None
+    ],
+    'AWS sub-credentials secret key': [
+        '-ssk', [CONTROLLERS, CONTROLLER_NAME, SUBCREDS,
+                 SUBCREDENTIALS_NAME, 'secret-key'],
+        'AWS secret key for the sub-account', None
+    ],
+    'AWS sub-credentials file path': [
+        '-sfi', [CONTROLLERS, CONTROLLER_NAME, SUBCREDS,
+                 SUBCREDENTIALS_NAME, 'cred-file'],
+        'the path to a text file containing the AWS credentials for the '
+        'sub-account', {'type': validate_filepath}
+    ],
+    'AWS sub-credentials role': [
+        '-siam', [CONTROLLERS, CONTROLLER_NAME, SUBCREDS,
+                  SUBCREDENTIALS_NAME, 'cred-file'],
+        'use this flag to specify whether to use an IAM role profile for '
+        'the sub-account', {'action': 'store_const', 'const': 'IAM'}
+    ],
+    'AWS sub-credentials STS role':
+        ['-ssr', [CONTROLLERS, CONTROLLER_NAME, SUBCREDS,
+                  SUBCREDENTIALS_NAME, 'sts-role'],
+         'the STS RoleArn of the role to assume for the sub-account', None],
+    'AWS sub-credentials STS external id': [
+        '-sse', [CONTROLLERS, CONTROLLER_NAME, SUBCREDS,
+                 SUBCREDENTIALS_NAME, 'external-id'],
+        'an optional STS ExternalId to use when assuming the role in this '
+        'sub account', None
+    ],
+    'subscription': [
+        '-sb', [CONTROLLERS, CONTROLLER_NAME, 'subscription'],
+        'the Azure subscription ID', {'type': validate_guid_uuid}
+    ],
+    'environment': [
+        '-en', [CONTROLLERS, CONTROLLER_NAME, 'environment'],
+        'an optional attribute to specify the Azure environment. '
+        'The default is "AzureCloud", but one of the other environments '
+        'like "AzureChinaCloud", "AzureGermanCloud" or "AzureUSGovernment"'
+        ' can be specified instead', {'choices': AZURE_ENVIRONMENTS}
+    ],
+    'Service Principal credentials tenant': [
+        '-at', [CONTROLLERS, CONTROLLER_NAME, 'credentials', 'tenant'],
+        'the Azure Active Directory tenant ID', None
+    ],
+    'Service Principal credentials client id': [
+        '-aci', [CONTROLLERS, CONTROLLER_NAME, 'credentials', 'client_id'],
+        'the application ID with which the service principal is associated',
+        None
+    ],
+    'Service Principal credentials client secret': [
+        '-acs',
+        [CONTROLLERS, CONTROLLER_NAME, 'credentials', 'client_secret'],
+        'the service principal password', None
+    ],
+    'Azure username': [
+        '-au', [CONTROLLERS, CONTROLLER_NAME, 'credentials', 'username'],
+        'the Azure fully qualified user name', None
+    ],
+    'Azure password': [
+        '-ap', [CONTROLLERS, CONTROLLER_NAME, 'credentials', 'password'],
+        'the password for the user', None
+    ],
+    'GCP project': [
+        '-proj', [CONTROLLERS, CONTROLLER_NAME, 'project'],
+        'the GCP project ID in which to scan for VM instances', None
+    ],
+    'GCP credentials': [
+        '-cr', [CONTROLLERS, CONTROLLER_NAME, 'credentials'],
+        'either the path to a text file containing GCP credentials '
+        'or "IAM" for automatic retrieval of the service account '
+        'credentials from the VM instance metadata. Default: "IAM"',
+        {'type': validate_iam_or_filepath, 'default': 'IAM'}
+    ],
+
+}
+
+
+def verify_AWS_credentials(conf, args, creds, sub=False):
+    if sub and getattr(args, SUBCREDENTIALS_NAME, None):
+        name = getattr(args, SUBCREDENTIALS_NAME)
+    else:
+        name = getattr(args, CONTROLLER_NAME)
+
+    explicit = ('AWS access key', 'AWS sub-credentials access key',
+                'AWS secret key', 'AWS sub-credentials secret key')
+    file_or_role = ('AWS credentials file path',
+                    'AWS sub-credentials file path', 'AWS role',
+                    'AWS sub-credentials role')
+
+    # No credentials
+    if not ('cred-file' in creds or 'access-key' in creds):
+        sys.stderr.write(
+            '%s is missing credentials. To set other credentials use set.\n'
+            % name)
+        sys.exit(2)
+
+    # Missing either of access key or secret key (both or neither)
+    if ('access-key' in creds) != ('secret-key' in creds):
+        sys.stderr.write(
+            'please specify both access key and secret key or specify '
+            'different credentials\n')
+        sys.exit(2)
+
+    # Has too many, explicit AND credentials file
+    if 'cred-file' in creds and 'access-key' in creds:
+        if args.force or prompt(
+                'replace existing credentials?'):
+            # Check what type has been inserted in the recent command and
+            # delete the other type
+            if [key for key in explicit if getattr(args, key, None)]:
+                for k in file_or_role:
+                    nested_delete(conf, ARGUMENTS[k][1])
+
+            if [key for key in file_or_role if getattr(args, key, None)]:
+                for k in explicit:
+                    print ARGUMENTS
+                    nested_delete(conf, ARGUMENTS[k][1])
+        else:
+            sys.exit(0)
+
+    if 'sts-external-id' in creds and 'sts-role' not in creds:
+        sys.stderr.write(
+            'please specify an STS role to assume with the STS external ID\n')
+        sys.exit(2)
+
+
+def validate_controller_credentials(conf, args):
+    controller_name = getattr(args, CONTROLLER_NAME, None)
+    credentials_keys = ['access-key', 'secret-key', 'cred-file', 'sts-role',
+                        'sts-external-id']
+    try:
+        controller = conf[CONTROLLERS][controller_name]
+    except KeyError:
+        return
+
+    if controller['class'] == AWS:
+        credentials = dict((k, controller[k]) for k in credentials_keys if k in
+                           controller)
+        verify_AWS_credentials(conf, args, credentials)
+        # verify sub-creds
+        if SUBCREDS in controller:
+            for k, v in controller[SUBCREDS].iteritems():
+                verify_AWS_credentials(conf, args, v, sub=True)
+
+    elif controller['class'] == 'Azure':
+        credentials = controller['credentials']
+        spa = {'tenant', 'grant_type', 'client_id', 'client_secret'}
+        upa = {'username', 'password'}
+
+        is_adding_spa = getattr(args, 'Service Principal credentials tenant',
+                                None)
+        if is_adding_spa:
+            nested_set(controller, ['credentials', 'grant_type'],
+                       'client_credentials')
+
+        current = set(credentials.keys())
+
+        if not current:
+            sys.stderr.write(
+                'controller %s is missing credentials. To change '
+                'credentials use set\n' % controller_name)
+            sys.exit(2)
+
+        if 0 < len(current & spa) < len(spa):
+            sys.stderr.write(
+                'please specify tenant, client ID and client secret or '
+                'specify different credentials\n')
+            sys.exit(2)
+
+        if 0 < len(current & upa) < len(upa):
+            sys.stderr.write('please specify username and password or '
+                             'specify different credentials\n')
+            sys.exit(2)
+
+        if current == spa | upa:
+            if args.force or prompt(
+                    'replace existing credentials?'):
+                if is_adding_spa:
+                    for key in ['Azure username', 'Azure password']:
+                        nested_delete(conf, ARGUMENTS[key][1])
+                else:
+                    for key in ['tenant', 'grant_type', 'client_id',
+                                'client_secret']:
+                        nested_delete(conf, [CONTROLLERS, controller_name,
+                                             'credentials', key])
+            else:
+                sys.exit(0)
+
+    elif controller['class'] == 'GCP':
+        # No dependencies between fields
+        pass
+
+
+def validate_template_dependencies(conf, args):
+    template_name = getattr(args, TEMPLATE_NAME, None)
+
+    try:
+        template = conf[TEMPLATES][template_name]
+    except KeyError:
+        return
+
+    if 'version' in template and template['version'] != 'R77.30':
+        if 'ips-profile' in template and template['ips-profile']:
+            sys.stderr.write(
+                'IPS profile can only be associated with R77.30 gateway\n')
+            sys.exit(2)
+
+
+def validate_management(conf, args):
+    if getattr(args, 'Management password', None):
+        if 'b64password' in conf[MANAGEMENT]:
+            if args.force or prompt(
+                    'replace the base64 encoded password?'):
+                nested_delete(conf, [MANAGEMENT, 'b64password'])
+            else:
+                sys.exit(0)
+    elif getattr(args, 'Management password 64bit', None):
+        if 'password' in conf[MANAGEMENT]:
+            if args.force or prompt(
+                    'replace the password?'):
+                nested_delete(conf, [MANAGEMENT, 'password'])
+            else:
+                sys.exit(0)
+
+    is_local = conf[MANAGEMENT]['host'].split(':')[0] in {'127.0.0.1',
+                                                          'localhost'}
+    if not is_local:
+        not_local_mandatory = {'user', 'password', 'fingerprint'}
+        current = set(conf[MANAGEMENT].keys())
+        if current & not_local_mandatory < not_local_mandatory:
+            sys.stderr.write(
+                'host is not local, please specify username, password and '
+                'fingerprint\n')
+            sys.exit(2)
+
+
+def validate_min_objects(conf):
+    if MANAGEMENT not in conf:
+        sys.stderr.write('management settings are missing\n')
+        sys.exit(2)
+
+    if not set(MANDATORY_KEYS[MANAGEMENT]).issubset(conf[MANAGEMENT]):
+        sys.stderr.write('management is missing mandatory keys\n')
+        sys.exit(2)
+
+    templates = conf[TEMPLATES]
+    if not templates:
+        sys.stderr.write('there should be at least one template\n')
+        sys.exit(2)
+
+    controllers = conf[CONTROLLERS]
+    if not controllers:
+        sys.stderr.write('there should be at least one controller\n')
+        sys.exit(2)
+
+    for controller, values in controllers.iteritems():
+        if not set(MANDATORY_KEYS[values['class']]).issubset(values.keys()):
+            sys.stderr.write(
+                'controller %s is missing mandatory keys\n' % controller)
+            sys.exit(2)
 
 
 def nested_delete(dic, keys):
@@ -244,39 +1143,49 @@ def nested_delete(dic, keys):
     dic.pop(keys[-1], None)
 
 
-def get_branch(args):
-    if args.branch == 'template':
-        return 'templates'
-    elif args.branch == 'controller':
-        return 'controllers'
-    else:
-        return args.branch
+def nested_set(conf, keys, value):
+    """Sets a value in a nested dictionary.
+
+    According to the list of keys leading to the relevant key.
+    """
+
+    for key in keys[:-1]:
+        conf = conf.setdefault(key, {})
+
+    conf[keys[-1]] = value
 
 
-def delete_arguments(conf, args):
-    """Remove either a property or an entire object."""
-    removed_inner_argument = False
-    # Check if any inner arguments were specified and remove
-    for arg in sorted(vars(args)):
-        if arg not in AUXILIARY_ARGUMENTS and getattr(args, arg):
-            path = get_value_path(arg, args)
-            if not nested_get(conf, path):
-                sys.stdout.write('%s does not exist in %s.\n' %
-                                 (path[-1], (path[-2])))
-            elif args.force or prompt('Are you sure you want to delete %s\'s '
-                                      '%s?' % (path[-2], path[-1])):
-                nested_delete(conf, path)
-            removed_inner_argument = True
+def get_subaccounts_names(conf, controller_name):
+    try:
+        lst = conf[CONTROLLERS][controller_name][SUBCREDS].keys()
+        return lst
+    except KeyError:
+        return []
 
-    # Did not remove inner arguments, removing entire branch
-    if not removed_inner_argument:
-        # Get branch to delete (args.branch is either management, template
-        # or controller).
-        # Singular for usability, plural for JSON hierarchy path.
-        path = get_value_path(get_branch(args), args)
-        if args.force or prompt('Are you sure you want to delete %s?' %
-                                path[-1]):
-            nested_delete(conf, path)
+
+def validate_regions(args, input):
+    regions = input.split(',')
+    for region in regions:
+        if region not in AWS_REGIONS:
+            if not (args.force or prompt(
+                    'the region %s is not in the regions list %s. '
+                    'Are you sure?' % (region, AWS_REGIONS))):
+                sys.exit(0)
+    return regions
+
+
+def validate_conf(conf, args):
+    # Validate all
+    validate_min_objects(conf)
+    validate_management(conf, args)
+
+    if getattr(args, TEMPLATE_NAME, None):
+        # Adding or editing a template
+        validate_template_dependencies(conf, args)
+
+    if getattr(args, CONTROLLER_NAME, None):
+        # Adding or editing a controller
+        validate_controller_credentials(conf, args)
 
 
 def nested_get(dic, keys):
@@ -288,285 +1197,120 @@ def nested_get(dic, keys):
     return dic
 
 
-def nested_set(dic, keys, value):
-    """Sets a value in a nested dictionary.
+def delete_arguments(conf, args):
+    """Remove either a property or an entire object."""
+    removed_inner_argument = False
+    # Check if any inner arguments were specified and remove
+    for arg in sorted(vars(args)):
+        args_to_ignore = [x for x in NON_CONFIG_KEYS
+                          if x is not SUBCREDENTIALS_NAME]
+        if arg not in args_to_ignore and getattr(
+                args, arg):
+            path = ARGUMENTS[arg][1]
+            if not nested_get(conf, path):
+                sys.stdout.write('%s does not exist in %s\n' %
+                                 (path[-1], (path[-2])))
+            elif args.force or prompt('are you sure you want to delete %s\'s '
+                                      '%s?' % (path[-2], path[-1])):
+                nested_delete(conf, path)
+            removed_inner_argument = True
 
-    According to the list of keys leading to the relevant key.
-    """
-
-    for key in keys[:-1]:
-        dic = dic.setdefault(key, {})
-
-    dic[keys[-1]] = value
-
-
-def validate_template_dependencies(conf, args):
-    template_name = args.templates_name
-
-    try:
-        template = conf['templates'][template_name]
-    except KeyError:
-        return
-
-    if 'version' in template and template['version'] != 'R77.30':
-        if 'ips-profile' in template and template['ips-profile']:
+    # Did not remove inner arguments, removing entire branch
+    if not removed_inner_argument:
+        # Get branch to delete (args.branch is either management, template
+        # or controller).
+        # Singular for usability, plural for JSON hierarchy path.
+        if args.branch == TEMPLATE:
+            template_name = getattr(args, TEMPLATE_NAME)
+            if args.force or prompt('are you sure you want to delete %s?' %
+                                    template_name):
+                nested_delete(conf, [TEMPLATES, template_name])
+        elif args.branch == CONTROLLER:
+            controller_name = getattr(args, CONTROLLER_NAME)
+            if args.force or prompt('are you sure you want to delete %s?' %
+                                    controller_name):
+                nested_delete(conf, [CONTROLLERS, controller_name])
+        elif args.branch == MANAGEMENT:
             sys.stderr.write(
-                'IPS profile can only be associated with R77.30 gateway\n')
+                'unable to delete management settings\n')
             sys.exit(2)
-
-
-def validate_controller_credentials(conf, args):
-    controller_name = args.controllers_name
-
-    try:
-        controller = conf['controllers'][controller_name]
-    except KeyError:
-        return
-
-    if controller['class'] == 'AWS':
-        # No credentials
-        if not ('cred-file' in controller or 'access-key' in controller):
-            sys.stderr.write(
-                'Controller %s is missing credentials. To change '
-                'credentials use set.\n' %
-                controller_name)
-            sys.exit(2)
-
-        # Missing either of access key or secret key
-        if ('access-key' in controller) != ('secret-key' in controller):
-            sys.stderr.write(
-                'Please specify both access key and secret key or specify '
-                'different credentials.\n')
-            sys.exit(2)
-
-        # Has too many, credentials file and explicit
-        if 'cred-file' in controller and 'access-key' in controller:
-            if args.force or prompt(
-                    'Replace existing credentials?'):
-                # Check what has been inserted in the last command
-                if getattr(args, 'controllers_cred-file', None):
-                    # Editing contained credentials file, delete explicit
-                    for key in ['access-key', 'secret-key']:
-                        nested_delete(conf, ['controllers', controller_name,
-                                             key])
-                else:
-                    # Editing contained credentials other than credentials
-                    # file, delete the credentials file
-                    nested_delete(conf, ['controllers', controller_name,
-                                         'cred-file'])
-            else:
-                sys.exit(2)
-    elif controller['class'] == 'Azure':
-        credentials = controller['credentials']
-        spa = {'tenant', 'grant_type', 'client_id', 'client_secret'}
-        upa = {'username', 'password'}
-
-        is_adding_spa = getattr(args, 'controllers_credentials_tenant', None)
-        if is_adding_spa:
-            nested_set(controller, ['credentials', 'grant_type'],
-                       'client_credentials')
-
-        current = set(credentials.keys())
-
-        if not current:
-            sys.stderr.write(
-                'Controller %s is missing credentials. To change '
-                'credentials use set.\n' % controller_name)
-            sys.exit(2)
-
-        if 0 < len(current & spa) < len(spa):
-            sys.stderr.write(
-                'Please specify tenant, client ID and client secret or '
-                'specify different credentials.\n')
-            sys.exit(2)
-
-        if 0 < len(current & upa) < len(upa):
-            sys.stderr.write('Please specify username and password or '
-                             'specify different credentials.\n')
-            sys.exit(2)
-
-        if current == spa | upa:
-            if args.force or prompt(
-                    'Replace existing credentials?'):
-                if is_adding_spa:
-                    for key in ['username', 'password']:
-                        nested_delete(conf, ['controllers', controller_name,
-                                             'credentials', key])
-                else:
-                    for key in ['tenant', 'grant_type', 'client_id',
-                                'client_secret']:
-                        nested_delete(conf, ['controllers', controller_name,
-                                             'credentials', key])
-            else:
-                sys.exit(0)
-
-    elif controller['class'] == 'GCP':
-        # No dependencies between fields
-        pass
-
-
-def validate_management(conf, args):
-    if getattr(args, 'management_password', None):
-        if 'b64password' in conf['management']:
-            if args.force or prompt(
-                    'Replace the base64 encoded password?'):
-                nested_delete(conf, ['management', 'b64password'])
-            else:
-                sys.exit(0)
-    elif getattr(args, 'management_b64password', None):
-        if 'password' in conf['management']:
-            if args.force or prompt(
-                    'Replace the password?'):
-                nested_delete(conf, ['management', 'password'])
-            else:
-                sys.exit(0)
-
-    # TODO: Any reason for user and password to exist when not local?
-    is_local = conf['management']['host'].split(':')[0] in {'127.0.0.1',
-                                                            'localhost'}
-    if not is_local:
-        not_local_mandatory = {'user', 'password', 'fingerprint'}
-        current = set(conf['management'].keys())
-        if current & not_local_mandatory < not_local_mandatory:
-            sys.stderr.write(
-                'Host is not local, please specify username, password and '
-                'fingerprint.\n')
-            sys.exit(2)
-
-
-def validate_min_objects(conf):
-    if 'management' not in conf:
-        sys.stderr.write('Management settings are missing.\n')
-        sys.exit(2)
-
-    if not set(MANDATORY_KEYS['management']).issubset(conf['management']):
-        sys.stderr.write('Management is missing mandatory keys.\n')
-        sys.exit(2)
-
-    templates = conf['templates']
-    if not templates:
-        sys.stderr.write('There should be at least one template.\n')
-        sys.exit(2)
-
-    controllers = conf['controllers']
-    if not controllers:
-        sys.stderr.write('There should be at least one controller.\n')
-        sys.exit(2)
-
-    for controller, values in controllers.iteritems():
-        if not set(MANDATORY_KEYS[values['class']]).issubset(values.keys()):
-            sys.stderr.write(
-                'Controller %s is missing mandatory keys.\n' % controller)
-            sys.exit(2)
-
-
-def validate_conf(conf, args):
-    # Validate all
-    validate_min_objects(conf)
-    validate_management(conf, args)
-
-    if getattr(args, 'templates_name'):
-        # Adding or editing a template
-        validate_template_dependencies(conf, args)
-
-    if getattr(args, 'controllers_name'):
-        # Adding or editing a controller
-        validate_controller_credentials(conf, args)
-
-
-def is_adding_an_existing_object(conf, args):
-    template_name = getattr(args, 'templates_name')
-    controller_name = getattr(args, 'controllers_name')
-    if template_name in conf['templates'].keys():
-        sys.stderr.write(
-            'Template %s exists. Use set to edit or delete it first.\n' %
-            template_name)
-        sys.exit(2)
-
-    if controller_name in conf['controllers'].keys():
-        sys.stderr.write(
-            'Controller %s exists. Use set to edit or delete it first.\n' %
-            controller_name)
-        sys.exit(2)
 
 
 def handle_change_of_branch_name(conf, args):
-    template_new_name = getattr(args, 'templates_new-name', None)
-    controller_new_name = getattr(args, 'controllers_new-name', None)
+    template_new_name = getattr(args, TEMPLATE_NEW_NAME, None)
+    controller_new_name = getattr(args, CONTROLLER_NEW_NAME, None)
 
     if template_new_name:
-        conf['templates'][template_new_name] = conf['templates'].pop(
-            args.templates_name)
-        args.templates_name = template_new_name
+        conf[TEMPLATES][template_new_name] = conf[TEMPLATES].pop(getattr(
+            args, TEMPLATE_NAME))
+        setattr(args, TEMPLATE_NAME, TEMPLATE_NEW_NAME)
         return True
 
     if controller_new_name:
-        conf['controllers'][controller_new_name] = conf['controllers'].pop(
-            args.controllers_name)
-        args.controllers_name = controller_new_name
+        conf[CONTROLLERS][controller_new_name] = conf[CONTROLLERS].pop(getattr(
+            args, CONTROLLER_NAME))
+        setattr(args, CONTROLLER_NAME, CONTROLLER_NEW_NAME)
         return True
 
     return False
 
 
-def get_value_path(key, args):
-    """Receives a '_' delimited string and the command arguments.
+def is_adding_an_existing_object(conf, args):
+    template_name = getattr(args, TEMPLATE_NAME, None)
+    controller_name = getattr(args, CONTROLLER_NAME, None)
 
-    Returns the path in the configuration's JSON hierarchy
-    to the relevant key-value.
+    if template_name and template_name in conf[TEMPLATES].keys():
+        sys.stderr.write(
+            'template %s exists. Use set to edit or delete it first\n' %
+            template_name)
+        sys.exit(2)
 
-    For root items, just one key. e.g: ['delay']
-    For managements items, two items. e.g. ['management', 'host]
-    For templates or controllers, dynamically insert the name of object
-    to the path. e.g. ['templates', name_of_template, 'one_time_password']
-
-    Path strings (destination of argparse arguments)
-    should be in the format of EXACT-PARENT-NAME_EXACT-CHILD-NAME
-    """
-
-    path = key.split('_')
-
-    if path[0] == 'management':
-        if len(path) == 1:
-            return ['management']
-        else:
-            return ['management', path[1]]
-    if path[0] == 'templates':
-        if len(path) == 1:
-            return ['templates', args.templates_name]
-        else:
-            return ['templates', args.templates_name, path[1]]
-    if path[0] == 'controllers':
-        if len(path) == 1:
-            return ['controllers', args.controllers_name]
-        if len(path) == 2:
-            return ['controllers', args.controllers_name, path[1]]
-        if len(path) >= 3:
-            # Maximum depth is 3,
-            # join accommodates Azure's underscore keys such as grant_type
-            return ['controllers',
-                    args.controllers_name, path[1],
-                    '_'.join(path[2:])]
-
-    # depth 1, such as delay
-    return [path[0]]
+    if controller_name and controller_name in conf[CONTROLLERS].keys():
+        sys.stderr.write(
+            'controller %s exists. Use set to edit or delete it first\n' %
+            controller_name)
+        sys.exit(2)
 
 
 def set_all_none_control_args(conf, args):
     changed = False
-
-    for arg in vars(args):
-        value = getattr(args, arg)
-        if arg not in AUXILIARY_ARGUMENTS and value is not None:
-            # Custom check for regions to facilitate -f
-            if 'regions' in arg:
-                value = validate_regions(args, value)
-            nested_set(conf,
-                       get_value_path(arg, args),
-                       value)
+    for key, value in vars(args).iteritems():
+        if value and key not in NON_CONFIG_KEYS:
+            path = ARGUMENTS[key][1]
+            nested_set(conf, path, value)
             changed = True
 
     return changed
+
+
+def custom_validations(conf, args):
+    """
+    Validates user input on top of argparse validations
+    """
+    inputted_regions = getattr(args, 'regions', None)
+    if inputted_regions:
+        setattr(args, 'regions', validate_regions(args, inputted_regions))
+
+    if [key for key in AWS_SUBACCOUNT_ARGS if getattr(args, key, None)]:
+        subcred_name = getattr(args, SUBCREDENTIALS_NAME, None)
+        if not subcred_name:
+            sys.stderr.write('please specify the name of the sub-account\n')
+            sys.exit(2)
+        else:
+            if args.mode == DELETE:
+                controller_name = getattr(args, CONTROLLER_NAME)
+                sub_cred_names = get_subaccounts_names(conf, controller_name)
+                if subcred_name not in sub_cred_names:
+                    sys.stderr.write(
+                        'sub-account %s does not exist. Choose from %s\n' %
+                        (subcred_name, sub_cred_names))
+                    sys.exit(2)
+            if (args.mode == ADD or args.mode == SET) and not (any(
+                    getattr(args, k) for k in
+                    set(AWS_SUBACCOUNT_ARGS) - {SUBCREDENTIALS_NAME})):
+                sys.stderr.write('sub-account %s is missing arguments.\n' %
+                                 subcred_name)
+                sys.exit(2)
 
 
 def print_conf(root, indent=0):
@@ -603,17 +1347,20 @@ def process_arguments(conf, args):
                 try:
                     print_conf(conf[args.branch])
                 except KeyError:
-                    sys.stdout.write('No %s to display\n' % args.branch)
+                    sys.stdout.write('no %s to display\n' % args.branch)
         else:
             sys.stdout.write(
-                'Configuration file was not initialized, please use init\n')
+                'configuration file was not initialized, please use init\n')
 
         sys.exit(0)
+
+    custom_validations(conf, args)
+    update_paths_with_user_input(args)
 
     if args.mode == 'init':
         if conf:
             if args.force or prompt(
-                    'Configuration exists, '
+                    'configuration exists, '
                     'are you sure you would like to initialize it? '
                     '(previous settings will be deleted)'):
                 conf.clear()
@@ -625,21 +1372,21 @@ def process_arguments(conf, args):
     else:
         if not conf:
             sys.stdout.write(
-                'Configuration file was not initialized, please use init\n')
+                'configuration file was not initialized, please use init\n')
             sys.exit(0)
 
     if args.mode == 'add':
         is_adding_an_existing_object(conf, args)
         if not set_all_none_control_args(conf, args):
             sys.stdout.write(
-                'Too few arguments. No changes were made.\n')
+                'too few arguments. No changes were made\n')
             sys.exit(0)
 
     if args.mode == 'set':
         if not (handle_change_of_branch_name(conf, args) or
                 set_all_none_control_args(conf, args)):
             sys.stdout.write(
-                'Too few arguments. No changes were made.\n')
+                'too few arguments. No changes were made\n')
             sys.exit(0)
 
     if args.mode == 'delete':
@@ -649,20 +1396,155 @@ def process_arguments(conf, args):
 
     if old_conf == conf:
         sys.stdout.write(
-            'No changes were made. \n')
+            'no changes were made \n')
         sys.exit(0)
 
     if os.path.exists(CONFPATH):
-        shutil.copyfile(CONFPATH, CONFPATH + '.bak')  # create backup
+        shutil.copyfile(CONFPATH, CONFPATH + '.bak')
 
-    # dump to JSON
     with open(CONFPATH, 'w') as f:
         json.dump(conf, f, indent=2, separators=(',', ': '), sort_keys=True)
         f.write('\n')
 
     if args.force or prompt(
-            'Would you like to restart the autoprovision service now?'):
+            'would you like to restart the autoprovision service now?'):
         subprocess.call('service autoprovision restart', shell=True)
+
+
+def update_paths_with_user_input(args):
+    new_key_args = getattr(args, NEW_KEY, None)
+    new_value = None
+
+    if new_key_args:
+        new_key = new_key_args[0]
+        if len(new_key_args) == 2:
+            new_value = new_key_args[1]
+        elif len(new_key_args) == 1:  # facilitates delete
+            new_value = True
+
+        setattr(args, NEW_KEY, new_key)
+
+    for k, v in vars(args).iteritems():
+        if v and k in KEYS_TO_UPDATE_WITH_USER_INPUT:
+            for argument in ARGUMENTS.values():
+                path = argument[1]
+                if k in path:
+                    index = path.index(k)
+                    path[index] = v
+
+    if new_key_args:
+        setattr(args, NEW_KEY, new_value)
+
+
+def add_arguments(parser, parser_data):
+    parser._optionals.title = 'global arguments'
+    required_group = parser.add_argument_group('required arguments')
+    optional_group = parser.add_argument_group('optional arguments')
+
+    for argument in parser_data[1] + parser_data[2]:
+        if isinstance(argument, tuple):
+            argument_key = argument[0]
+            custom_kwargs = argument[1]
+            argument_data = ARGUMENTS[argument[0]]
+        else:
+            argument_key = argument
+            custom_kwargs = None
+            argument_data = ARGUMENTS[argument]
+
+        kwargs = {'help': argument_data[2]}
+
+        if argument_data[0][0] is '-':
+            # not positional (e.g. not delay, branch)
+            kwargs.update({'dest': argument_key})
+
+        if custom_kwargs:
+            kwargs.update(custom_kwargs)
+
+        if not custom_kwargs and argument_data[3]:
+            kwargs.update(argument_data[3])
+
+        if argument in parser_data[1]:
+            kwargs.update({'required': True})
+            required_group.add_argument(argument_data[0], **kwargs)
+        else:
+            optional_group.add_argument(argument_data[0], **kwargs)
+
+
+def add_parser(conf, father, son_key):
+    parser_data = create_parser_dict(conf)[son_key]
+
+    if parser_data[4]:  # has epilog
+        subparser = father.add_parser(
+            parser_data[0], help=parser_data[3], epilog=parser_data[4],
+            formatter_class=argparse.RawDescriptionHelpFormatter)
+    else:
+        subparser = father.add_parser(parser_data[0], help=parser_data[3])
+
+    if parser_data[5]:  # has defaults
+        subparser.set_defaults(**parser_data[5])
+
+    add_arguments(subparser, parser_data)
+    return subparser
+
+
+def build_parsers(conf):
+    """Create the parser.
+
+    Creates the main subparsers (init, show, add, set, delete) and
+    their subparsers (delay, management, templates, controllers)
+    """
+    main_parser = argparse.ArgumentParser()
+    main_parser.add_argument('--force', '-f', action='store_true',
+                             help='skip prompts')
+    main_subparsers = main_parser.add_subparsers(
+        help='available actions', dest='mode')
+
+    add_parser(conf, main_subparsers, SHOW)
+    init_subparser = add_parser(conf, main_subparsers, INIT)
+    add_subparser = add_parser(conf, main_subparsers, ADD)
+    set_subparser = add_parser(conf, main_subparsers, SET)
+    delete_subparser = add_parser(conf, main_subparsers, DELETE)
+
+    init_subparsers = init_subparser.add_subparsers()
+    add_parser(conf, init_subparsers, 'init_aws')
+    add_parser(conf, init_subparsers, 'init_azure')
+    add_parser(conf, init_subparsers, 'init_gcp')
+
+    add_subparsers = add_subparser.add_subparsers(dest='branch')
+
+    add_parser(conf, add_subparsers, 'add_template')
+    add_controller_subparser = add_parser(conf, add_subparsers,
+                                          'add_controller')
+
+    add_controller_subparsers = add_controller_subparser.add_subparsers()
+    add_parser(conf, add_controller_subparsers, 'add_controller_aws')
+    add_parser(conf, add_controller_subparsers, 'add_controller_azure')
+    add_parser(conf, add_controller_subparsers, 'add_controller_gcp')
+
+    set_subparsers = set_subparser.add_subparsers(dest='branch')
+    add_parser(conf, set_subparsers, 'set_delay')
+    add_parser(conf, set_subparsers, 'set_management')
+    add_parser(conf, set_subparsers, 'set_template')
+    set_controller_subparser = add_parser(conf, set_subparsers,
+                                          'set_controller')
+
+    set_controller_subparsers = set_controller_subparser.add_subparsers()
+    add_parser(conf, set_controller_subparsers, 'set_controller_aws')
+    add_parser(conf, set_controller_subparsers, 'set_controller_azure')
+    add_parser(conf, set_controller_subparsers, 'set_controller_gcp')
+
+    delete_subparsers = delete_subparser.add_subparsers(dest='branch')
+    add_parser(conf, delete_subparsers, 'delete_management')
+    add_parser(conf, delete_subparsers, 'delete_template')
+    delete_controller_subparser = add_parser(conf, delete_subparsers,
+                                             'delete_controller')
+
+    delete_controller_subparsers = delete_controller_subparser.add_subparsers()
+    add_parser(conf, delete_controller_subparsers, 'delete_controller_aws')
+    add_parser(conf, delete_controller_subparsers, 'delete_controller_azure')
+    add_parser(conf, delete_controller_subparsers, 'delete_controller_gcp')
+
+    return main_parser
 
 
 def prompt(question):
@@ -676,1392 +1558,34 @@ def prompt(question):
         elif choice in ['y', 'yes']:
             return True
         else:
-            sys.stdout.write('Please respond with "y" or "n"\n')
-
-
-def get_controllers(conf, clazz):
-    """Return an array of names of existing 'clazz' controllers."""
-    try:
-        lst = [c for c in conf['controllers']
-               if conf['controllers'][c]['class'] == clazz]
-        return lst
-    except KeyError:
-        return []
-
-
-def get_templates(conf):
-    """Return an array of names of existing templates."""
-    try:
-        return conf['templates'].keys()
-    except KeyError:
-        return []
-
-
-# Argparse validation methods
-
-def validate_SIC(value):
-    """Validates length and char restrictions of the SIC value."""
-
-    if len(value) < MIN_SIC_LENGTH:
-        raise argparse.ArgumentTypeError(
-            'One time password should consist of at least %s characters.'
-            % repr(MIN_SIC_LENGTH))
-    if not value.isalnum():
-        raise argparse.ArgumentTypeError(
-            'One time password should contain only alphanumeric characters.')
-    return value
-
-
-def validate_guid_uuid(value):
-    pattern = re.compile(
-        '^[0-9A-F]{8}[-]?([0-9A-F]{4}[-]?){3}[0-9A-F]{12}$',
-        re.IGNORECASE)
-
-    if not pattern.match(value):
-        raise argparse.ArgumentTypeError('value %s is not a GUID.' % value)
-
-    return value
-
-
-def validate_bool(value):
-    if value.lower() in ('yes', 'true', 't', 'y', '1'):
-        return True
-    elif value.lower() in ('no', 'false', 'f', 'n', '0'):
-        return False
-    else:
-        raise argparse.ArgumentTypeError('Boolean value expected.')
-
-
-def validate_regions(args, value):
-    regions = value.split(',')
-    for region in regions:
-        if region not in AWS_REGIONS:
-            if not (args.force or prompt(
-                    'The region %s is not in the regions list %s. '
-                    'Are you sure?' % (region, AWS_REGIONS))):
-                sys.exit(0)
-    return regions
-
-
-def validate_filepath(value):
-    if os.path.exists(value):
-        return value
-
-    raise argparse.ArgumentTypeError('File %s does not exist.' % value)
-
-
-def validate_iam_or_filepath(value):
-    if value == 'IAM':
-        return value
-
-    return validate_filepath(value)
-
-
-def validate_ports(value):
-    ports = value.split(',')
-    for port in ports:
-        if not port.isdigit():
-            raise argparse.ArgumentTypeError('Port %s is invalid.' % port)
-    return ports
-
-
-def validate_hex(value):
-    try:
-        int(value, 16)
-    except ValueError:
-        raise argparse.ArgumentTypeError('Value %s is not hexadecimal.' %
-                                         value)
-
-    return value
-
-
-# Argpars argument creation methods
-
-
-def create_del_gcp_arguments(gcp_parser, conf):
-    """Add delete arguments to gcp_parser."""
-
-    required_group = gcp_parser.add_argument_group(
-        'Delete GCP required arguments')
-    optional_group = gcp_parser.add_argument_group(
-        'Delete GCP optional arguments')
-    required_group.add_argument(
-        '-n', required=True,
-        dest='controllers_name',
-        choices=get_controllers(conf, 'GCP'),
-        help='The name of the cloud environment controller')
-    optional_group.add_argument(
-        '-proj', dest='controllers_project', action='store_true',
-        help='The GCP project ID in which to scan for VM instances')
-    optional_group.add_argument(
-        '-cr', action='store_true',
-        dest='controllers_credentials',
-        help='Either the path to a text file containing GCP credentials '
-             'or "IAM" for automatic retrieval of the '
-             'service account credentials from the VM instance metadata. '
-             'Default: "IAM"')
-
-
-def create_del_azure_arguments(azure_parser, conf):
-    """Add delete arguments to azure_parser."""
-
-    required_group = azure_parser.add_argument_group(
-        'Delete Azure required arguments')
-    optional_group = azure_parser.add_argument_group(
-        'Delete Azure optional arguments')
-    required_group.add_argument(
-        '-n', required=True,
-        dest='controllers_name',
-        choices=get_controllers(conf, 'Azure'),
-        help='The name of the cloud environment controller')
-    optional_group.add_argument('-sb',
-                                dest='controllers_subscription',
-                                action='store_true',
-                                help='The Azure subscription ID')
-    optional_group.add_argument('-at',
-                                dest='controllers_credentials_tenant',
-                                action='store_true',
-                                help='The Azure Active Directory tenant ID')
-    optional_group.add_argument(
-        '-aci', dest='controllers_credentials_client_id',
-        action='store_true',
-        help='The application ID with which the '
-             'service principal is associated')
-    optional_group.add_argument('-acs',
-                                dest='controllers_credentials_client_secret',
-                                action='store_true',
-                                help='The service principal password')
-    optional_group.add_argument('-au',
-                                dest='controllers_credentials_username',
-                                action='store_true',
-                                help='The Azure fully qualified user name')
-    optional_group.add_argument('-ap',
-                                dest='controllers_credentials_password',
-                                action='store_true',
-                                help='The password for the user')
-
-
-def create_del_aws_arguments(aws_parser, conf):
-    """Add delete arguments to aws_parser."""
-
-    required_group = aws_parser.add_argument_group(
-        'Delete AWS required arguments')
-    optional_group = aws_parser.add_argument_group(
-        'Delete AWS optional arguments')
-
-    required_group.add_argument(
-        '-n', required=True,
-        dest='controllers_name',
-        choices=get_controllers(conf, 'AWS'),
-        help='The name of the cloud environment controller')
-    optional_group.add_argument('-ak',
-                                dest='controllers_access-key',
-                                action='store_true',
-                                help='AWS-ACCESS-KEY')
-    optional_group.add_argument('-sk',
-                                dest='controllers_secret-key',
-                                action='store_true',
-                                help='AWS-SECRET-KEY')
-    optional_group.add_argument(
-        '-cf', dest='controllers_cred-file',
-        action='store_true',
-        help='Either the path to a text file containing AWS credentials '
-             'or an IAM role profile. Default: "IAM"')
-
-
-def create_del_templates_arguments(del_template_subparser, conf):
-    """Add to del_template_subparser its arguments."""
-
-    del_template_subparser._optionals.title = 'Global arguments'
-    required_group = del_template_subparser.add_argument_group(
-        'Delete template required arguments')
-    optional_group = del_template_subparser.add_argument_group(
-        'Delete template optional arguments')
-
-    required_group.add_argument(
-        '-n',
-        required=True,
-        dest='templates_name',
-        choices=get_templates(conf),
-        help='The name of the template')
-
-    optional_group.add_argument(
-        '-otp',
-        action='store_true',
-        dest='templates_one-time-password',
-        help='The one time password used to initiate secure internal '
-             'communication between the gateway and the management')
-    optional_group.add_argument(
-        '-v',
-        action='store_true',
-        dest='templates_version',
-        help='The gateway version')
-    optional_group.add_argument(
-        '-po',
-        action='store_true',
-        dest='templates_policy',
-        help='The pre-existing security policy package '
-             'to be installed on the gateway')
-    optional_group.add_argument(
-        '-cp',
-        action='store_true',
-        dest='templates_custom-parameters',
-        help='An optional string with space separated parameters or '
-             'a list of string parameters to specify when a gateway is added '
-             'and a custom script is specified in the management section')
-    optional_group.add_argument(
-        '-pr',
-        action='store_true',
-        dest='templates_proto',
-        help='A prototype for this template')
-    optional_group.add_argument(
-        '-sn',
-        action='store_true',
-        dest='templates_specific-network',
-        help='An optional name of a pre-existing network object group '
-             'that defines the topology settings for the interfaces marked '
-             'with "specific" topology. This attribute is mandatory '
-             'if any of the scanned instances has an interface '
-             'with a topology set to "specific"')
-    optional_group.add_argument(
-        '-g',
-        action='store_true',
-        dest='templates_generation',
-        help='An optional string or number that can be used to force '
-             're-applying a template to an already existing gateway. '
-             'If generation is specified and its value is different '
-             'than the previous value, then the template settings '
-             'will be reapplied to the gateway')
-    optional_group.add_argument(
-        '-pp',
-        action='store_true',
-        dest='templates_proxy-ports',
-        help='An optional comma-separated list of list '
-             'of TCP ports on which to enable the proxy on gateway feature. '
-             'e.g. "8080, 8443"')
-    optional_group.add_argument(
-        '-hi',
-        action='store_true',
-        dest='templates_https-inspection',
-        help='An optional boolean attribute indicating '
-             'whether to enable the HTTPS Inspection blade on the gateway')
-    optional_group.add_argument(
-        '-ia',
-        action='store_true',
-        dest='templates_identity-awareness',
-        help='An optional boolean attribute indicating '
-             'whether to enable the Identity Awareness blade on the gateway')
-    optional_group.add_argument(
-        '-appi',
-        action='store_true',
-        dest='templates_application-control',
-        help='An optional boolean attribute indicating '
-             'whether to enable the Application Control blade on the gateway')
-    optional_group.add_argument(
-        '-ips',
-        action='store_true',
-        dest='templates_ips',
-        help='An optional boolean attribute indicating '
-             'whether to enable the Intrusion Prevention System '
-             'blade on the gateway')
-    optional_group.add_argument(
-        '-ipf',
-        action='store_true',
-        dest='templates_ips-profile',
-        help='An optional IPS profile name to '
-             'associate with a pre-R80 gateway')
-    optional_group.add_argument(
-        '-uf',
-        action='store_true',
-        dest='templates_url-filtering',
-        help='An optional boolean attribute indicating whether '
-             'to enable the URL Filtering Awareness blade on the gateway')
-    optional_group.add_argument(
-        '-ab',
-        action='store_true',
-        dest='templates_anti-bot',
-        help='An optional boolean attribute indicating '
-             'whether to enable the Anti-Bot blade on the gateway')
-    optional_group.add_argument(
-        '-av',
-        action='store_true',
-        dest='templates_anti-virus',
-        help='An optional boolean attribute indicating '
-             'whether to enable the Anti-Virus blade on the gateway')
-    optional_group.add_argument(
-        '-rp',
-        action='store_true',
-        dest='templates_restrictive-policy',
-        help='An optional name of a pre-existing policy package to be '
-             'installed as the first policy on a new provisioned gateway. '
-             '(Created to avoid a limitation in which Access Policy and '
-             'Threat Prevention Policy cannot be installed at the first '
-             'time together). In the case where no attribute is provided, '
-             'a default policy will be used (the default policy has only '
-             'the implied rules and a drop-all cleanup rule). '
-             'The value null can be used to explicitly avoid any such policy')
-    optional_group.add_argument(
-        '-nk', nargs=1,
-        dest='templates_new-key',
-        help='Optional attributes of a gateway. Usage -nk [KEY]')
-
-
-def create_del_management_arguments(del_management_subparsers):
-    """Add to del_management_subparsers its arguments."""
-
-    del_management_subparsers._optionals.title = 'Global arguments'
-
-    optional_group = del_management_subparsers.add_argument_group(
-        'Delete Management optional arguments')
-    optional_group.add_argument(
-        '-d', dest='management_domain', action='store_true',
-        help='The name or UID of the management domain if applicable')
-    optional_group.add_argument(
-        '-u', dest='management_user', action='store_true',
-        help='A SmartCenter administrator username')
-    optional_group.add_argument(
-        '-pass', dest='management_password', action='store_true',
-        help='The password associated with the user')
-    optional_group.add_argument(
-        '-pass64', dest='management_b64password', action='store_true',
-        help='The base64 encoded password associated with the user (for '
-             'additional obscurity)')
-    optional_group.add_argument(
-        '-pr', dest='management_proxy', action='store_true',
-        help='"http://PROXY-HOST-NAME-OR-ADDRESS:PROXY-PORT" '
-             '- an optional value for the https_proxy environment variable')
-    optional_group.add_argument(
-        '-cs', dest='management_custom-script',
-        action='store_true',
-        help='"PATH-TO-CUSTOMIZATION-SCRIPT" - '
-             'an optional script to run just after the policy is installed '
-             'when a gateway is provisioned, and at the beginning '
-             'of the deprovisioning process. '
-             'When a gateway is added the script will be run with the keyword '
-             '"add", with the gateway name and the custom-parameters '
-             'attribute in the template. '
-             'When a gateway is deleted the script will run with the '
-             'keyword "delete" and the gateway name. '
-             'In the case of a configuration update '
-             '(for example, a load balancing configuration change or a '
-             'template/generation change), '
-             'the custom script will be run with "delete" and '
-             'later again with "add" and the custom parameters')
-    optional_group.add_argument(
-        '-fp', dest='management_fingerprint',
-        action='store_true',
-        help='Disable fingerprint checking by providing an empty string "" '
-             '(insecure but reasonable if running locally '
-             'on the management server). '
-             'To retrieve the fingerprint, '
-             'run the following command on the management server (in bash): '
-             'cpopenssl s_client -connect 127.0.0.1:443 2>/dev/null '
-             '</dev/null | cpopenssl x509 -outform DER '
-             r'| sha256sum | awk "{printf "sha256:%%s\n", $1}"')
-
-
-def create_set_gcp_arguments(gcp_parser, conf):
-    """Add set arguments to gcp_parser."""
-
-    required_group = gcp_parser.add_argument_group(
-        'Set GCP controller required arguments')
-    optional_group = gcp_parser.add_argument_group(
-        'Set GCP controller optional arguments')
-    required_group.add_argument(
-        '-n', required=True, dest='controllers_name',
-        choices=get_controllers(conf, 'GCP'),
-        help='The name of the cloud environment controller')
-    optional_group.add_argument(
-        '-proj', dest='controllers_project',
-        help='The GCP project ID in which to scan for VM instances')
-    optional_group.add_argument(
-        '-cr', default='IAM', dest='controllers_credentials',
-        type=validate_iam_or_filepath,
-        help='Either the path to a text file containing GCP credentials '
-             'or "IAM" for automatic retrieval of the '
-             'service account credentials from the VM instance metadata. '
-             'Default: "IAM"')
-
-
-def create_set_azure_arguments(azure_parser, conf):
-    """Add set arguments to azure_parser."""
-
-    required_group = azure_parser.add_argument_group(
-        'Set Azure controller required arguments')
-    optional_group = azure_parser.add_argument_group(
-        'Set Azure controller optional arguments')
-    required_group.add_argument(
-        '-n', required=True,
-        dest='controllers_name',
-        choices=get_controllers(conf, 'Azure'),
-        help='The name of the cloud environment controller')
-    optional_group.add_argument(
-        '-en',
-        dest='controllers_environment', choices=AZURE_ENVIRONMENTS,
-        help='An optional attribute to specify the Azure environment. '
-             'The default is "AzureCloud", but one of the other environments '
-             'like "AzureChinaCloud", "AzureGermanCloud" or '
-             '"AzureUSGovernment" can be specified instead')
-    optional_group.add_argument('-sb',
-                                dest='controllers_subscription',
-                                type=validate_guid_uuid,
-                                help='The Azure subscription ID')
-    optional_group.add_argument('-at',
-                                dest='controllers_credentials_tenant',
-                                help='The Azure Active Directory tenant ID')
-    optional_group.add_argument(
-        '-aci', dest='controllers_credentials_client_id',
-        help='The application ID with which the '
-             'service principal is associated')
-    optional_group.add_argument('-acs',
-                                dest='controllers_credentials_client_secret',
-                                help='The service principal password')
-    optional_group.add_argument('-au',
-                                dest='controllers_credentials_username',
-                                help='The Azure fully qualified user name')
-    optional_group.add_argument('-ap',
-                                dest='controllers_credentials_password',
-                                help='The password for the user')
-
-
-def create_set_aws_arguments(aws_parser, conf):
-    """Add set arguments to aws_parser."""
-    required_group = aws_parser.add_argument_group(
-        'Set AWS controller required arguments')
-    optional_group = aws_parser.add_argument_group(
-        'Set AWS controller optional arguments')
-
-    required_group.add_argument(
-        '-n', required=True,
-        dest='controllers_name',
-        choices=get_controllers(conf, 'AWS'),
-        help='The name of the cloud environment controller')
-    optional_group.add_argument(
-        '-r', dest='controllers_regions',
-        help='A comma-separated list of AWS regions, '
-             'in which the gateways are being deployed. '
-             'For example: eu-west-1,us-east-1,eu-central-1')
-    optional_group.add_argument('-ak',
-                                dest='controllers_access-key',
-                                help='AWS-ACCESS-KEY')
-    optional_group.add_argument('-sk',
-                                dest='controllers_secret-key',
-                                help='AWS-SECRET-KEY')
-
-    me_group = optional_group.add_mutually_exclusive_group(required=False)
-    me_group.add_argument(
-        '-cf', dest='controllers_cred-file',
-        type=validate_iam_or_filepath,
-        help='The path to a text file containing AWS credentials')
-
-    me_group.add_argument(
-        '-iam', dest='controllers_cred-file',
-        action='store_const', const='IAM',
-        help='Use the IAM role profile')
-
-
-def create_set_templates_arguments(set_template_subparser, conf):
-    """Add to set_template_subparser its arguments."""
-
-    set_template_subparser._optionals.title = 'Global arguments'
-    required_group = set_template_subparser.add_argument_group(
-        'Set template required arguments')
-    optional_group = set_template_subparser.add_argument_group(
-        'St template optional arguments')
-
-    required_group.add_argument('-n', required=True,
-                                dest='templates_name',
-                                choices=get_templates(conf),
-                                help='The name of the template')
-
-    optional_group.add_argument(
-        '-nn', dest='templates_new-name',
-        help='the new name of the template. The name must be unique')
-    optional_group.add_argument(
-        '-otp', type=validate_SIC,
-        dest='templates_one-time-password',
-        help='A random string consisting of at least %s '
-             'alphanumeric characters' % repr(MIN_SIC_LENGTH))
-    optional_group.add_argument(
-        '-v', dest='templates_version', choices=AVAILABLE_VERSIONS,
-        help='The gateway version (e.g. R77.30)')
-    optional_group.add_argument(
-        '-po', dest='templates_policy',
-        help='The name of an existing security policy '
-             'intended to be installed on the gateways')
-    optional_group.add_argument(
-        '-cp', dest='templates_custom-parameters',
-        help='An optional string with space separated parameters '
-             'or a list of string parameters to specify '
-             'when a gateway is added and a custom script is specified '
-             'in the management section')
-    optional_group.add_argument(
-        '-pr', dest='templates_proto',
-        help='A prototype for this template')
-    optional_group.add_argument(
-        '-sn', dest='templates_specific-network',
-        help='An optional name of a pre-existing network object group '
-             'that defines the topology settings for the interfaces '
-             'marked with "specific" topology. '
-             'This attribute is mandatory if any of the scanned instances '
-             'has an interface with a topology set to "specific". '
-             'Typically this should point to the name '
-             'of a "Group with Exclusions" object, '
-             'which contains a network group holding the VPC address range '
-             'and excludes a network group which contains '
-             'the "external" networks of the VPC, that is, '
-             'networks that are connected to the internet')
-    optional_group.add_argument(
-        '-g', dest='templates_generation',
-        help='An optional string or number that can be used to '
-             'force re-applying a template to an already existing gateway. '
-             'If generation is specified and its value is different '
-             'than the previous value, then the template settings '
-             'will be reapplied to the gateway')
-    optional_group.add_argument(
-        '-pp', dest='templates_proxy-ports',
-        type=validate_ports,
-        help='An optional comma-separated list of list of TCP ports '
-             'on which to enable the proxy on gateway feature. '
-             'e.g. "8080,8443"')
-    optional_group.add_argument(
-        '-hi', type=validate_bool,
-        dest='templates_https-inspection',
-        help='An optional boolean attribute indicating '
-             'whether to enable the HTTPS Inspection blade on the gateway')
-    optional_group.add_argument(
-        '-ia', type=validate_bool,
-        dest='templates_identity-awareness',
-        help='An optional boolean attribute indicating '
-             'whether to enable the Identity Awareness blade on the gateway')
-    optional_group.add_argument(
-        '-appi', type=validate_bool,
-        dest='templates_application-control',
-        help='An optional boolean attribute indicating '
-             'whether to enable the Application Control blade on the gateway')
-    optional_group.add_argument(
-        '-ips', type=validate_bool,
-        dest='templates_ips',
-        help='An optional boolean attribute indicating '
-             'whether to enable the Intrusion Prevention System '
-             'blade on the gateway')
-    optional_group.add_argument(
-        '-ipf', dest='templates_ips-profile',
-        help='An optional IPS profile name to '
-             'associate with a pre-R80 gateway')
-    optional_group.add_argument(
-        '-uf', type=validate_bool,
-        dest='templates_url-filtering',
-        help='An optional boolean attribute indicating '
-             'whether to enable the URL Filtering Awareness '
-             'blade on the gateway')
-    optional_group.add_argument(
-        '-ab', type=validate_bool,
-        dest='templates_anti-bot',
-        help='An optional boolean attribute indicating '
-             'whether to enable the Anti-Bot blade on the gateway')
-    optional_group.add_argument(
-        '-av', type=validate_bool,
-        dest='templates_anti-virus',
-        help='An optional boolean attribute indicating '
-             'whether to enable the Anti-Virus blade on the gateway')
-    optional_group.add_argument(
-        '-rp',
-        dest='templates_restrictive-policy',
-        help='An optional name of a pre-existing policy package to be '
-             'installed as the first policy on a new provisioned gateway. '
-             '(Created to avoid a limitation in which Access Policy and '
-             'Threat Prevention Policy cannot be installed at the first '
-             'time together). In the case where no attribute is provided, '
-             'a default policy will be used (the default policy has only '
-             'the implied rules and a drop-all cleanup rule). '
-             'The value null can be used to explicitly avoid any such policy')
-
-    optional_group.add_argument(
-        '-nk', nargs=2,
-        dest='templates_new-key',
-        help='Optional attributes of a gateway. Usage -nk [KEY] [VALUE]')
-
-
-def create_set_management_arguments(set_management_subparser):
-    """Add to set_management_subparser its arguments."""
-
-    set_management_subparser._optionals.title = 'Global arguments'
-
-    optional_group = set_management_subparser.add_argument_group(
-        'Set Management optional arguments')
-    optional_group.add_argument('-n', dest='management_name',
-                                help='The name of the management server')
-
-    optional_group.add_argument(
-        '-ho', dest='management_host',
-        help='"IP-ADDRESS-OR-HOST-NAME[:PORT]" - of the management server')
-    optional_group.add_argument(
-        '-d', dest='management_domain',
-        help='The name or UID of the management domain if applicable')
-    optional_group.add_argument(
-        '-fp', dest='management_fingerprint', type=validate_hex,
-        help='"sha256:FINGERPRINT-IN-HEX" - the SHA256 fingerprint '
-             'of the management certificate. '
-             'disable fingerprint checking by providing an empty string "" '
-             '(insecure but reasonable if running locally '
-             'on the management server). '
-             'To retrieve the fingerprint, '
-             'run the following command on the management server (in bash): '
-             'cpopenssl s_client -connect 127.0.0.1:443 2>/dev/null '
-             '</dev/null | cpopenssl x509 -outform DER '
-             r'| sha256sum | awk "{printf "sha256:%%s\n", $1}"')
-
-    optional_group.add_argument('-u', dest='management_user',
-                                help='A SmartCenter administrator username')
-
-    mu_group = optional_group.add_mutually_exclusive_group(required=False)
-    mu_group.add_argument(
-        '-pass', dest='management_password',
-        help='The password associated with the user')
-    mu_group.add_argument(
-        '-pass64', dest='management_b64password',
-        help='The base64 encoded password associated with the user')
-
-    optional_group.add_argument(
-        '-pr', dest='management_proxy',
-        help='"http://PROXY-HOST-NAME-OR-ADDRESS:PROXY-PORT" '
-             '- an optional value for the https_proxy environment variable')
-    optional_group.add_argument(
-        '-cs', dest='management_custom-script',
-        type=validate_filepath,
-        help='"PATH-TO-CUSTOMIZATION-SCRIPT" - '
-             'an optional script to run just after the policy is installed '
-             'when a gateway is provisioned, and at the beginning '
-             'of the deprovisioning process. '
-             'When a gateway is added the script will be run with '
-             'the keyword "add", '
-             'with the gateway name and the custom-parameters '
-             'attribute in the template. '
-             'When a gateway is deleted the script will run with the keyword '
-             '"delete" and the gateway name. '
-             'In the case of a configuration update '
-             '(for example, a load balancing configuration change '
-             'or a template/generation change), '
-             'the custom script will be run with "delete" '
-             'and later again with "add" and the custom parameters')
-
-
-def create_add_gcp_arguments(gcp_parser):
-    """Add create arguments to gcp_parser."""
-
-    # Default arguments when adding GCP controllers
-    defaults = {'controllers_class': 'GCP'}
-    gcp_parser.set_defaults(**defaults)
-    required_group = gcp_parser.add_argument_group(
-        'Add GCP controller required arguments')
-
-    required_group.add_argument(
-        '-n', required=True,
-        dest='controllers_name',
-        help='The name of the cloud environment controller. The name must be '
-             'unique')
-    required_group.add_argument(
-        '-proj', required=True, dest='controllers_project',
-        help='The GCP project ID in which to scan for VM instances')
-    required_group.add_argument(
-        '-cr', required=True, default='IAM',
-        dest='controllers_credentials',
-        type=validate_iam_or_filepath,
-        help='Either the path to a text file containing GCP credentials '
-             'or "IAM" for automatic retrieval of the service account '
-             'credentials from the VM instance metadata. Default: "IAM"')
-
-
-def create_add_azure_arguments(azure_parser):
-    """Add create arguments to azure_parser."""
-
-    # Default arguments when adding Azure controllers
-    defaults = {'controllers_class': 'Azure'}
-    azure_parser.set_defaults(**defaults)
-    required_group = azure_parser.add_argument_group(
-        'Add Azure controller required arguments')
-    optional_group = azure_parser.add_argument_group(
-        'Add Azure controller optional arguments')
-
-    required_group.add_argument(
-        '-n', required=True,
-        dest='controllers_name',
-        help='The name of the cloud environment controller. '
-             'The name must be unique')
-    required_group.add_argument('-sb', required=True,
-                                dest='controllers_subscription',
-                                type=validate_guid_uuid,
-                                help='The Azure subscription ID')
-    optional_group.add_argument(
-        '-en', default='AzureCloud',
-        dest='controllers_environment', choices=AZURE_ENVIRONMENTS,
-        help='An optional attribute to specify the Azure environment. '
-             'The default is "AzureCloud", but one of the other environments '
-             'like "AzureChinaCloud", "AzureGermanCloud" or '
-             '"AzureUSGovernment" can be specified instead')
-
-    # Handle credentials' additional nesting
-    credentials_subparsers = azure_parser.add_subparsers(
-        help='An object containing one of the following alternatives '
-             '(in any case the entity for which the credentials are specified '
-             '(a service principal or a user) must have "read" access '
-             'to the relevant resources in the subscription)')
-    service_principal_subparser = credentials_subparsers.add_parser(
-        'sp', help='Service principal credentials')
-    service_principal_subparser._optionals.title = 'Required arguments'
-    user_subparser = credentials_subparsers.add_parser(
-        'user', help='User name and password')
-    user_subparser._optionals.title = 'Required arguments'
-
-    defaults = {'controllers_credentials_grant_type': 'client_credentials'}
-    service_principal_subparser.set_defaults(**defaults)
-    service_principal_subparser.add_argument(
-        '-at', required=True,
-        dest='controllers_credentials_tenant',
-        help='The Azure Active Directory tenant ID')
-    service_principal_subparser.add_argument(
-        '-aci', required=True,
-        dest='controllers_credentials_client_id',
-        help='The application ID with which the service principal is '
-             'associated')
-    service_principal_subparser.add_argument(
-        '-acs', required=True,
-        dest='controllers_credentials_client_secret',
-        help='The service principal password')
-
-    user_subparser.add_argument(
-        '-au', required=True,
-        dest='controllers_credentials_username',
-        help='The Azure fully qualified user name')
-    user_subparser.add_argument(
-        '-ap', required=True,
-        dest='controllers_credentials_password',
-        help='The password for the user')
-
-
-def create_add_aws_arguments(aws_parser):
-    """Add create arguments to aws_parser."""
-
-    # Default arguments when adding AWS controllers
-    defaults = {'controllers_class': 'AWS'}
-    aws_parser.set_defaults(**defaults)
-
-    required_group = aws_parser.add_argument_group(
-        'Add AWS controller required arguments')
-
-    required_group.add_argument(
-        '-n', required=True, dest='controllers_name',
-        help='The name of the cloud environment controller. '
-             'The name must be unique')
-    required_group.add_argument(
-        '-r', required=True, dest='controllers_regions',
-        help='A comma-separated list of AWS regions, '
-             'in which the gateways are being deployed. '
-             'For example: eu-west-1,us-east-1,eu-central-1')
-
-    # Handle credentials' additional nesting
-    credentials_subparsers = aws_parser.add_subparsers(
-        help='Use one of these alternatives to specify credentials')
-    explicit_subparser = credentials_subparsers.add_parser('explicit')
-    explicit_subparser._optionals.title = 'Required arguments'
-    explicit_subparser.add_argument(
-        '-ak', required=True, dest='controllers_access-key',
-        help='AWS-ACCESS-KEY')
-    explicit_subparser.add_argument(
-        '-sk', required=True, dest='controllers_secret-key',
-        help='AWS-SECRET-KEY')
-
-    file_subparser = credentials_subparsers.add_parser('file')
-    file_subparser.add_argument(
-        dest='controllers_cred-file',
-        type=validate_filepath,
-        help='The path to a text file containing AWS credentials')
-
-    role_subparser = credentials_subparsers.add_parser('IAM')
-    defaults = {'controllers_cred-file': 'IAM'}
-    role_subparser.set_defaults(**defaults)
-
-
-def create_add_templates_arguments(add_template_subparser):
-    """Add to add_template_subparser its arguments."""
-
-    add_template_subparser._optionals.title = 'Global arguments'
-    required_group = add_template_subparser.add_argument_group(
-        'Add template required arguments')
-    optional_group = add_template_subparser.add_argument_group(
-        'Add template optional arguments')
-
-    required_group.add_argument(
-        '-n', required=True, dest='templates_name',
-        help='The name of the template. The name must be unique')
-    optional_group.add_argument(
-        '-otp', type=validate_SIC,
-        dest='templates_one-time-password',
-        help='A random string consisting of at least %s '
-             'alphanumeric characters' % repr(MIN_SIC_LENGTH))
-    optional_group.add_argument(
-        '-v',
-        dest='templates_version', choices=AVAILABLE_VERSIONS,
-        help='The gateway version (e.g. R77.30)')
-    optional_group.add_argument(
-        '-po', dest='templates_policy',
-        help='The name of an existing security policy '
-             'intended to be installed on the gateways')
-
-    optional_group.add_argument(
-        '-cp', dest='templates_custom-parameters',
-        help='An optional string with space separated parameters or '
-             'a list of string parameters to specify when a gateway is added '
-             'and a custom script is specified in the management section')
-    optional_group.add_argument(
-        '-pr', dest='templates_proto',
-        help='A prototype for this template')
-    optional_group.add_argument(
-        '-sn', dest='templates_specific-network',
-        help='An optional name of a pre-existing network object group '
-             'that defines the topology settings for the interfaces marked '
-             'with "specific" topology. This attribute is mandatory '
-             'if any of the scanned instances has an interface '
-             'with a topology set to "specific". '
-             'Typically this should point to the name of a '
-             '"Group with Exclusions" object, '
-             'which contains a network group holding the VPC '
-             'address range and excludes a network group which contains '
-             'the "external" networks of the VPC, that is, '
-             'networks that are connected to the internet')
-    optional_group.add_argument(
-        '-g', dest='templates_generation',
-        help='An optional string or number that can be used to force '
-             're-applying a template to an already existing gateway. '
-             'If generation is specified and its value is different '
-             'than the previous value, then the template settings '
-             'will be reapplied to the gateway')
-    optional_group.add_argument(
-        '-pp', dest='templates_proxy-ports',
-        type=validate_ports,
-        help='An optional comma-separated list of list of TCP ports '
-             'on which to enable the proxy on gateway feature. '
-             'e.g. "8080,8443"')
-    optional_group.add_argument(
-        '-hi', type=validate_bool,
-        dest='templates_https-inspection',
-        help='An optional boolean attribute indicating '
-             'whether to enable the HTTPS Inspection blade on the gateway')
-    optional_group.add_argument(
-        '-ia', type=validate_bool,
-        dest='templates_identity-awareness',
-        help='An optional boolean attribute indicating '
-             'whether to enable the Identity Awareness blade on the gateway')
-    optional_group.add_argument(
-        '-appi', type=validate_bool,
-        dest='templates_application-control',
-        help='An optional boolean attribute indicating '
-             'whether to enable the Application Control blade on the gateway')
-    optional_group.add_argument(
-        '-ips', type=validate_bool,
-        dest='templates_ips',
-        help='An optional boolean attribute indicating '
-             'whether to enable the Intrusion Prevention System '
-             'blade on the gateway')
-    optional_group.add_argument(
-        '-ipf', dest='templates_ips-profile',
-        help='An optional IPS profile name to associate '
-             'with a pre-R80 gateway')
-    optional_group.add_argument(
-        '-uf', type=validate_bool,
-        dest='templates_url-filtering',
-        help='An optional boolean attribute indicating '
-             'whether to enable the URL Filtering Awareness '
-             'blade on the gateway')
-    optional_group.add_argument(
-        '-ab', type=validate_bool,
-        dest='templates_anti-bot',
-        help='An optional boolean attribute indicating '
-             'whether to enable the Anti-Bot blade on the gateway')
-    optional_group.add_argument(
-        '-av', type=validate_bool,
-        dest='templates_anti-virus',
-        help='An optional boolean attribute indicating '
-             'whether to enable the Anti-Virus blade on the gateway')
-    optional_group.add_argument(
-        '-rp',
-        dest='templates_restrictive-policy',
-        help='An optional name of a pre-existing policy package to be '
-             'installed as the first policy on a new provisioned gateway. '
-             '(Created to avoid a limitation in which Access Policy and '
-             'Threat Prevention Policy cannot be installed at the first '
-             'time together). In the case where no attribute is provided, '
-             'a default policy will be used (the default policy has only '
-             'the implied rules and a drop-all cleanup rule). '
-             'The value null can be used to explicitly avoid any such policy')
-    optional_group.add_argument(
-        '-nk', nargs=2,
-        dest='templates_new-key',
-        help='Optional attributes of a gateway. Usage -nk [KEY] [VALUE]')
-
-
-def create_init_GCP_arguments(GCP_init_subparser):
-    pass
-
-
-def create_init_azure_arguments(azure_init_subparser):
-    """Add to azure_init_subparser its arguments."""
-
-    defaults = {'delay': 30,
-                'controllers_class': 'Azure',
-                'management_host': 'localhost'}
-
-    azure_init_subparser.set_defaults(**defaults)
-
-    required_init_group = azure_init_subparser.add_argument_group(
-        'Required arguments for initialization')
-
-    required_init_group.add_argument(
-        '-mn', required=True, dest='management_name',
-        help='The name of the management server')
-
-    required_init_group.add_argument(
-        '-tn', required=True, dest='templates_name',
-        help='The name of a gateway configuration template')
-    required_init_group.add_argument(
-        '-otp', type=validate_SIC, required=True,
-        dest='templates_one-time-password',
-        help='A random string consisting of at least '
-             '%s alphanumeric characters' % repr(MIN_SIC_LENGTH))
-    required_init_group.add_argument(
-        '-v', required=True,
-        dest='templates_version', choices=AVAILABLE_VERSIONS,
-        help='The gateway version (e.g. R77.30)')
-    required_init_group.add_argument(
-        '-po', required=True, dest='templates_policy',
-        help='The name of an existing security policy '
-             'intended to be installed on the gateways')
-    required_init_group.add_argument(
-        '-cn', required=True, dest='controllers_name',
-        help='The name of the cloud environment controller')
-    required_init_group.add_argument(
-        '-sb', required=True,
-        dest='controllers_subscription',
-        type=validate_guid_uuid,
-        help='The Azure subscription ID')
-    # Handle credentials' additional nesting
-    credentials_subparsers = azure_init_subparser.add_subparsers(
-        help='An object containing one of the following alternatives '
-             '(in any case the entity for which the credentials are specified '
-             '(a service principal or a user) must have "read" access '
-             'to the relevant resources in the subscription)')
-
-    service_principal_subparser = credentials_subparsers.add_parser(
-        'sp', help='Service principal credentials')
-    service_principal_subparser._optionals.title = 'Required arguments'
-    defaults = {'controllers_credentials_grant_type': 'client_credentials'}
-    service_principal_subparser.set_defaults(**defaults)
-
-    user_subparser = credentials_subparsers.add_parser(
-        'user', help='User name and password')
-    user_subparser._optionals.title = 'Required arguments'
-
-    service_principal_subparser.add_argument(
-        '-at', required=True,
-        dest='controllers_credentials_tenant',
-        help='The Azure Active Directory tenant ID')
-    service_principal_subparser.add_argument(
-        '-aci', required=True,
-        dest='controllers_credentials_client_id',
-        help='The application ID with which the service principal is '
-             'associated')
-    service_principal_subparser.add_argument(
-        '-acs', required=True,
-        dest='controllers_credentials_client_secret',
-        help='The service principal password')
-
-    user_subparser.add_argument(
-        '-au', required=True,
-        dest='controllers_credentials_username',
-        help='The Azure fully qualified user name')
-    user_subparser.add_argument(
-        '-ap', required=True,
-        dest='controllers_credentials_password',
-        help='The password for the user')
-
-
-def create_init_aws_arguments(aws_init_subparser):
-    """Add to aws_init_subparser its arguments."""
-
-    defaults = {'delay': 30,
-                'controllers_class': 'AWS',
-                'management_host': 'localhost'}
-    aws_init_subparser.set_defaults(**defaults)
-    required_init_group = aws_init_subparser.add_argument_group(
-        'Required arguments for initialization')
-
-    required_init_group.add_argument(
-        '-mn', required=True, dest='management_name',
-        help='The name of the management server')
-
-    required_init_group.add_argument(
-        '-tn', required=True, dest='templates_name',
-        help='The name of a gateway configuration template')
-    required_init_group.add_argument(
-        '-otp', type=validate_SIC,
-        required=True, dest='templates_one-time-password',
-        help='A random string consisting of at least '
-             '%s alphanumeric characters' % repr(MIN_SIC_LENGTH))
-    required_init_group.add_argument(
-        '-v', required=True,
-        dest='templates_version', choices=AVAILABLE_VERSIONS,
-        help='The gateway version (e.g. R77.30)')
-    required_init_group.add_argument(
-        '-po', required=True, dest='templates_policy',
-        help='The name of an existing security policy '
-             'intended to be installed on the gateways')
-    required_init_group.add_argument(
-        '-cn', required=True, dest='controllers_name',
-        help='The name of the cloud environment controller')
-    required_init_group.add_argument(
-        '-r',
-        required=True, dest='controllers_regions',
-        help='A comma-separated list of AWS regions, '
-             'in which the gateways are being deployed. '
-             'For example: eu-west-1,us-east-1,eu-central-1')
-
-    # Handle credentials' additional nesting
-    credentials_subparsers = aws_init_subparser.add_subparsers(
-        help='Use one of these alternatives to specify credentials')
-    explicit_subparser = credentials_subparsers.add_parser('explicit')
-    explicit_subparser._optionals.title = 'Required arguments'
-    explicit_subparser.add_argument(
-        '-ak', required=True, dest='controllers_access-key',
-        help='AWS-ACCESS-KEY')
-    explicit_subparser.add_argument(
-        '-sk', required=True, dest='controllers_secret-key',
-        help='AWS-SECRET-KEY')
-
-    file_subparser = credentials_subparsers.add_parser('file')
-    file_subparser.add_argument(
-        dest='controllers_cred-file',
-        type=validate_filepath,
-        help='The path to a text file containing AWS credentials')
-
-    role_subparser = credentials_subparsers.add_parser('IAM')
-    defaults = {'controllers_cred-file': 'IAM'}
-    role_subparser.set_defaults(**defaults)
-
-
-def build_parsers(main_parser, conf):
-    """Create the parser.
-
-    Creates the main subparsers (init, show, add, set, delete) and
-    their subparsers (delay, management, templates, controllers)
-    """
-
-    main_parser.add_argument(
-        '--force', '-f', action='store_true', help='Skip prompts')
-
-    main_subparsers = main_parser.add_subparsers(
-        help='Available actions', dest='mode')
-    init_subparser = main_subparsers.add_parser(
-        'init', help='Initialize auto-provision settings')
-
-    print_subparser = main_subparsers.add_parser(
-        'show', help='Show all or specific configuration settings',
-        epilog='Usage examples: \n' +
-               '\n'.join(USAGE_EXAMPLES['show']),
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    print_subparser.add_argument(
-        'branch', choices=['all', 'management', 'templates', 'controllers'],
-        help='The branch of the configuration to show')
-
-    add_subparser = main_subparsers.add_parser(
-        'add', help='Add a template or a controller')
-    set_subparser = main_subparsers.add_parser(
-        'set',
-        help='Set configurations of a management, a template or a controller')
-    del_subparser = main_subparsers.add_parser(
-        'delete',
-        help='Delete configurations of a management, a template or a '
-             'controller')
-
-    # init parsers
-    init_subparsers = init_subparser.add_subparsers()
-    aws_init_subparser = init_subparsers.add_parser(
-        'AWS',
-        help='Initialize autoprovision settings for AWS',
-        epilog='Usage examples: \n' + '\n'.join(USAGE_EXAMPLES['init_aws']),
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    create_init_aws_arguments(aws_init_subparser)
-    azure_init_subparser = init_subparsers.add_parser(
-        'Azure',
-        help='Initialize autoprovision settings for Azure',
-        epilog='Usage examples: \n' + '\n'.join(USAGE_EXAMPLES['init_azure']),
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    create_init_azure_arguments(azure_init_subparser)
-    GCP_init_subparser = init_subparsers.add_parser(
-        'GCP',
-        help='Support for GCP will be added in the future',
-        epilog='Usage examples: \n' + '\n'.join(USAGE_EXAMPLES['init_GCP']),
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    create_init_GCP_arguments(GCP_init_subparser)
-
-    # add parsers
-    add_subparsers = add_subparser.add_subparsers(dest='branch')
-    add_template_subparser = add_subparsers.add_parser(
-        'template',
-        help='add a gateway configuration template. When a new gateway '
-             'instance is detected, the template\'s name is used to '
-             'determines the eventual gateway configuration',
-        epilog='Usage examples: \n' + '\n'.join(
-            USAGE_EXAMPLES['add_template']),
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    create_add_templates_arguments(add_template_subparser)
-
-    add_controller_subparser = add_subparsers.add_parser(
-        'controller',
-        help='Add a controller configuration. '
-             'These settings will be used to connect to cloud environments '
-             'such as AWS, Azure, GCP or OpenStack')
-    add_controller_subparser._optionals.title = 'Global arguments'
-    subparsers = add_controller_subparser.add_subparsers(
-        help='Available controller classes')
-
-    common_parser = argparse.ArgumentParser(add_help=False)
-
-    common_parser.add_argument(
-        '-d', dest='controllers_domain', metavar='domain',
-        help='The name or UID of the management domain '
-             'if applicable. In MDS, instances that are discovered by this '
-             'controller, will be defined in this domain. If not specified, '
-             'the domain specified in the management object '
-             '(in the configuration), will be used. '
-             'This attribute should not be specified '
-             'if the management server is not an MDS')
-    common_parser.add_argument(
-        '-t', nargs='+', dest='controllers_templates', metavar='templates',
-        help='An optional list of of templates, '
-             'which are allowed for instances that are discovered '
-             'by this controller. If this attribute is missing '
-             'or its value is an empty list, the meaning is that '
-             'any template may be used by gateways that belong to '
-             'this controller. This is useful in MDS environments, '
-             'where controllers work with different domains '
-             'and it is necessary to restrict a gateway to only use '
-             'templates that were intended for its domain. '
-             'e.g. TEMPLATE1-NAME TEMPLATE2-NAME')
-
-    add_aws_parser = subparsers.add_parser(
-        'AWS', help='AWS Controller', parents=[common_parser],
-        epilog='Usage examples: \n' +
-               '\n'.join(USAGE_EXAMPLES['add_controller_AWS']),
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    add_azure_parser = subparsers.add_parser(
-        'Azure', help='Azure controller', parents=[common_parser],
-        epilog='Usage examples: \n' +
-               '\n'.join(USAGE_EXAMPLES['add_controller_Azure']),
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    add_gcp_parser = subparsers.add_parser(
-        'GCP', help='GCP Controller', parents=[common_parser],
-        epilog='Usage examples: \n' +
-               '\n'.join(USAGE_EXAMPLES['add_controller_GCP']),
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-
-    create_add_aws_arguments(add_aws_parser)
-    create_add_azure_arguments(add_azure_parser)
-    create_add_gcp_arguments(add_gcp_parser)
-
-    # set parsers
-    set_subparsers = set_subparser.add_subparsers(dest='branch')
-    delay_subparser = set_subparsers.add_parser(
-        'delay', help='Set delay',
-        epilog='Usage examples: \n' +
-               '\n'.join(USAGE_EXAMPLES['set_delay']),
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    delay_subparser.add_argument(
-        'delay', type=int,
-        help='Time to wait in seconds after each poll cycle')
-    set_management_subparser = set_subparsers.add_parser(
-        'management', help='Set management arguments',
-        epilog='Usage examples: \n' +
-               '\n'.join(USAGE_EXAMPLES['set_management']),
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    create_set_management_arguments(set_management_subparser)
-
-    set_template_subparser = set_subparsers.add_parser(
-        'template', help='Set template arguments',
-        epilog='Usage examples: \n' +
-               '\n'.join(USAGE_EXAMPLES['set_template']),
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    create_set_templates_arguments(set_template_subparser, conf)
-
-    set_controller_subparser = set_subparsers.add_parser(
-        'controller', help='Set controller arguments')
-    set_controller_subparser._optionals.title = 'Global arguments'
-    subparsers = set_controller_subparser.add_subparsers(
-        help='Available controller classes')
-    common_parser = argparse.ArgumentParser(add_help=False)
-    optional_group = common_parser.add_argument_group(
-        'Set controllers optional arguments')
-    optional_group.add_argument(
-        '-nn', dest='controllers_new-name', metavar='new name',
-        help='The new name of the controller. The name must be unique')
-    optional_group.add_argument(
-        '-d', dest='controllers_domain', metavar='domain',
-        help='The name or UID of the management domain if '
-             'applicable (optional). '
-             'In MDS, instances that are discovered by this controller, '
-             'will be defined in this domain. '
-             'If not specified, the domain specified in the management object '
-             '(in the configuration), will be used. '
-             'This attribute should not be specified '
-             'if the management server is not an MDS')
-    optional_group.add_argument(
-        '-t', nargs='+', dest='controllers_templates', metavar='templates',
-        help='An optional list of of templates, '
-             'which are allowed for instances that are discovered by this '
-             'controller. If this attribute is missing or its value is an '
-             'empty list, the meaning is that any template '
-             'may be used by gateways that belong to this controller. '
-             'This is useful in MDS environments, where controllers work '
-             'with different domains and it is necessary to restrict a '
-             'gateway to only use templates that were intended '
-             'for its domain. e.g. "TEMPLATE1-NAME TEMPLATE2-NAME"')
-
-    set_aws_parser = subparsers.add_parser(
-        'AWS', help='AWS controller', parents=[common_parser],
-        epilog='Usage examples: \n' +
-               '\n'.join(USAGE_EXAMPLES['set_controller_AWS']),
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    set_azure_parser = subparsers.add_parser(
-        'Azure', help='Azure controller', parents=[common_parser],
-        epilog='Usage examples: \n' +
-               '\n'.join(USAGE_EXAMPLES['set_controller_Azure']),
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    set_gcp_parser = subparsers.add_parser(
-        'GCP', help='GCP controller', parents=[common_parser],
-        epilog='Usage examples: \n' +
-               '\n'.join(USAGE_EXAMPLES['set_controller_GCP']),
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    create_set_aws_arguments(set_aws_parser, conf)
-    create_set_azure_arguments(set_azure_parser, conf)
-    create_set_gcp_arguments(set_gcp_parser, conf)
-
-    # delete parsers
-    del_subparsers = del_subparser.add_subparsers(
-        help='Removable objects', dest='branch')
-    del_management_subparsers = del_subparsers.add_parser(
-        'management', help='Delete management arguments',
-        epilog='Usage examples: \n' +
-               '\n'.join(USAGE_EXAMPLES['delete_management']),
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    create_del_management_arguments(del_management_subparsers)
-    del_template_subparser = del_subparsers.add_parser(
-        'template', help='Delete template arguments',
-        epilog='Usage examples: \n' +
-               '\n'.join(USAGE_EXAMPLES['delete_template']),
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    create_del_templates_arguments(del_template_subparser, conf)
-    del_controller_subparser = del_subparsers.add_parser(
-        'controller', help='Delete controller arguments')
-    del_controller_subparser._optionals.title = 'Global arguments'
-
-    subparsers = del_controller_subparser.add_subparsers(
-        help='Available controller classes')
-    common_parser = argparse.ArgumentParser(add_help=False)
-
-    # Name argument is not included in this level
-    # Included in each the different methods for each class
-    # to validate via argparse if the controller actually exit
-    optional_group = common_parser.add_argument_group(
-        'Delete controllers optional arguments')
-
-    optional_group.add_argument(
-        '-d', dest='controllers_domain',
-        action='store_true',
-        help='The name or UID of the management domain if '
-             'applicable (optional). '
-             'In MDS, instances that are discovered by this controller, '
-             'will be defined in this domain. '
-             'If not specified, the domain specified in the management object '
-             '(in the configuration), will be used. '
-             'This attribute should not be specified if '
-             'the management server is not an MDS')
-    optional_group.add_argument(
-        '-t', dest='controllers_templates', action='store_true',
-        help='If this attribute is missing or its value '
-             'is an empty list, the meaning is that any template '
-             'may be used by gateways that belong to this controller. '
-             'This is useful in MDS environments, where controllers work '
-             'with different domains and it is necessary to restrict a gateway'
-             'to only use templates that were intended for its domain')
-
-    delete_aws_parser = subparsers.add_parser(
-        'AWS', help='AWS controller', parents=[common_parser],
-        epilog='Usage examples: \n' +
-               '\n'.join(USAGE_EXAMPLES['delete_controller_AWS']),
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    delete_azure_parser = subparsers.add_parser(
-        'Azure', help='Azure controller', parents=[common_parser],
-        epilog='Usage examples: \n' +
-               '\n'.join(USAGE_EXAMPLES['delete_controller_Azure']),
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    delete_gcp_parser = subparsers.add_parser(
-        'GCP', help='GCP controller', parents=[common_parser],
-        epilog='Usage examples: \n' +
-               '\n'.join(USAGE_EXAMPLES['delete_controller_GCP']),
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-
-    create_del_aws_arguments(delete_aws_parser, conf)
-    create_del_azure_arguments(delete_azure_parser, conf)
-    create_del_gcp_arguments(delete_gcp_parser, conf)
-
-
-def handle_auxiliary_arguments(args):
-    if hasattr(args, 'templates_new-key'):
-        input = getattr(args, 'templates_new-key')
-        if input is not None:
-            key = input[0]
-            # add or set
-            if len(input) > 1:
-                value = input[1]
-            # delete
-            else:
-                value = True
-            setattr(args, 'templates_' + key, value)
-    if not hasattr(args, 'templates_name'):
-        args.templates_name = None
-    if not hasattr(args, 'controllers_name'):
-        args.controllers_name = None
+            sys.stdout.write('please respond with "y" or "n"\n')
 
 
 def load_configuration():
     """Loads the configuration and the exiting templates and controllers."""
-
-    try:
-        with open(CONFPATH) as f:
-            conf = json.load(f, object_pairs_hook=collections.OrderedDict)
-    except:
-        if prompt('Failed to read configuration file: %s. '
-                  'Would you like to delete it?' % CONFPATH):
-            os.remove(CONFPATH)
-        else:
-            sys.stderr.write('Failed to read configuration file: %s\n' %
-                             CONFPATH)
-        sys.exit(2)
+    if os.path.exists(CONFPATH):
+        try:
+            with open(CONFPATH) as f:
+                conf = json.load(f, object_pairs_hook=collections.OrderedDict)
+        except:
+            if prompt('failed to read configuration file: %s. '
+                      'Would you like to delete it?' % CONFPATH):
+                os.remove(CONFPATH)
+                sys.exit(0)
+            else:
+                sys.stderr.write('failed to read configuration file: %s\n' %
+                                 CONFPATH)
+                sys.exit(2)
+    else:
+        conf = collections.OrderedDict()
 
     return conf
 
 
 def main():
-    main_parser = argparse.ArgumentParser()
-
-    if os.path.exists(CONFPATH):
-        conf = load_configuration()
-    else:
-        conf = collections.OrderedDict()
-
-    build_parsers(main_parser, conf)
-    parsed_arguments = main_parser.parse_args()
-    handle_auxiliary_arguments(parsed_arguments)
+    conf = load_configuration()
+    parsers = build_parsers(conf)
+    parsed_arguments = parsers.parse_args()
     process_arguments(conf, parsed_arguments)
 
 
