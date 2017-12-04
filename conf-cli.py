@@ -24,167 +24,114 @@ import subprocess
 import shutil
 import sys
 
-AZURE_ENVIRONMENTS = ['AzureCloud',
-                      'AzureChinaCloud',
-                      'AzureGermanCloud',
-                      'AzureUSGovernment']
+AZURE_ENVIRONMENTS = [
+    'AzureCloud', 'AzureChinaCloud', 'AzureGermanCloud', 'AzureUSGovernment'
+]
 
 AVAILABLE_VERSIONS = ['R77.30', 'R80.10']
 
-AWS_REGIONS = ['us-east-2',
-               'us-east-1',
-               'us-west-1',
-               'us-west-2',
-               'ap-south-1',
-               'ap-northeast-2',
-               'ap-southeast-1',
-               'ap-southeast-2',
-               'ap-northeast-1',
-               'ca-central-1',
-               'eu-central-1',
-               'eu-west-1',
-               'eu-west-2',
-               'sa-east-1',
-               'cn-north-1',
-               'us-gov-west-1']
+AWS_REGIONS = [
+    'us-east-2', 'us-east-1', 'us-west-1', 'us-west-2', 'ap-south-1',
+    'ap-northeast-2', 'ap-southeast-1', 'ap-southeast-2', 'ap-northeast-1',
+    'ca-central-1', 'eu-central-1', 'eu-west-1', 'eu-west-2', 'sa-east-1',
+    'cn-north-1', 'us-gov-west-1'
+]
 
 MIN_SIC_LENGTH = 8
 
 USAGE_EXAMPLES = {
-    'init_aws': ['init AWS -mn <MANAGEMENT-NAME> '
-                 '-tn <TEMPLATE-NAME> -otp <SIC-KEY> -v {R77.30,R80.10} '
-                 '-po <POLICY-NAME> -cn <CONTROLLER-NAME> '
-                 '-r eu-west-1,us-east-1,eu-central-1 '
-                 '-fi <FILE-PATH>',
-                 'init AWS -mn <MANAGEMENT-NAME> '
-                 '-tn <TEMPLATE-NAME> -otp <SIC-KEY> -v {R77.30,R80.10} '
-                 '-po <POLICY-NAME> -cn <CONTROLLER-NAME> '
-                 '-r eu-west-1,us-east-1,eu-central-1 '
-                 '-ak <ACCESS-KEY> -sk <SECRET-KEY> -sr <STS-ROLE> -se '
-                 '<STS-EXTERNAL-ID>',
-                 'init AWS -mn <MANAGEMENT-NAME> '
-                 '-tn <TEMPLATE-NAME> -otp <SIC-KEY> -v {R77.30,R80.10} '
-                 '-po <POLICY-NAME> -cn <CONTROLLER-NAME> '
-                 '-r eu-west-1,us-east-1,eu-central-1 -iam'
-                 ],
-    'init_azure': ['init Azure -mn <MANAGEMENT-NAME> '
-                   '-tn <TEMPLATE-NAME> -otp <SIC-KEY> -v {R77.30,R80.10} '
-                   '-po <POLICY-NAME> -cn <CONTROLLER-NAME> '
-                   '-sb <SUBSCRIPTION> '
-                   '-at <TENANT> -aci <CLIENT-ID> -acs <CLIENT-SECRET>',
-                   'init Azure -mn <MANAGEMENT-NAME> '
-                   '-tn <TEMPLATE-NAME> -otp <SIC-KEY> -v {R77.30,R80.10} '
-                   '-po <POLICY-NAME> -cn <CONTROLLER-NAME> '
-                   '-sb <SUBSCRIPTION> '
-                   '-au <USERNAME> -ap <PASSWORD>'
-                   ],
+    'init_aws': [
+        'init AWS -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp <SIC-KEY> '
+        '-v {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -r '
+        'eu-west-1,us-east-1,eu-central-1 -fi <FILE-PATH>',
+        'init AWS -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp <SIC-KEY> '
+        '-v {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -r '
+        'eu-west-1,us-east-1,eu-central-1 -ak <ACCESS-KEY> -sk <SECRET-KEY> '
+        '-sr <STS-ROLE> -se <STS-EXTERNAL-ID>',
+        'init AWS -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp <SIC-KEY> '
+        '-v {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -r '
+        'eu-west-1,us-east-1,eu-central-1 -iam'
+    ],
+    'init_azure': [
+        'init Azure -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp <SIC-KEY> '
+        '-v {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -sb '
+        '<SUBSCRIPTION> -at <TENANT> -aci <CLIENT-ID> -acs <CLIENT-SECRET>',
+        'init Azure -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp <SIC-KEY> '
+        '-v {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -sb '
+        '<SUBSCRIPTION> -au <USERNAME> -ap <PASSWORD>'
+    ],
     'init_GCP': [],
     'show': ['show all',
              'show management',
              'show templates',
-             'show controllers'
-             ],
-    'add_template': ['add template -n <TEMPLATE-NAME> '
-                     '-otp <SIC-KEY> -v {R77.30,R80.10} -po <POLICY-NAME>',
-                     'add template -n <TEMPLATE-NAME> '
-                     '-otp <SIC-KEY> -v {R77.30,R80.10} -po <POLICY-NAME> '
-                     '[-hi true] [-ia true] [-appi true]'],
-    'add_controller_AWS': ['add controller AWS -n <NAME> '
-                           '-r eu-west-1,us-east-1,eu-central-1 '
-                           'file <FILE-PATH>',
-                           'add controller AWS -n <NAME> '
-                           '-r eu-west-1,eu-central-1 '
-                           'explicit -ak <ACCESS-KEY> '
-                           '-sk <SECRET-KEY>',
-                           'add controller AWS '
-                           '-n <NAME> -r eu-west-1 IAM -sn '
-                           '<SUB-ACCOUNT-NAME> -sak '
-                           '<SUB-ACCOUNT-ACCESS-KEY> -ssk '
-                           '<SUB-ACCOUNT-SECRET-KEY>'
-                           ],
-    'add_controller_Azure': ['add controller '
-                             'Azure -n <NAME> '
-                             '-sb <SUBSCRIPTION> '
-                             '[-en {AzureCloud,AzureChinaCloud,'
-                             'AzureGermanCloud,AzureUSGovernment}] '
-                             'sp -at <TENANT> -aci <CLIENT-ID> '
-                             '-acs <CLIENT-SECRET>',
-                             'add controller '
-                             'Azure -n <NAME> '
-                             '-sb <SUBSCRIPTION> '
-                             'user -au <USERNAME> -ap <PASSWORD>'
-                             ],
-    'add_controller_GCP': ['add controller GCP '
-                           '-n <NAME> '
-                           '-proj <PROJECT> -cr <FILE-PATH>'
-                           ],
-    'add_controller_OpenStack': ['add controller OpenStack '
-                                 '-n <NAME> -sc {http,https} '
-                                 '-ho <HOST> -fp <FINGERPRINT> '
-                                 '-te <TENANT> -u <USER> -pass <PASSWORD>'],
+             'show controllers'],
+    'add_template': [
+        'add template -tn <TEMPLATE-NAME> -otp <SIC-KEY> -v {R77.30,R80.10} '
+        '-po <POLICY-NAME>',
+        'add template -tn <TEMPLATE-NAME> -otp <SIC-KEY> -v {R77.30,R80.10} '
+        '-po <POLICY-NAME> [-hi true] [-ia true] [-appi true]'
+    ],
+    'add_controller_AWS': [
+        'add controller AWS -cn <NAME> -r eu-west-1,us-east-1,eu-central-1  '
+        '-fi <FILE-PATH>',
+        'add controller AWS -cn <NAME> -r eu-west-1,eu-central-1 -ak '
+        '<ACCESS-KEY> -sk <SECRET-KEY>',
+        'add controller AWS -cn <NAME> -r eu-west-1 -iam -sn '
+        '<SUB-ACCOUNT-NAME> -sak <SUB-ACCOUNT-ACCESS-KEY> -ssk '
+        '<SUB-ACCOUNT-SECRET-KEY>'
+    ],
+    'add_controller_Azure': [
+        'add controller Azure -cn <NAME> -sb <SUBSCRIPTION> [-en {'
+        'AzureCloud,AzureChinaCloud,AzureGermanCloud,AzureUSGovernment}] sp '
+        '-at <TENANT> -aci <CLIENT-ID> -acs <CLIENT-SECRET>',
+        'add controller Azure -cn <NAME> -sb <SUBSCRIPTION> user -au '
+        '<USERNAME> -ap <PASSWORD>'
+    ],
+    'add_controller_GCP': [
+        'add controller GCP -cn <NAME> -proj <PROJECT> -cr <FILE-PATH>'
+    ],
     'set_delay': ['set delay 60'],
-    'set_management': ['set management [-n <NEW-NAME>] '
-                       '[-ho <NEW-HOST> [-d <DOMAIN>] '
-                       '[-fp <FINGERPRINT>] [-u <USER>] '
-                       '[-pass <PASSWORD>] [-pr <PROXY>] '
-                       '[-cs <CUSTOM-SCRIPT-PATH>]'],
-    'set_template': ['set template -n <NAME> '
-                     '[-nn <NEW-NAME>] '
-                     '[-otp <SIC-KEY>] '
-                     '[-v {R77.30,R80.10}] [-po <POLICY>]',
-                     'set template -n <NAME> '
-                     '[-hi true] [-ia true] [-appi true]'
-                     ],
-    'set_controller_AWS': ['set controller AWS '
-                           '-n <NAME> [-nn <NEW-NAME>]',
-                           'set controller AWS '
-                           '-n <NAME> [-fi <FILE-PATH> | -iam]'],
-    'set_controller_Azure': ['set controller Azure '
-                             '-n <NAME> [-nn <NEW-NAME>] '
-                             '[-au <USERNAME>] '
-                             '[-ap <PASSWORD>]',
-                             'set controller Azure '
-                             '-n <NAME> [-cd <DOMAIN>]'
-                             ],
-    'set_controller_GCP': ['set controller GCP -n <NAME> '
-                           '[-nn <NEW-NAME>] '
-                           '[-cr <FILE-PATH> | "IAM"]'],
-    'set_controller_OpenStack': ['set controller OpenStack '
-                                 '-n <NAME> '
-                                 '[-ho <HOST>] '
-                                 '[-fp <FINGERPRINT>]',
-                                 'set controller OpenStack '
-                                 '-n <NAME> '
-                                 '[-nn <NEW-NAME>]'
-                                 ],
+    'set_management': [
+        'set management [-mn <NEW-NAME>] [-ho <NEW-HOST> [-d <DOMAIN>] [-fp '
+        '<FINGERPRINT>] [-u <USER>] [-pass <PASSWORD>] [-pr <PROXY>] [-cs '
+        '<CUSTOM-SCRIPT-PATH>]'
+    ],
+    'set_template': [
+        'set template -tn <NAME> [-nn <NEW-NAME>] [-otp <SIC-KEY>] [-v {'
+        'R77.30,R80.10}] [-po <POLICY>]',
+        'set template -tn <NAME> [-hi true] [-ia true] [-appi true]'
+    ],
+    'set_controller_AWS': [
+        'set controller AWS -tn <NAME> [-nn <NEW-NAME>]',
+        'set controller AWS -tn <NAME> [-fi <FILE-PATH> | -iam]'
+    ],
+    'set_controller_Azure': [
+        'set controller Azure -cn <NAME> [-nn <NEW-NAME>] [-au <USERNAME>] ['
+        '-ap <PASSWORD>]',
+        'set controller Azure -cn <NAME> [-cd <DOMAIN>]'
+    ],
+    'set_controller_GCP': [
+        'set controller GCP -cn <NAME> [-nn <NEW-NAME>] [-cr <FILE-PATH> | '
+        '"IAM"]'
+    ],
     'delete_management': ['delete management',
-                          'delete management -pr'
-                          ],
+                          'delete management -pr'],
     'delete_template': [
-        'delete template -n <NAME>',
-        'delete template -n <NAME> [-pr] [-cp]'
+        'delete template -tn <NAME>',
+        'delete template -tn <NAME> [-pr] [-cp]'
     ],
     'delete_controller_AWS': [
-        'delete controller AWS -n <NAME> ',
-        'delete controller AWS '
-        '-n <NAME> [-cd] [-ct]'
+        'delete controller AWS -cn <NAME> ',
+        'delete controller AWS -cn <NAME> [-cd] [-ct]'
     ],
-    'delete_controller_Azure': ['delete controller Azure '
-                                '-n <NAME> ',
-                                'delete controller Azure '
-                                '-n <NAME> [-d] [-ap]'
-                                ],
+    'delete_controller_Azure': [
+        'delete controller Azure -cn <NAME> ',
+        'delete controller Azure -cn <NAME> [-d] [-ap]'
+    ],
     'delete_controller_GCP': [
-        'delete controller GCP -n <NAME> ',
-        'delete controller GCP '
-        '-n <NAME> [-ct] [-cr]'
-    ],
-    'delete_controller_OpenStack': [
-        'delete controller OpenStack '
-        '-n <NAME> ',
-        'delete controller OpenStack '
-        '-n <NAME> [-cd] [-sc]'
-    ],
+        'delete controller GCP -cn <NAME> ',
+        'delete controller GCP -cn <NAME> [-ct] [-cr]'
+    ]
 }
 
 CONFPATH = os.environ['FWDIR'] + '/conf/autoprovision.json'
@@ -206,7 +153,26 @@ def my_check_value(self, action, value):
         raise argparse.ArgumentError(action, msg)
 
 
+def my_error(self, message):
+    """error(message: string)
+
+    Prints a usage message incorporating the message to stderr and
+    exits.
+
+    If you override this in a subclass, it should not return -- it
+    should either exit or raise an exception.
+    """
+    self.print_usage(sys.stderr)
+    if self.epilog:
+        args = {'prog': self.prog, 'message': message, 'epilog': self.epilog}
+        self.exit(2, ('%(prog)s: error: %(message)s\n\n%(epilog)s') % args)
+    else:
+        args = {'prog': self.prog, 'message': message}
+        self.exit(2, ('%(prog)s: error: %(message)s') % args)
+
+
 argparse.ArgumentParser._check_value = my_check_value
+argparse.ArgumentParser.error = my_error
 
 REQUIRED_GROUP, OPTIONAL_GROUP = 'required arguments', 'optional group'
 
@@ -244,7 +210,8 @@ AWS_SUBACCOUNT_ARGS = (SUBCREDENTIALS_NAME,
                        'AWS sub-credentials access key',
                        'AWS sub-credentials secret key',
                        'AWS sub-credentials file path',
-                       'AWS sub-credentials role',
+                       'AWS sub-credentials IAM',
+                       'AWS sub-credentials STS role',
                        'AWS sub-credentials STS external id')
 
 
@@ -275,7 +242,6 @@ def create_parser_dict(conf):
     Override default argument's kwargs by specifying a tuple (argument name,
     kwargs) instead of just the name
     """
-
     parsers = {
         SHOW: [SHOW, [], ['branch'],
                'show all or specific configuration settings',
@@ -294,7 +260,7 @@ def create_parser_dict(conf):
             AWS,
             ['Management name', TEMPLATE_NAME, 'one time password', 'version',
              'policy', CONTROLLER_NAME, 'regions'],
-            ['AWS access key', 'AWS secret key', 'AWS role',
+            ['AWS access key', 'AWS secret key', 'AWS IAM',
              'AWS credentials file path', 'STS role', 'STS external id'],
             'initialize autoprovision settings for AWS',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['init_aws']),
@@ -338,11 +304,12 @@ def create_parser_dict(conf):
         'add_controller_aws': [
             AWS, [CONTROLLER_NAME, 'regions'],
             ['controller templates', 'controller domain', 'AWS access key',
-             'AWS secret key', 'AWS role', 'AWS credentials file path',
+             'AWS secret key', 'AWS IAM', 'AWS credentials file path',
              'STS role', 'STS external id', SUBCREDENTIALS_NAME,
              'AWS sub-credentials access key',
              'AWS sub-credentials secret key',
-             'AWS sub-credentials file path', 'AWS sub-credentials role',
+             'AWS sub-credentials file path', 'AWS sub-credentials IAM',
+             'AWS sub-credentials STS role',
              'AWS sub-credentials STS external id'],
             'add AWS Controller',
             'usage examples: \n' + '\n'.join(
@@ -403,11 +370,12 @@ def create_parser_dict(conf):
             AWS, [(CONTROLLER_NAME, {'choices': get_controllers(conf, AWS),
                                      'dest': CONTROLLER_NAME})],
             [CONTROLLER_NEW_NAME, 'controller templates', 'controller domain',
-             'regions', 'AWS access key', 'AWS secret key', 'AWS role',
+             'regions', 'AWS access key', 'AWS secret key', 'AWS IAM',
              'AWS credentials file path', 'STS role', 'STS external id',
              SUBCREDENTIALS_NAME, 'AWS sub-credentials access key',
              'AWS sub-credentials secret key',
-             'AWS sub-credentials file path', 'AWS sub-credentials role',
+             'AWS sub-credentials file path', 'AWS sub-credentials IAM',
+             'AWS sub-credentials STS role',
              'AWS sub-credentials STS external id'],
             'set AWS controller values',
             'usage examples: \n' + '\n'.join(
@@ -495,7 +463,7 @@ def create_parser_dict(conf):
              ('regions', {'action': 'store_true'}),
              ('AWS access key', {'action': 'store_true'}),
              ('AWS secret key', {'action': 'store_true'}),
-             ('AWS role', {'action': 'store_true'}),
+             ('AWS IAM', {'action': 'store_true'}),
              ('AWS credentials file path', {'action': 'store_true'}),
              ('STS role', {'action': 'store_true'}),
              ('STS external id', {'action': 'store_true'}),
@@ -503,7 +471,8 @@ def create_parser_dict(conf):
              ('AWS sub-credentials access key', {'action': 'store_true'}),
              ('AWS sub-credentials secret key', {'action': 'store_true'}),
              ('AWS sub-credentials file path', {'action': 'store_true'}),
-             ('AWS sub-credentials role', {'action': 'store_true'}),
+             ('AWS sub-credentials IAM', {'action': 'store_true'}),
+             ('AWS sub-credentials STS role', {'action': 'store_true'}),
              ('AWS sub-credentials STS external id', {'action': 'store_true'})
              ], 'delete an AWS controller or its values',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES[
@@ -742,7 +711,7 @@ ARGUMENTS = {
         '-hi', [TEMPLATES, TEMPLATE_NAME, 'https-inspection'],
         'an optional boolean attribute indicating '
         'whether to enable the HTTPS Inspection blade on the gateway',
-        {'type': validate_bool}
+        {'type': validate_bool, 'choices': ['true', 'false']}
     ],
     'Identity Awareness': [
         '-ia', [TEMPLATES, TEMPLATE_NAME, 'identity-awareness'],
@@ -850,15 +819,13 @@ ARGUMENTS = {
         'the path to a text file containing AWS credentials',
         {'type': validate_filepath}
     ],
-    'AWS role': ['-iam', [CONTROLLERS, CONTROLLER_NAME, 'cred-file'],
-                 'use this flag to specify whether to use an IAM role profile',
-                 {'action': 'store_const', 'const': 'IAM'}
-                 ],
+    'AWS IAM': ['-iam', [CONTROLLERS, CONTROLLER_NAME, 'cred-file'],
+                'use this flag to specify whether to use an IAM role profile',
+                {'action': 'store_const', 'const': 'IAM'}],
     'STS role': ['-sr', [CONTROLLERS, CONTROLLER_NAME, 'sts-role'],
-                 'the STS RoleArn of the role to assume', None
-                 ],
+                 'the STS RoleARN of the role to assume', None],
     'STS external id': [
-        '-se', [CONTROLLERS, CONTROLLER_NAME, 'external-id'],
+        '-se', [CONTROLLERS, CONTROLLER_NAME, 'sts-external-id'],
         'an optional STS ExternalId to use when assuming the role', None
     ],
     SUBCREDENTIALS_NAME: [
@@ -882,7 +849,7 @@ ARGUMENTS = {
         'the path to a text file containing the AWS credentials for the '
         'sub-account', {'type': validate_filepath}
     ],
-    'AWS sub-credentials role': [
+    'AWS sub-credentials IAM': [
         '-siam', [CONTROLLERS, CONTROLLER_NAME, SUBCREDS,
                   SUBCREDENTIALS_NAME, 'cred-file'],
         'use this flag to specify whether to use an IAM role profile for '
@@ -891,10 +858,10 @@ ARGUMENTS = {
     'AWS sub-credentials STS role':
         ['-ssr', [CONTROLLERS, CONTROLLER_NAME, SUBCREDS,
                   SUBCREDENTIALS_NAME, 'sts-role'],
-         'the STS RoleArn of the role to assume for the sub-account', None],
+         'the STS RoleARN of the role to assume for the sub-account', None],
     'AWS sub-credentials STS external id': [
         '-sse', [CONTROLLERS, CONTROLLER_NAME, SUBCREDS,
-                 SUBCREDENTIALS_NAME, 'external-id'],
+                 SUBCREDENTIALS_NAME, 'sts-external-id'],
         'an optional STS ExternalId to use when assuming the role in this '
         'sub account', None
     ],
@@ -952,14 +919,8 @@ def verify_AWS_credentials(conf, args, creds, sub=False):
     else:
         name = getattr(args, CONTROLLER_NAME)
 
-    explicit = ('AWS access key', 'AWS sub-credentials access key',
-                'AWS secret key', 'AWS sub-credentials secret key')
-    file_or_role = ('AWS credentials file path',
-                    'AWS sub-credentials file path', 'AWS role',
-                    'AWS sub-credentials role')
-
-    # No credentials
-    if not ('cred-file' in creds or 'access-key' in creds):
+    # No mandatory credentials in the main account
+    if not sub and not ('cred-file' in creds or 'access-key' in creds):
         sys.stderr.write(
             '%s is missing credentials. To set other credentials use set.\n'
             % name)
@@ -972,19 +933,35 @@ def verify_AWS_credentials(conf, args, creds, sub=False):
             'different credentials\n')
         sys.exit(2)
 
-    # Has too many, explicit AND credentials file
+    # Has too many, explicit AND cred file
     if 'cred-file' in creds and 'access-key' in creds:
+        explicit_keys = ('AWS access key', 'AWS sub-credentials access key',
+                         'AWS secret key', 'AWS sub-credentials secret key')
+        file_or_role_keys = ('AWS credentials file path',
+                             'AWS sub-credentials file path', 'AWS IAM',
+                             'AWS sub-credentials IAM')
+        inserted_explicit_creds = [key for key in explicit_keys if getattr(
+            args, key, None)]
+        inserted_other_creds = [key for key in file_or_role_keys if getattr(
+            args, key, None)]
+
+        if inserted_explicit_creds and inserted_other_creds:
+            sys.stderr.write(
+                'please specify only one of the following credentials: '
+                'explicit credentials (access and secret keys) or a file path '
+                'or the IAM flag.\n')
+            sys.exit(2)
+
         if args.force or prompt(
-                'replace existing credentials?'):
+                'replace existing credentials for %s?' % name):
             # Check what type has been inserted in the recent command and
             # delete the other type
-            if [key for key in explicit if getattr(args, key, None)]:
-                for k in file_or_role:
+            if inserted_explicit_creds:
+                for k in file_or_role_keys:
                     nested_delete(conf, ARGUMENTS[k][1])
 
-            if [key for key in file_or_role if getattr(args, key, None)]:
-                for k in explicit:
-                    print ARGUMENTS
+            if inserted_other_creds:
+                for k in explicit_keys:
                     nested_delete(conf, ARGUMENTS[k][1])
         else:
             sys.exit(0)
@@ -1200,13 +1177,12 @@ def nested_get(dic, keys):
 def delete_arguments(conf, args):
     """Remove either a property or an entire object."""
     removed_inner_argument = False
-    # Check if any inner arguments were specified and remove
+
     for arg in sorted(vars(args)):
-        args_to_ignore = [x for x in NON_CONFIG_KEYS
-                          if x is not SUBCREDENTIALS_NAME]
-        if arg not in args_to_ignore and getattr(
-                args, arg):
+        if arg not in NON_CONFIG_KEYS and getattr(args, arg):
             path = ARGUMENTS[arg][1]
+            if arg is SUBCREDENTIALS_NAME:
+                path.append(getattr(args, arg))
             if not nested_get(conf, path):
                 sys.stdout.write('%s does not exist in %s\n' %
                                  (path[-1], (path[-2])))
@@ -1226,10 +1202,19 @@ def delete_arguments(conf, args):
                                     template_name):
                 nested_delete(conf, [TEMPLATES, template_name])
         elif args.branch == CONTROLLER:
-            controller_name = getattr(args, CONTROLLER_NAME)
-            if args.force or prompt('are you sure you want to delete %s?' %
-                                    controller_name):
-                nested_delete(conf, [CONTROLLERS, controller_name])
+            sub_creds_name = getattr(args, SUBCREDENTIALS_NAME, None)
+            if sub_creds_name:
+                path = ARGUMENTS[SUBCREDENTIALS_NAME][1]
+                path.append(sub_creds_name)
+                if args.force or prompt(
+                        'are you sure you want to delete %s\'s '
+                        '%s?' % (path[-2], path[-1])):
+                        nested_delete(conf, path)
+            else:
+                controller_name = getattr(args, CONTROLLER_NAME)
+                if args.force or prompt('are you sure you want to delete %s?' %
+                                        controller_name):
+                    nested_delete(conf, [CONTROLLERS, controller_name])
         elif args.branch == MANAGEMENT:
             sys.stderr.write(
                 'unable to delete management settings\n')
@@ -1288,7 +1273,7 @@ def custom_validations(conf, args):
     Validates user input on top of argparse validations
     """
     inputted_regions = getattr(args, 'regions', None)
-    if inputted_regions:
+    if inputted_regions and (args.mode == ADD or args.mode == SET):
         setattr(args, 'regions', validate_regions(args, inputted_regions))
 
     if [key for key in AWS_SUBACCOUNT_ARGS if getattr(args, key, None)]:
@@ -1302,8 +1287,8 @@ def custom_validations(conf, args):
                 sub_cred_names = get_subaccounts_names(conf, controller_name)
                 if subcred_name not in sub_cred_names:
                     sys.stderr.write(
-                        'sub-account %s does not exist. Choose from %s\n' %
-                        (subcred_name, sub_cred_names))
+                        'sub-account %s does not exist. Choose from: %s\n' %
+                        (subcred_name, ', '.join(sub_cred_names)))
                     sys.exit(2)
             if (args.mode == ADD or args.mode == SET) and not (any(
                     getattr(args, k) for k in
