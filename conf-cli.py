@@ -165,11 +165,10 @@ def my_error(self, message):
     self.print_usage(sys.stderr)
     if self.epilog:
         args = {'prog': self.prog, 'message': message, 'epilog': self.epilog}
-        self.exit(2, ('%(prog)s: error: %(message)s\n\n%(epilog)s') % args)
+        self.exit(2, ('%(prog)s: error: %(message)s\n\n%(epilog)s\n') % args)
     else:
         args = {'prog': self.prog, 'message': message}
-        self.exit(2, ('%(prog)s: error: %(message)s') % args)
-
+        self.exit(2, ('%(prog)s: error: %(message)s\n') % args)
 
 argparse.ArgumentParser._check_value = my_check_value
 argparse.ArgumentParser.error = my_error
@@ -533,7 +532,7 @@ def validate_guid_uuid(value):
         re.IGNORECASE)
 
     if not pattern.match(value):
-        raise argparse.ArgumentTypeError('value %s is not a GUID' % value)
+        raise argparse.ArgumentTypeError('value %s is not a GUID.\n' % value)
 
     return value
 
@@ -542,7 +541,7 @@ def validate_ports(value):
     ports = value.split(',')
     for port in ports:
         if not port.isdigit():
-            raise argparse.ArgumentTypeError('port %s is invalid' % port)
+            raise argparse.ArgumentTypeError('port %s is invalid.\n' % port)
     return ports
 
 
@@ -552,14 +551,15 @@ def validate_bool(value):
     elif value.lower() in ('no', 'false', 'f', 'n', '0'):
         return False
     else:
-        raise argparse.ArgumentTypeError('boolean value expected')
+        raise argparse.ArgumentTypeError('boolean value expected (yes, no, '
+                                         'true, false, t, y, f, n).\n')
 
 
 def validate_filepath(value):
     if os.path.exists(value):
         return value
 
-    raise argparse.ArgumentTypeError('file %s does not exist' % value)
+    raise argparse.ArgumentTypeError('file %s does not exist.\n' % value)
 
 
 def validate_iam_or_filepath(value):
@@ -573,7 +573,7 @@ def validate_hex(value):
     try:
         int(value, 16)
     except ValueError:
-        raise argparse.ArgumentTypeError('value %s is not hexadecimal' %
+        raise argparse.ArgumentTypeError('value %s is not hexadecimal.\n' %
                                          value)
     return value
 
@@ -711,7 +711,7 @@ ARGUMENTS = {
         '-hi', [TEMPLATES, TEMPLATE_NAME, 'https-inspection'],
         'an optional boolean attribute indicating '
         'whether to enable the HTTPS Inspection blade on the gateway',
-        {'type': validate_bool, 'choices': ['true', 'false']}
+        {'type': validate_bool}
     ],
     'Identity Awareness': [
         '-ia', [TEMPLATES, TEMPLATE_NAME, 'identity-awareness'],
@@ -920,11 +920,18 @@ def verify_AWS_credentials(conf, args, creds, sub=False):
         name = getattr(args, CONTROLLER_NAME)
 
     # No mandatory credentials in the main account
-    if not sub and not ('cred-file' in creds or 'access-key' in creds):
-        sys.stderr.write(
-            '%s is missing credentials. To set other credentials use set.\n'
-            % name)
-        sys.exit(2)
+    if not sub:
+        if not ('cred-file' in creds or 'access-key' in creds):
+            sys.stderr.write(
+                '%s is missing credentials. To set other credentials '
+                'use set.\n' % name)
+            sys.exit(2)
+    else:
+        if not creds:
+            sys.stderr.write(
+                '%s is missing credentials. To remove this sub account use '
+                'delete.\n' % name)
+            sys.exit(2)
 
     # Missing either of access key or secret key (both or neither)
     if ('access-key' in creds) != ('secret-key' in creds):
@@ -935,17 +942,24 @@ def verify_AWS_credentials(conf, args, creds, sub=False):
 
     # Has too many, explicit AND cred file
     if 'cred-file' in creds and 'access-key' in creds:
-        explicit_keys = ('AWS access key', 'AWS sub-credentials access key',
-                         'AWS secret key', 'AWS sub-credentials secret key')
-        file_or_role_keys = ('AWS credentials file path',
-                             'AWS sub-credentials file path', 'AWS IAM',
-                             'AWS sub-credentials IAM')
-        inserted_explicit_creds = [key for key in explicit_keys if getattr(
-            args, key, None)]
-        inserted_other_creds = [key for key in file_or_role_keys if getattr(
-            args, key, None)]
+        if not sub:
+            explicit_keys = ('AWS access key', 'AWS secret key')
+            non_explicit_keys = ('AWS credentials file path', 'AWS IAM')
+            inserted_explicit_creds = [key for key in explicit_keys
+                                       if getattr(args, key, None)]
+            inserted_non_explicit_creds = [key for key in non_explicit_keys
+                                           if getattr(args, key, None)]
+        else:
+            sub_explicit_keys = ('AWS sub-credentials access key',
+                                 'AWS sub-credentials secret key')
+            sub_non_explicit_keys = ('AWS sub-credentials file path',
+                                     'AWS sub-credentials IAM')
+            inserted_explicit_creds = [key for key in sub_explicit_keys
+                                       if getattr(args, key, None)]
+            inserted_non_explicit_creds = [key for key in sub_non_explicit_keys
+                                           if getattr(args, key, None)]
 
-        if inserted_explicit_creds and inserted_other_creds:
+        if inserted_explicit_creds and inserted_non_explicit_creds:
             sys.stderr.write(
                 'please specify only one of the following credentials: '
                 'explicit credentials (access and secret keys) or a file path '
@@ -957,12 +971,20 @@ def verify_AWS_credentials(conf, args, creds, sub=False):
             # Check what type has been inserted in the recent command and
             # delete the other type
             if inserted_explicit_creds:
-                for k in file_or_role_keys:
-                    nested_delete(conf, ARGUMENTS[k][1])
+                if not sub:
+                    for k in non_explicit_keys:
+                        nested_delete(conf, ARGUMENTS[k][1])
+                else:
+                    for k in sub_non_explicit_keys:
+                        nested_delete(conf, ARGUMENTS[k][1])
 
-            if inserted_other_creds:
-                for k in explicit_keys:
-                    nested_delete(conf, ARGUMENTS[k][1])
+            if inserted_non_explicit_creds:
+                if not sub:
+                    for k in explicit_keys:
+                        nested_delete(conf, ARGUMENTS[k][1])
+                else:
+                    for k in sub_explicit_keys:
+                        nested_delete(conf, ARGUMENTS[k][1])
         else:
             sys.exit(0)
 
@@ -1174,9 +1196,40 @@ def nested_get(dic, keys):
     return dic
 
 
+def delete_branch(conf, args, branch):
+    if branch is TEMPLATES:
+        template_name = getattr(args, TEMPLATE_NAME)
+        if args.force or prompt('are you sure you want to delete %s?' %
+                                template_name):
+            nested_delete(conf, [TEMPLATES, template_name])
+
+    if branch is CONTROLLERS:
+        controller_name = getattr(args, CONTROLLER_NAME)
+        if args.force or prompt('are you sure you want to delete %s?' %
+                                controller_name):
+            nested_delete(conf, [CONTROLLERS, controller_name])
+
+    if branch is SUBCREDS:
+        sub_creds_name = getattr(args, SUBCREDENTIALS_NAME, None)
+        path = ARGUMENTS[SUBCREDENTIALS_NAME][1]
+        path.append(sub_creds_name)
+        if args.force or prompt('are you sure you want to delete %s\'s '
+                                '%s sub-account?' % (path[-3], path[-1])):
+            nested_delete(conf, path)
+
+
 def delete_arguments(conf, args):
     """Remove either a property or an entire object."""
-    removed_inner_argument = False
+
+    branches = (TEMPLATES, CONTROLLERS, SUBCREDS)
+    for branch in branches:
+        list_of_args_of_branch = [arg for arg in vars(args)
+                                  if getattr(args, arg, None) and
+                                  ARGUMENTS.get(arg, False) and
+                                  branch in ARGUMENTS[arg][1]]
+
+        if len(list_of_args_of_branch) == 1:
+            delete_branch(conf, args, branch)
 
     for arg in sorted(vars(args)):
         if arg not in NON_CONFIG_KEYS and getattr(args, arg):
@@ -1189,36 +1242,6 @@ def delete_arguments(conf, args):
             elif args.force or prompt('are you sure you want to delete %s\'s '
                                       '%s?' % (path[-2], path[-1])):
                 nested_delete(conf, path)
-            removed_inner_argument = True
-
-    # Did not remove inner arguments, removing entire branch
-    if not removed_inner_argument:
-        # Get branch to delete (args.branch is either management, template
-        # or controller).
-        # Singular for usability, plural for JSON hierarchy path.
-        if args.branch == TEMPLATE:
-            template_name = getattr(args, TEMPLATE_NAME)
-            if args.force or prompt('are you sure you want to delete %s?' %
-                                    template_name):
-                nested_delete(conf, [TEMPLATES, template_name])
-        elif args.branch == CONTROLLER:
-            sub_creds_name = getattr(args, SUBCREDENTIALS_NAME, None)
-            if sub_creds_name:
-                path = ARGUMENTS[SUBCREDENTIALS_NAME][1]
-                path.append(sub_creds_name)
-                if args.force or prompt(
-                        'are you sure you want to delete %s\'s '
-                        '%s?' % (path[-2], path[-1])):
-                        nested_delete(conf, path)
-            else:
-                controller_name = getattr(args, CONTROLLER_NAME)
-                if args.force or prompt('are you sure you want to delete %s?' %
-                                        controller_name):
-                    nested_delete(conf, [CONTROLLERS, controller_name])
-        elif args.branch == MANAGEMENT:
-            sys.stderr.write(
-                'unable to delete management settings\n')
-            sys.exit(2)
 
 
 def handle_change_of_branch_name(conf, args):
