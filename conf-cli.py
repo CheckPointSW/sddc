@@ -170,6 +170,7 @@ def my_error(self, message):
         args = {'prog': self.prog, 'message': message}
         self.exit(2, ('%(prog)s: error: %(message)s\n') % args)
 
+
 argparse.ArgumentParser._check_value = my_check_value
 argparse.ArgumentParser.error = my_error
 
@@ -286,8 +287,7 @@ def create_parser_dict(conf):
              'prototype', 'specific network', 'generation', 'proxy ports',
              'HTTPS Inspection', 'Identity Awareness', 'Application Control',
              'Intrusion Prevention', 'IPS Profile', 'URL Filtering',
-             'Anti-Bot',
-             'Anti-Virus', 'restrictive policy'],
+             'Anti-Bot', 'Anti-Virus', 'restrictive policy'],
             'add a gateway configuration template. When a new gateway '
             'instance is detected, the template\'s name is used to '
             'determines the eventual gateway configuration',
@@ -351,11 +351,10 @@ def create_parser_dict(conf):
                                         'dest': TEMPLATE_NAME})],
             [TEMPLATE_NEW_NAME, 'one time password', 'version', 'policy',
              'custom parameters', 'prototype', 'specific network',
-             'generation',
-             'proxy ports', 'HTTPS Inspection', 'Identity Awareness',
-             'Application Control', 'Intrusion Prevention', 'IPS Profile',
-             'URL Filtering', 'Anti-Bot', 'Anti-Virus', 'restrictive policy',
-             NEW_KEY],
+             'generation', 'proxy ports', 'HTTPS Inspection',
+             'Identity Awareness', 'Application Control',
+             'Intrusion Prevention', 'IPS Profile', 'URL Filtering',
+             'Anti-Bot', 'Anti-Virus', 'restrictive policy', NEW_KEY],
             'set template arguments', 'usage examples: \n' + '\n'.join(
                 USAGE_EXAMPLES['set_template']), None
         ],
@@ -439,10 +438,9 @@ def create_parser_dict(conf):
              ('Anti-Bot', {'action': 'store_true'}),
              ('Anti-Virus', {'action': 'store_true'}),
              ('restrictive policy', {'action': 'store_true'}),
-             (
-                 NEW_KEY,
-                 {'nargs': 1, 'help': 'optional attributes of a gateway. '
-                                      'Usage -nk [KEY]'})],
+             (NEW_KEY, {'nargs': 1,
+                        'help': 'optional attributes of a gateway. Usage '
+                                '-nk [KEY]'})],
             'delete a template or its values',
             'usage examples: \n' + '\n'.join(
                 USAGE_EXAMPLES['delete_template']),
@@ -578,6 +576,9 @@ def validate_hex(value):
     return value
 
 
+def validate_communities(input):
+    return input.split(',')
+
 # Structure of dictionary:
 # {argument_name(unique): [flag (must be unique within each parser), path in
 #  the configuration file, help, constraints (dict of type= or choices=)
@@ -709,27 +710,26 @@ ARGUMENTS = {
     ],
     'HTTPS Inspection': [
         '-hi', [TEMPLATES, TEMPLATE_NAME, 'https-inspection'],
-        'an optional boolean attribute indicating '
-        'whether to enable the HTTPS Inspection blade on the gateway',
-        {'type': validate_bool}
+        'use this flag to specify whether to enable the HTTPS Inspection '
+        'blade on the gateway',
+        {'action': 'store_true'}
     ],
     'Identity Awareness': [
         '-ia', [TEMPLATES, TEMPLATE_NAME, 'identity-awareness'],
-        'an optional boolean attribute indicating '
-        'whether to enable the Identity Awareness blade on the gateway',
-        {'type': validate_bool}
+        'use this flag to specify whether to enable the Identity Awareness '
+        'blade on the gateway',
+        {'action': 'store_true'}
     ],
     'Application Control': [
         '-appi', [TEMPLATES, TEMPLATE_NAME, 'application-control'],
-        'an optional boolean attribute indicating whether to enable the '
-        'Application Control blade on the gateway',
-        {'type': validate_bool}
+        'use this flag to specify whether to enable the Application Control '
+        'blade on the gateway', {'action': 'store_true'}
     ],
     'Intrusion Prevention': [
         '-ips', [TEMPLATES, TEMPLATE_NAME, 'ips'],
-        'an optional boolean attribute indicating whether to enable the '
-        'Intrusion Prevention System blade on the gateway',
-        {'type': validate_bool}
+        'use this flag to specify whether to enable the Intrusion Prevention '
+        'System blade on the gateway',
+        {'action': 'store_true'}
     ],
     'IPS Profile': [
         '-ipf', [TEMPLATES, TEMPLATE_NAME, 'ips-profile'],
@@ -738,19 +738,18 @@ ARGUMENTS = {
     ],
     'URL Filtering': [
         '-uf', [TEMPLATES, TEMPLATE_NAME, 'url-filtering'],
-        'an optional boolean attribute indicating whether to enable the URL '
-        'Filtering Awareness blade on the gateway',
-        {'type': validate_bool}
+        'use this flag to specify whether to enable the URL Filtering '
+        'Awareness blade on the gateway', {'action': 'store_true'}
     ],
     'Anti-Bot': [
         '-ab', [TEMPLATES, TEMPLATE_NAME, 'anti-bot'],
-        'an optional boolean attribute indicating whether to enable the '
-        'Anti-Bot blade on the gateway', {'type': validate_bool}
+        'use this flag to specify whether to enable the Anti-Bot blade on '
+        'the gateway', {'action': 'store_true'}
     ],
     'Anti-Virus': [
         '-av', [TEMPLATES, TEMPLATE_NAME, 'anti-virus'],
-        'an optional boolean attribute indicating whether to enable the '
-        'Anti-Virus blade on the gateway', {'type': validate_bool}
+        'use this flag to specify whether to enable the Anti-Virus blade on '
+        'the gateway', {'action': 'store_true'}
     ],
     'restrictive policy': [
         '-rp', [TEMPLATES, TEMPLATE_NAME, 'restrictive-policy'],
