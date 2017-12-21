@@ -47,7 +47,7 @@ USAGE_EXAMPLES = {
         'init AWS -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp <SIC-KEY> '
         '-v {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -r '
         'eu-west-1,us-east-1,eu-central-1 -ak <ACCESS-KEY> -sk <SECRET-KEY> '
-        '-sr <STS-ROLE> -se <STS-EXTERNAL-ID>',
+        '-sr <STS-ROLE>',
         'init AWS -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp <SIC-KEY> '
         '-v {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -r '
         'eu-west-1,us-east-1,eu-central-1 -iam'
@@ -69,7 +69,7 @@ USAGE_EXAMPLES = {
         'add template -tn <TEMPLATE-NAME> -otp <SIC-KEY> -v {R77.30,R80.10} '
         '-po <POLICY-NAME>',
         'add template -tn <TEMPLATE-NAME> -otp <SIC-KEY> -v {R77.30,R80.10} '
-        '-po <POLICY-NAME> [-hi true] [-ia true] [-appi true]'
+        '-po <POLICY-NAME> [-hi] [-ia] [-appi]'
     ],
     'add_controller_AWS': [
         'add controller AWS -cn <NAME> -r eu-west-1,us-east-1,eu-central-1  '
@@ -99,7 +99,7 @@ USAGE_EXAMPLES = {
     'set_template': [
         'set template -tn <NAME> [-nn <NEW-NAME>] [-otp <SIC-KEY>] [-v {'
         'R77.30,R80.10}] [-po <POLICY>]',
-        'set template -tn <NAME> [-hi true] [-ia true] [-appi true]'
+        'set template -tn <NAME> [-hi] [-ia] [-appi]'
     ],
     'set_controller_AWS': [
         'set controller AWS -tn <NAME> [-nn <NEW-NAME>]',
@@ -1295,7 +1295,8 @@ def custom_validations(conf, args):
     Validates user input on top of argparse validations
     """
     inputted_regions = getattr(args, 'regions', None)
-    if inputted_regions and (args.mode == ADD or args.mode == SET):
+    if inputted_regions and (args.mode == INIT or args.mode == ADD or
+                                     args.mode == SET):
         setattr(args, 'regions', validate_regions(args, inputted_regions))
 
     if [key for key in AWS_SUBACCOUNT_ARGS if getattr(args, key, None)]:
