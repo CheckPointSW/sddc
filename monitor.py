@@ -240,11 +240,11 @@ class AWS(Controller):
         self.regions = options['regions']
 
     def request(self, service, *args, **kwargs):
-        aws = self.aws
+        aws_obj = self.aws
         sub_cred = kwargs.pop('sub_cred', None)
         if sub_cred is not None:
             aws = self.sub_creds[sub_cred]
-        headers, body = aws.request(service, *args, **kwargs)
+        headers, body = aws_obj.request(service, *args, **kwargs)
         if headers.get('_code') == '200':
             return headers, body
         error = None
