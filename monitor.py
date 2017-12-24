@@ -243,7 +243,7 @@ class AWS(Controller):
         aws_obj = self.aws
         sub_cred = kwargs.pop('sub_cred', None)
         if sub_cred is not None:
-            aws = self.sub_creds[sub_cred]
+            aws_obj = self.sub_creds[sub_cred]
         headers, body = aws_obj.request(service, *args, **kwargs)
         if headers.get('_code') == '200':
             return headers, body
