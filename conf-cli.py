@@ -33,12 +33,17 @@ AVAILABLE_VERSIONS = ['R77.30', 'R80.10']
 AWS_REGIONS = [
     'us-east-2', 'us-east-1', 'us-west-1', 'us-west-2', 'ap-south-1',
     'ap-northeast-2', 'ap-southeast-1', 'ap-southeast-2', 'ap-northeast-1',
-    'ca-central-1', 'eu-central-1', 'eu-west-1', 'eu-west-2', 'sa-east-1',
-    'cn-north-1', 'us-gov-west-1'
+    'ca-central-1', 'eu-central-1', 'eu-west-1', 'eu-west-2', 'eu-west-3',
+    'sa-east-1', 'cn-north-1', 'us-gov-west-1'
 ]
 
 MIN_SIC_LENGTH = 8
 
+"""
+
+Usage examples to be displayed in the help output and in the error message.
+
+"""
 USAGE_EXAMPLES = {
     'init_aws': [
         'init AWS -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp <SIC-KEY> '
@@ -138,7 +143,7 @@ CONFPATH = os.environ['FWDIR'] + '/conf/autoprovision.json'
 
 
 def my_check_value(self, action, value):
-    """Modified _check_value method.
+    """Custom value check for the argument parser.
 
     Choices are str instead of repr.
     Modified error message for empty choices list.
@@ -154,13 +159,10 @@ def my_check_value(self, action, value):
 
 
 def my_error(self, message):
-    """error(message: string)
+    """Custom error handling for the argument parser.
 
-    Prints a usage message incorporating the message to stderr and
-    exits.
-
-    If you override this in a subclass, it should not return -- it
-    should either exit or raise an exception.
+    Adds the epilog (in this case, usage examples), if such exists,
+    to the end of the error output.
     """
     self.print_usage(sys.stderr)
     if self.epilog:
@@ -234,14 +236,17 @@ def get_controllers(conf, clazz):
 
 
 def create_parser_dict(conf):
-    """
+    """Create the parsers dictionary.
+
     Structure of dictionary:
     {parser_name: [positional argument, mandatory arguments, optional
     arguments, help, epilog, defaults]
 
-    Override default argument's kwargs by specifying a tuple (argument name,
-    kwargs) instead of just the name
+    Override default argument's kwargs (that are specified in
+    the ARGUMENTS array) by specifying a tuple (argument name, {key: value})
+    instead of just the name when a parser requires a custom behavior.
     """
+
     parsers = {
         SHOW: [SHOW, [], ['branch'],
                'show all or specific configuration settings',
@@ -525,6 +530,8 @@ def validate_SIC(value):
 
 
 def validate_guid_uuid(value):
+    """Validate that a value is a GUID OR UUID. """
+
     pattern = re.compile(
         '^[0-9A-F]{8}[-]?([0-9A-F]{4}[-]?){3}[0-9A-F]{12}$',
         re.IGNORECASE)
@@ -536,6 +543,8 @@ def validate_guid_uuid(value):
 
 
 def validate_ports(value):
+    """Validate that a value is a list of digits. """
+
     ports = value.split(',')
     for port in ports:
         if not port.isdigit():
@@ -544,6 +553,8 @@ def validate_ports(value):
 
 
 def validate_bool(value):
+    """Validate that an inputted string indicates a boolean. """
+
     if value.lower() in ('yes', 'true', 't', 'y', '1'):
         return True
     elif value.lower() in ('no', 'false', 'f', 'n', '0'):
@@ -554,6 +565,8 @@ def validate_bool(value):
 
 
 def validate_filepath(value):
+    """Validate that a string is a valid path to an existing file. """
+
     if os.path.exists(value):
         return value
 
@@ -561,6 +574,8 @@ def validate_filepath(value):
 
 
 def validate_iam_or_filepath(value):
+    """Validate either 'IAM' or a path to an existing file. """
+
     if value == 'IAM':
         return value
 
@@ -568,6 +583,7 @@ def validate_iam_or_filepath(value):
 
 
 def validate_hex(value):
+    """Validate that a value is hexadecimal. """
     try:
         int(value, 16)
     except ValueError:
@@ -577,11 +593,17 @@ def validate_hex(value):
 
 
 def validate_communities(input):
+    """Split the communities string into array. """
+
     return input.split(',')
 
-# Structure of dictionary:
-# {argument_name(unique): [flag (must be unique within each parser), path in
-#  the configuration file, help, constraints (dict of type= or choices=)
+"""
+Structure of ARGUMENTS dictionary:
+
+{argument_name(unique): [flag (must be unique within each parser), path in
+the configuration file, help, constraints (dict containing 'type:', 'choices:'
+or 'action:')
+"""
 
 ARGUMENTS = {
     'branch': ['branch', [], 'the branch of the configuration to show',
@@ -913,6 +935,8 @@ ARGUMENTS = {
 
 
 def verify_AWS_credentials(conf, args, creds, sub=False):
+    """Verifies main and sub-account AWS credentials dependencies."""
+
     if sub and getattr(args, SUBCREDENTIALS_NAME, None):
         name = getattr(args, SUBCREDENTIALS_NAME)
     else:
@@ -994,6 +1018,8 @@ def verify_AWS_credentials(conf, args, creds, sub=False):
 
 
 def validate_controller_credentials(conf, args):
+    """Validate controller's key values and dependencies. """
+
     controller_name = getattr(args, CONTROLLER_NAME, None)
     credentials_keys = ['access-key', 'secret-key', 'cred-file', 'sts-role',
                         'sts-external-id']
@@ -1061,6 +1087,8 @@ def validate_controller_credentials(conf, args):
 
 
 def validate_template_dependencies(conf, args):
+    """Validate template's key values and dependencies. """
+
     template_name = getattr(args, TEMPLATE_NAME, None)
 
     try:
@@ -1076,6 +1104,8 @@ def validate_template_dependencies(conf, args):
 
 
 def validate_management(conf, args):
+    """Validate management's key values and dependencies. """
+
     if getattr(args, 'Management password', None):
         if 'b64password' in conf[MANAGEMENT]:
             if args.force or prompt(
@@ -1104,6 +1134,12 @@ def validate_management(conf, args):
 
 
 def validate_min_objects(conf):
+    """Verify that the configuration contains the minimum objects to work.
+
+    Verify mandatory keys, that the management exists and at least
+    one template and one controller.
+    """
+
     if MANAGEMENT not in conf:
         sys.stderr.write('management settings are missing\n')
         sys.exit(2)
@@ -1130,7 +1166,7 @@ def validate_min_objects(conf):
 
 
 def nested_delete(dic, keys):
-    """Deletes a value in a nested dictionary.
+    """Delete a key value in a nested dictionary.
 
     According to the list of keys leading to the relevant key
     """
@@ -1142,7 +1178,7 @@ def nested_delete(dic, keys):
 
 
 def nested_set(conf, keys, value):
-    """Sets a value in a nested dictionary.
+    """Set a value in a nested dictionary.
 
     According to the list of keys leading to the relevant key.
     """
@@ -1153,7 +1189,28 @@ def nested_set(conf, keys, value):
     conf[keys[-1]] = value
 
 
+def nested_get(dic, keys):
+    """Get a value in a nested dictionary.
+
+    According to the list of keys leading to the relevant key
+    """
+
+    for key in keys:
+        try:
+            dic = dic[key]
+        except KeyError:
+            return None
+    return dic
+
+
 def get_subaccounts_names(conf, controller_name):
+    """Return the names of the subaccounts.
+
+    Similarly to templates and controllers, sub-accounts names
+    are used as keys and not as values. This funciton returns
+    all the sub-accounts of a specified controller.
+    """
+
     try:
         lst = conf[CONTROLLERS][controller_name][SUBCREDS].keys()
         return lst
@@ -1162,6 +1219,12 @@ def get_subaccounts_names(conf, controller_name):
 
 
 def validate_regions(args, input):
+    """Validate the regions.
+
+    Done seperately to allow the addition of unknown regions, with
+    an appropriate prompt to the user.
+    """
+
     regions = input.split(',')
     for region in regions:
         if region not in AWS_REGIONS:
@@ -1173,29 +1236,25 @@ def validate_regions(args, input):
 
 
 def validate_conf(conf, args):
-    # Validate all
+    """Validate the configuration.
+
+    Validate additional dependencies after editing the configuration
+    before saving them to file.
+    """
+
     validate_min_objects(conf)
     validate_management(conf, args)
 
     if getattr(args, TEMPLATE_NAME, None):
-        # Adding or editing a template
         validate_template_dependencies(conf, args)
 
     if getattr(args, CONTROLLER_NAME, None):
-        # Adding or editing a controller
         validate_controller_credentials(conf, args)
 
 
-def nested_get(dic, keys):
-    for key in keys:
-        try:
-            dic = dic[key]
-        except KeyError:
-            return None
-    return dic
-
-
 def delete_branch(conf, args, branch):
+    """Delete an entire branch with appropriate prompts. """
+
     if branch is TEMPLATES:
         template_name = getattr(args, TEMPLATE_NAME)
         if args.force or prompt('are you sure you want to delete %s?' %
@@ -1218,7 +1277,7 @@ def delete_branch(conf, args, branch):
 
 
 def delete_arguments(conf, args):
-    """Remove either a property or an entire object."""
+    """Remove either a value or an entire object. """
 
     branches = (TEMPLATES, CONTROLLERS, SUBCREDS)
     for branch in branches:
@@ -1244,6 +1303,8 @@ def delete_arguments(conf, args):
 
 
 def handle_change_of_branch_name(conf, args):
+    """Pop a configuration branch an re-add it under a new key name. """
+
     template_new_name = getattr(args, TEMPLATE_NEW_NAME, None)
     controller_new_name = getattr(args, CONTROLLER_NEW_NAME, None)
 
@@ -1263,6 +1324,8 @@ def handle_change_of_branch_name(conf, args):
 
 
 def is_adding_an_existing_object(conf, args):
+    """Verify uniqueness of configuration keys. """
+
     template_name = getattr(args, TEMPLATE_NAME, None)
     controller_name = getattr(args, CONTROLLER_NAME, None)
 
@@ -1280,6 +1343,8 @@ def is_adding_an_existing_object(conf, args):
 
 
 def set_all_none_control_args(conf, args):
+    """Exclude flow keys when editing the configuration file. """
+
     changed = False
     for key, value in vars(args).iteritems():
         if value and key not in NON_CONFIG_KEYS:
@@ -1291,12 +1356,14 @@ def set_all_none_control_args(conf, args):
 
 
 def custom_validations(conf, args):
+    """Validate user input on top of argparse's validations.
+
+    Validate the chosen regions (soft valiation) and verify sub-accounts.
     """
-    Validates user input on top of argparse validations
-    """
+
     inputted_regions = getattr(args, 'regions', None)
     if inputted_regions and (args.mode == INIT or args.mode == ADD or
-                                     args.mode == SET):
+                             args.mode == SET):
         setattr(args, 'regions', validate_regions(args, inputted_regions))
 
     if [key for key in AWS_SUBACCOUNT_ARGS if getattr(args, key, None)]:
@@ -1322,6 +1389,8 @@ def custom_validations(conf, args):
 
 
 def print_conf(root, indent=0):
+    """Print the configuration in a user friendly format."""
+
     if type(root) == collections.OrderedDict:
         for key, value in root.items():
             if hasattr(value, '__iter__'):
@@ -1340,11 +1409,14 @@ def print_conf(root, indent=0):
 
 
 def process_arguments(conf, args):
-    """ Process the auxiliary and user arguments.
+    """Process the user arguments.
 
-    Edits the configuration accordingly.
-    Restarts the auto-provisioning service when done.
+    Perform custom validations.
+    Create a configuration backup file.
+    Edit the configuration accordingly.
+    Restart the auto-provisioning service when done.
     """
+
     old_conf = copy.deepcopy(conf)
 
     if args.mode == 'show':
@@ -1420,6 +1492,14 @@ def process_arguments(conf, args):
 
 
 def update_paths_with_user_input(args):
+    """Update paths in the ARGUMENT array accodring to user input.
+
+    Arguments' path in the configuration file are dependent on the
+    template or controller name (also sub-accounts). User specifies them when
+    running the script and this function updates the ARGUMENT array
+    accordingly.
+    """
+
     new_key_args = getattr(args, NEW_KEY, None)
     new_value = None
 
@@ -1445,6 +1525,13 @@ def update_paths_with_user_input(args):
 
 
 def add_arguments(parser, parser_data):
+    """Add an argument to a parser.
+
+    Argument data is taken from from the ARGUMENT array
+    and is added to the correct parser according to the data
+    in parser_data.
+    """
+
     parser._optionals.title = 'global arguments'
     required_group = parser.add_argument_group('required arguments')
     optional_group = parser.add_argument_group('optional arguments')
@@ -1479,6 +1566,8 @@ def add_arguments(parser, parser_data):
 
 
 def add_parser(conf, father, son_key):
+    """Add a parser in its correct hierarchy. """
+
     parser_data = create_parser_dict(conf)[son_key]
 
     if parser_data[4]:  # has epilog
@@ -1502,7 +1591,7 @@ def build_parsers(conf):
     their subparsers (delay, management, templates, controllers)
     """
     main_parser = argparse.ArgumentParser()
-    main_parser.add_argument('--force', '-f', action='store_true',
+    main_parser.add_argument('-f', '--force', action='store_true',
                              help='skip prompts')
     main_subparsers = main_parser.add_subparsers(
         help='available actions', dest='mode')
@@ -1556,7 +1645,7 @@ def build_parsers(conf):
 
 
 def prompt(question):
-    """Displays a yes/no prompt with a question to the user."""
+    """Display a yes/no prompt with a question to the user. """
 
     while True:
         sys.stdout.write(question + ' (y/n) ')
@@ -1570,7 +1659,8 @@ def prompt(question):
 
 
 def load_configuration():
-    """Loads the configuration and the exiting templates and controllers."""
+    """Load the configuration. """
+
     if os.path.exists(CONFPATH):
         try:
             with open(CONFPATH) as f:
