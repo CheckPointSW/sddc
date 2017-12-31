@@ -44,6 +44,7 @@ MIN_SIC_LENGTH = 8
 Usage examples to be displayed in the help output and in the error message.
 
 """
+
 USAGE_EXAMPLES = {
     'init_aws': [
         'init AWS -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp <SIC-KEY> '
@@ -89,7 +90,7 @@ USAGE_EXAMPLES = {
         'add controller Azure -cn <NAME> -sb <SUBSCRIPTION> [-en {'
         'AzureCloud,AzureChinaCloud,AzureGermanCloud,AzureUSGovernment}] sp '
         '-at <TENANT> -aci <CLIENT-ID> -acs <CLIENT-SECRET>',
-        'add controller Azure -cn <NAME> -sb <SUBSCRIPTION> user -au '
+        'add controller Azure -cn <NAME> -sb <SUBSCRIPTION> -au '
         '<USERNAME> -ap <PASSWORD>'
     ],
     'add_controller_GCP': [
@@ -148,6 +149,7 @@ def my_check_value(self, action, value):
     Choices are str instead of repr.
     Modified error message for empty choices list.
     """
+
     if action.choices is not None and value not in action.choices:
         tup = value, ', '.join(map(str, action.choices))
         if not action.choices:
@@ -164,6 +166,7 @@ def my_error(self, message):
     Adds the epilog (in this case, usage examples), if such exists,
     to the end of the error output.
     """
+
     self.print_usage(sys.stderr)
     if self.epilog:
         args = {'prog': self.prog, 'message': message, 'epilog': self.epilog}
@@ -219,6 +222,7 @@ AWS_SUBACCOUNT_ARGS = (SUBCREDENTIALS_NAME,
 
 def get_templates(conf):
     """Return an array of names of existing templates."""
+
     try:
         return conf['templates'].keys()
     except KeyError:
@@ -227,6 +231,7 @@ def get_templates(conf):
 
 def get_controllers(conf, clazz):
     """Return an array of names of existing 'clazz' controllers."""
+
     try:
         lst = [c for c in conf[CONTROLLERS]
                if conf[CONTROLLERS][c]['class'] == clazz]
@@ -252,14 +257,18 @@ def create_parser_dict(conf):
                'show all or specific configuration settings',
                'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['show']), None],
         INIT: [INIT, [], [],
-               'initialize auto-provision settings', None, None],
-        ADD: [ADD, [], [], 'add a template or a controller', None, None],
+               'initialize Auto-Provision with Management, a template and '
+               'a controller configuration for either AWS or Azure', None,
+               None],
+        ADD: [ADD, [], [], 'add a template or a controller to an existing '
+                           'configuration', None, None],
         SET: [SET, [], [],
-              'set configurations of a management, a template or a controller',
+              'set values in an existing configuration of Management '
+              'or of existing templates or controllers',
               None, None],
         DELETE: [DELETE, [], [],
-                 'delete configurations of a management, a template or a '
-                 'controller', None, None
+                 'delete configurations of Management, or of existing '
+                 'templates or controllers', None, None
                  ],
         'init_aws': [
             AWS,
@@ -345,7 +354,7 @@ def create_parser_dict(conf):
         ],
         'set_management': [
             MANAGEMENT, [],
-            ['Management name', 'host', 'domain', 'fingerprint',
+            ['Management name', 'host', 'domain', 'fingerprint', 'user',
              'Management password', 'Management password 64bit', 'proxy',
              'custom script'], 'set management arguments',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['set_management']),
@@ -415,6 +424,7 @@ def create_parser_dict(conf):
              ('host', {'action': 'store_true'}),
              ('domain', {'action': 'store_true'}),
              ('fingerprint', {'action': 'store_true'}),
+             ('user', {'action': 'store_true'}),
              ('Management password', {'action': 'store_true'}),
              ('Management password 64bit', {'action': 'store_true'}),
              ('proxy', {'action': 'store_true'}),
@@ -584,6 +594,7 @@ def validate_iam_or_filepath(value):
 
 def validate_hex(value):
     """Validate that a value is hexadecimal. """
+
     try:
         int(value, 16)
     except ValueError:
@@ -637,6 +648,10 @@ ARGUMENTS = {
         '</dev/null | cpopenssl x509 -outform DER '
         r'| sha256sum | awk "{printf "sha256:%%s\n", $1}"',
         {'type': validate_hex}
+    ],
+    'user': [
+        '-u', [MANAGEMENT, 'user'], 'a SmartCenter administrator username',
+        None
     ],
     'Management password': [
         '-pass', [MANAGEMENT, 'password'],
@@ -1590,6 +1605,7 @@ def build_parsers(conf):
     Creates the main subparsers (init, show, add, set, delete) and
     their subparsers (delay, management, templates, controllers)
     """
+
     main_parser = argparse.ArgumentParser()
     main_parser.add_argument('-f', '--force', action='store_true',
                              help='skip prompts')
