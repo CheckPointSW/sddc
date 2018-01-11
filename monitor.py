@@ -2190,10 +2190,11 @@ class Management(object):
         else:
             self.set_state(instance.name, 'UPDATING')
 
-        if gw['version'] == 'R77.30':
-            self.init_identity_awareness_r77_30(gw)
-        else:
-            self.init_identity_awareness(gw)
+        if identity_awareness and gw.get('identityAwareBlade') is None:
+            if gw['version'] == 'R77.30':
+                self.init_identity_awareness_r77_30(gw)
+            else:
+                self.init_identity_awareness(gw)
 
         if restrictive_policy is not None:
             if not self.get_object_tag_value(gw, self.TEMPLATE_PREFIX):
