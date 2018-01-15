@@ -1268,6 +1268,7 @@ class Management(object):
     DUMMY_PREFIX = MONITOR_PREFIX + 'dummy-'
     SECTION = MONITOR_PREFIX + 'section'
     RESTRICTIVE_POLICY = MONITOR_PREFIX + 'restrictive-policy'
+    ONCE_PREFIX = '__once__'
     GATEWAY_PREFIX = '__gateway__'
     VSEC_DUMMY_HOST = DUMMY_PREFIX + 'vsec_internal_host'
 
@@ -2181,6 +2182,7 @@ class Management(object):
         if self.is_up_to_date(instance, gw, generation):
             return
 
+        tags = simple_gateway.pop('tags', [])
         proxy_ports = simple_gateway.pop('proxy-ports', None)
         https_inspection = simple_gateway.pop('https-inspection', False)
         identity_awareness = simple_gateway.pop('identity-awareness', False)
@@ -2217,9 +2219,10 @@ class Management(object):
             else:
                 self.init_identity_awareness(gw)
 
-        if restrictive_policy is not None:
-            if not self.get_object_tag_value(gw, self.TEMPLATE_PREFIX):
+        if self.ONCE_PREFIX not in self.get_object_tags(gw):
+            if restrictive_policy is not None:
                 self.set_restrictive_policy(gw, restrictive_policy)
+        tags += [TAG, self.ONCE_PREFIX]
 
         success = False
         published = False
@@ -2228,8 +2231,7 @@ class Management(object):
             self.reset_gateway(instance.name, delete_objects=(
                 instance.load_balancers is not None))
             simple_gateway['name'] = instance.name
-            tags = simple_gateway.pop('tags', [])
-            self.put_object_tags(simple_gateway, tags + [TAG])
+            self.put_object_tags(simple_gateway, tags)
             self('set-simple-gateway', simple_gateway)
             gw = self.get_gateway(instance.name)
             self.set_proxy(gw, proxy_ports)
