@@ -1237,6 +1237,25 @@ def http(method, url, fingerprint, headers, body, redact_patterns=None):
     return headers, body
 
 
+def run_local(cmd, data=None, env=None):
+    if isinstance(cmd, basestring):
+        shell = True
+    else:
+        shell = False
+        if cmd[0].startswith('./'):
+            cmd = [
+                os.path.join(os.path.dirname(__file__), cmd[0][2:])] + cmd[1:]
+    proc_env = os.environ.copy()
+    if env:
+        proc_env.update(env)
+    proc = subprocess.Popen(
+        cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, shell=shell, env=proc_env)
+    out, err = proc.communicate(data)
+    status = proc.wait()
+    return out, err, status
+
+
 class Management(object):
     IN_PROGRESS = 'in progress'
     FAILED = 'failed'
@@ -2417,18 +2436,9 @@ def start(config):
         loop(managements, controllers, config['delay'])
 
 
-def test(config_file):
-    log('\nTesting if the configuration file exists...\n')
-    if not os.path.isfile(config_file):
-        raise Exception('Cannot find "%s"\n' % config_file)
-
-    log('\nTesting if the configuration file is a valid JSON object...\n')
-    try:
-        with open(config_file) as f:
-            config = json.load(f, object_pairs_hook=collections.OrderedDict)
-    except ValueError:
-        raise Exception('%s is not a valid JSON file\n' % config_file)
-
+def test():
+    log('\nTesting the configuration file loads...\n')
+    config = load_configuration()
     log('\nTesting basic configuration structure...\n')
     for key in ['delay', 'management', 'templates', 'controllers']:
         if key not in config or not config[key]:
@@ -2491,10 +2501,16 @@ def test(config_file):
     log('\nAll Tests passed successfully\n')
 
 
+def load_configuration():
+    out, err, status = run_local(['./conf-cli.py', '--dump'])
+    if status:
+        raise Exception(
+            'Failed to load configuration (%s)\n%s' % (status, err))
+    return json.loads(out, object_pairs_hook=collections.OrderedDict)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog=argv[0] if argv else None)
-    parser.add_argument('config', metavar='CONFIG',
-                        help='JSON-FILE or a literal json expression')
     parser.add_argument('-d', '--debug', dest='debug', action='store_true')
     parser.add_argument('-l', '--logfile', metavar='LOGFILE',
                         help='Path to log file')
@@ -2526,12 +2542,10 @@ def main(argv=None):
     azure.set_logger(log=log, debug=debug_func)
     gcp.set_logger(log=log, debug=debug_func)
 
+    run_local(['./conf-cli.py', '--upgrade'])
     if args.test:
-        test(args.config)
+        test()
         sys.exit(0)
-
-    if args.config[0] == '@':
-        args.config = args.config[1:]
 
     signal.signal(signal.SIGHUP, signal_handler)
     signal.signal(signal.SIGQUIT, signal_handler)
@@ -2539,13 +2553,12 @@ def main(argv=None):
 
     while True:
         try:
-            with open(args.config) as f:
+            with open(__file__) as f:
                 try:
                     fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except:
                     raise Exception('Another process is already running')
-                config = json.load(
-                    f, object_pairs_hook=collections.OrderedDict)
+                config = load_configuration()
                 start(config)
         except Exception:
             log('\n%s' % traceback.format_exc())

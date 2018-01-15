@@ -48,22 +48,22 @@ Usage examples to be displayed in the help output and in the error message.
 USAGE_EXAMPLES = {
     'init_aws': [
         'init AWS -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp <SIC-KEY> '
-        '-v {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -r '
+        '-ver {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -r '
         'eu-west-1,us-east-1,eu-central-1 -fi <FILE-PATH>',
         'init AWS -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp <SIC-KEY> '
-        '-v {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -r '
+        '-ver {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -r '
         'eu-west-1,us-east-1,eu-central-1 -ak <ACCESS-KEY> -sk <SECRET-KEY> '
         '-sr <STS-ROLE>',
         'init AWS -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp <SIC-KEY> '
-        '-v {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -r '
+        '-ver {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -r '
         'eu-west-1,us-east-1,eu-central-1 -iam'
     ],
     'init_azure': [
         'init Azure -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp <SIC-KEY> '
-        '-v {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -sb '
+        '-ver {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -sb '
         '<SUBSCRIPTION> -at <TENANT> -aci <CLIENT-ID> -acs <CLIENT-SECRET>',
         'init Azure -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp <SIC-KEY> '
-        '-v {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -sb '
+        '-ver {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -sb '
         '<SUBSCRIPTION> -au <USERNAME> -ap <PASSWORD>'
     ],
     'init_GCP': [],
@@ -72,9 +72,9 @@ USAGE_EXAMPLES = {
              'show templates',
              'show controllers'],
     'add_template': [
-        'add template -tn <TEMPLATE-NAME> -otp <SIC-KEY> -v {R77.30,R80.10} '
+        'add template -tn <TEMPLATE-NAME> -otp <SIC-KEY> -ver {R77.30,R80.10} '
         '-po <POLICY-NAME>',
-        'add template -tn <TEMPLATE-NAME> -otp <SIC-KEY> -v {R77.30,R80.10} '
+        'add template -tn <TEMPLATE-NAME> -otp <SIC-KEY> -ver {R77.30,R80.10} '
         '-po <POLICY-NAME> [-hi] [-ia] [-appi]'
     ],
     'add_controller_AWS': [
@@ -88,7 +88,7 @@ USAGE_EXAMPLES = {
     ],
     'add_controller_Azure': [
         'add controller Azure -cn <NAME> -sb <SUBSCRIPTION> [-en {'
-        'AzureCloud,AzureChinaCloud,AzureGermanCloud,AzureUSGovernment}] sp '
+        'AzureCloud,AzureChinaCloud,AzureGermanCloud,AzureUSGovernment}] '
         '-at <TENANT> -aci <CLIENT-ID> -acs <CLIENT-SECRET>',
         'add controller Azure -cn <NAME> -sb <SUBSCRIPTION> -au '
         '<USERNAME> -ap <PASSWORD>'
@@ -103,7 +103,7 @@ USAGE_EXAMPLES = {
         '<CUSTOM-SCRIPT-PATH>]'
     ],
     'set_template': [
-        'set template -tn <NAME> [-nn <NEW-NAME>] [-otp <SIC-KEY>] [-v {'
+        'set template -tn <NAME> [-nn <NEW-NAME>] [-otp <SIC-KEY>] [-ver {'
         'R77.30,R80.10}] [-po <POLICY>]',
         'set template -tn <NAME> [-hi] [-ia] [-appi]'
     ],
@@ -140,7 +140,12 @@ USAGE_EXAMPLES = {
     ]
 }
 
-CONFPATH = os.environ['FWDIR'] + '/conf/autoprovision.json'
+CONFPATH = os.environ.get(
+    'AUTOPROVISION_CONFIG_FILE',
+    os.environ['FWDIR'] + '/conf/autoprovision.json')
+PROTECTED = '__protected__autoprovision'
+PROTECTED_FIELDS = ['password', 'b64password', 'client_secret', 'secret-key']
+SAVED_WORDS = ['controllers', 'credentials', 'sub-creds', 'management']
 
 
 def my_check_value(self, action, value):
@@ -301,7 +306,8 @@ def create_parser_dict(conf):
              'prototype', 'specific network', 'generation', 'proxy ports',
              'HTTPS Inspection', 'Identity Awareness', 'Application Control',
              'Intrusion Prevention', 'IPS Profile', 'URL Filtering',
-             'Anti-Bot', 'Anti-Virus', 'restrictive policy'],
+             'Anti-Bot', 'Anti-Virus', 'restrictive policy', 'section name',
+             NEW_KEY],
             'add a gateway configuration template. When a new gateway '
             'instance is detected, the template\'s name is used to '
             'determines the eventual gateway configuration',
@@ -368,7 +374,8 @@ def create_parser_dict(conf):
              'generation', 'proxy ports', 'HTTPS Inspection',
              'Identity Awareness', 'Application Control',
              'Intrusion Prevention', 'IPS Profile', 'URL Filtering',
-             'Anti-Bot', 'Anti-Virus', 'restrictive policy', NEW_KEY],
+             'Anti-Bot', 'Anti-Virus', 'restrictive policy', 'section name',
+             NEW_KEY],
             'set template arguments', 'usage examples: \n' + '\n'.join(
                 USAGE_EXAMPLES['set_template']), None
         ],
@@ -453,6 +460,7 @@ def create_parser_dict(conf):
              ('Anti-Bot', {'action': 'store_true'}),
              ('Anti-Virus', {'action': 'store_true'}),
              ('restrictive policy', {'action': 'store_true'}),
+             ('section name', {'action': 'store_true'}),
              (NEW_KEY, {'nargs': 1,
                         'help': 'optional attributes of a gateway. Usage '
                                 '-nk [KEY]'})],
@@ -699,7 +707,7 @@ ARGUMENTS = {
         % repr(MIN_SIC_LENGTH), {'type': validate_SIC}
     ],
     'version': [
-        '-v', [TEMPLATES, TEMPLATE_NAME, 'version'],
+        '-ver', [TEMPLATES, TEMPLATE_NAME, 'version'],
         'the gateway version (e.g. R77.30)',
         {'choices': AVAILABLE_VERSIONS}
     ],
@@ -799,6 +807,12 @@ ARGUMENTS = {
         'the implied rules and a drop-all cleanup rule). '
         'The value null can be used to explicitly avoid any such policy',
         None
+    ],
+    'section name': [
+        '-secn', [TEMPLATES, TEMPLATE_NAME, 'section-name'],
+        'a name of a rule section in the policy that will be placed above the '
+        'automatically created access and NAT layers so that the rules in '
+        'this section will receive a higher priority', None
     ],
     NEW_KEY: [
         '-nk', [TEMPLATES, TEMPLATE_NAME, NEW_KEY],
@@ -1488,18 +1502,14 @@ def process_arguments(conf, args):
         delete_arguments(conf, args)
 
     validate_conf(conf, args)
+    conf = nested_protect_unprotect_fields(conf, PROTECTED, True)
 
     if old_conf == conf:
         sys.stdout.write(
             'no changes were made \n')
         sys.exit(0)
 
-    if os.path.exists(CONFPATH):
-        shutil.copyfile(CONFPATH, CONFPATH + '.bak')
-
-    with open(CONFPATH, 'w') as f:
-        json.dump(conf, f, indent=2, separators=(',', ': '), sort_keys=True)
-        f.write('\n')
+    write_to_file(conf)
 
     if args.force or prompt(
             'would you like to restart the autoprovision service now?'):
@@ -1674,8 +1684,85 @@ def prompt(question):
             sys.stdout.write('please respond with "y" or "n"\n')
 
 
+def run_protect(path, clear=None):
+    """Run the protect utility that protects or unprotects secrets
+
+    if clear is empty we return the unprotected value of the path
+    if clear has a value we will protect this value under the given path
+    """
+
+    protect_command = os.environ.get('AUTOPROVISION_PROTECT')
+    if not protect_command:
+        return clear
+    command = [protect_command, path]
+    if clear is not None:
+        command.append('-')
+    proc = subprocess.Popen(
+        command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE)
+    out, err = proc.communicate(clear)
+    rc = proc.wait()
+    if rc:
+        sys.stderr.write('\nfailed to run %s: %s\n%s' % (command[0], rc, err))
+        exit(2)
+    return out if clear is None else path
+
+
+def hex_path(path):
+    """Return hex value of the string if it's not one of the SAVED_WORDS"""
+
+    if path not in SAVED_WORDS:
+        return ''.join(['%02X' % ord(b) for b in path.encode('utf-8')])
+    else:
+        return path
+
+
+def protect_unprotect_if_needed(dictionary, field_key, path, protect):
+    """Protect or unprotect a field in the configuration
+
+    If protect == true, protect field_key, otherwise unprotect.
+    """
+
+    value = dictionary[field_key]
+    if protect:
+        if not value.startswith(PROTECTED):
+            key_path = path + '/' + field_key
+            dictionary[field_key] = run_protect(key_path, value)
+    else:
+        if value.startswith(PROTECTED):
+            dictionary[field_key] = run_protect(value)
+
+
+def write_to_file(conf):
+    """Writes the configuration into the configuration file"""
+
+    if os.path.exists(CONFPATH):
+        shutil.copyfile(CONFPATH, CONFPATH + '.bak')
+
+    with open(CONFPATH + '.tmp', 'w') as f:
+        json.dump(conf, f, indent=2, separators=(',', ': '), sort_keys=True)
+        f.write('\n')
+    shutil.move(CONFPATH + '.tmp', CONFPATH)
+
+
+def nested_protect_unprotect_fields(dictionary, path, protect):
+    """Search for PROTECTED_FIELDS and protect or unprotects them.
+
+    Search the dictiornary recursively.
+    If protect == true, protect PROTECTED_FIELDS, otherwise unprotect.
+    """
+
+    for k, v in dictionary.iteritems():
+        if k in PROTECTED_FIELDS:
+            protect_unprotect_if_needed(dictionary, k, path, protect)
+        if isinstance(v, dict):
+            nested_protect_unprotect_fields(v, path + '/' + hex_path(k),
+                                            protect)
+    return dictionary
+
+
 def load_configuration():
-    """Load the configuration. """
+    """Load the configuration file. """
 
     if os.path.exists(CONFPATH):
         try:
@@ -1696,7 +1783,34 @@ def load_configuration():
     return conf
 
 
+def upgrade():
+    """Checks whether an upgrade is required and performs it """
+
+    conf = load_configuration()
+    old_conf = copy.deepcopy(conf)
+    conf = nested_protect_unprotect_fields(conf, PROTECTED, True)
+    if old_conf != conf:
+        write_to_file(conf)
+
+
+def check_for_private_options(argv):
+    """Check for custom external command line arguments """
+
+    if len(argv) == 2:
+        if argv[1] == '--upgrade':
+            upgrade()
+            exit(0)
+        if argv[1] == '--dump':
+            conf = load_configuration()
+            conf = nested_protect_unprotect_fields(conf, PROTECTED, False)
+            json_string = json.dumps(conf, indent=2,
+                                     separators=(',', ': '), sort_keys=True)
+            sys.stdout.write(json_string)
+            exit(0)
+
+
 def main():
+    check_for_private_options(sys.argv)
     conf = load_configuration()
     parsers = build_parsers(conf)
     parsed_arguments = parsers.parse_args()
