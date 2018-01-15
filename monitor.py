@@ -1862,7 +1862,8 @@ class Management(object):
                     'uid': self.get_uid('https')})['protoType']}
         return self.protocol_map.get(protocol)
 
-    def add_load_balancer(self, gw, policy, dns_name, protocol_ports):
+    def add_load_balancer(self, gw, policy, section_name, dns_name,
+                          protocol_ports):
         debug('\nadding %s: %s\n' % (
             dns_name, json.dumps(protocol_ports, indent=2)))
         private_address = gw['interfaces'][0]['ipv4-address']
@@ -1921,7 +1922,7 @@ class Management(object):
             raise Exception('failed to find a firwall layer in "%s"' % layer)
         for layer in layers:
             for section in self.get_rulebase(layer['uid'], sections=True):
-                if section.get('name') == self.SECTION:
+                if section.get('name') == section_name:
                     debug('\nusing access layer "%s\n"' % layer['name'])
                     position = {'below': section['uid']}
                     break
@@ -1932,7 +1933,7 @@ class Management(object):
             layer = layers[0]
             position = 'top'
         for section in self.get_rulebase(policy, nat=True, sections=True):
-            if section.get('name') == self.SECTION:
+            if section.get('name') == section_name:
                 nat_position = {'below': section['uid']}
                 break
         else:
@@ -2171,6 +2172,7 @@ class Management(object):
         custom_parameters = simple_gateway.pop('custom-parameters', [])
         restrictive_policy = simple_gateway.pop('restrictive-policy',
                                                 self.RESTRICTIVE_POLICY)
+        section_name = simple_gateway.pop('section-name', self.SECTION)
 
         # FIXME: network info is not updated once the gateway exists
         if not gw:
@@ -2225,8 +2227,8 @@ class Management(object):
             load_balancers = instance.load_balancers
             if load_balancers is not None:
                 for dns_name in load_balancers:
-                    self.add_load_balancer(
-                        gw, policy, dns_name, load_balancers[dns_name])
+                    self.add_load_balancer(gw, policy, section_name, dns_name,
+                                           load_balancers[dns_name])
             self.set_object_tag_value(gw['uid'],
                                       self.LOAD_BALANCER_PREFIX,
                                       self.load_balancer_tag(instance))
