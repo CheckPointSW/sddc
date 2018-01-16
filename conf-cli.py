@@ -810,9 +810,8 @@ ARGUMENTS = {
     ],
     'section name': [
         '-secn', [TEMPLATES, TEMPLATE_NAME, 'section-name'],
-        'a name of a rule section in the policy that will be placed above the '
-        'automatically created access and NAT layers so that the rules in '
-        'this section will receive a higher priority', None
+        'a name of a rule section in the access and NAT layers in the '
+        'policy, where to insert the automatically generated rules', None
     ],
     NEW_KEY: [
         '-nk', [TEMPLATES, TEMPLATE_NAME, NEW_KEY],
