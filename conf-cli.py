@@ -144,7 +144,8 @@ CONFPATH = os.environ.get(
     'AUTOPROVISION_CONFIG_FILE',
     os.environ['FWDIR'] + '/conf/autoprovision.json')
 PROTECTED = '__protected__autoprovision'
-PROTECTED_FIELDS = ['password', 'b64password', 'client_secret', 'secret-key']
+PROTECTED_FIELDS = ['password', 'b64password', 'client_secret', 'secret-key',
+                    'one-time-password']
 SAVED_WORDS = ['controllers', 'credentials', 'sub-creds', 'management']
 
 
@@ -987,8 +988,10 @@ def verify_AWS_credentials(conf, args, creds, sub=False):
     # Missing either of access key or secret key (both or neither)
     if ('access-key' in creds) != ('secret-key' in creds):
         sys.stderr.write(
-            'please specify both access key and secret key or specify '
-            'different credentials\n')
+            'AWS credentials must contain access and secret keys '
+            'or a path to a file containing them, or specify IAM to use '
+            'an IAM role profile.'
+            'Use set to specify different credentials.\n')
         sys.exit(2)
 
     # Has too many, explicit AND cred file
@@ -1012,9 +1015,10 @@ def verify_AWS_credentials(conf, args, creds, sub=False):
 
         if inserted_explicit_creds and inserted_non_explicit_creds:
             sys.stderr.write(
-                'please specify only one of the following credentials: '
-                'explicit credentials (access and secret keys) or a file path '
-                'or the IAM flag.\n')
+                'the AWS credentials must contain access and secret keys '
+                'or a path to a file containing them, or specify IAM to use '
+                'an IAM role profile.'
+                'Use set to specify different credentials.\n')
             sys.exit(2)
 
         if args.force or prompt(
@@ -1041,7 +1045,8 @@ def verify_AWS_credentials(conf, args, creds, sub=False):
 
     if 'sts-external-id' in creds and 'sts-role' not in creds:
         sys.stderr.write(
-            'please specify an STS role to assume with the STS external ID\n')
+            'AWS credentials must contain an STS role '
+            'if STS external id is specified.\n')
         sys.exit(2)
 
 
@@ -1086,13 +1091,16 @@ def validate_controller_credentials(conf, args):
 
         if 0 < len(current & spa) < len(spa):
             sys.stderr.write(
-                'please specify tenant, client ID and client secret or '
-                'specify different credentials\n')
+                'Azure credentials must contain tenant, client ID '
+                'and client secret or username and password. '
+                'Use set to specify different credentials\n')
             sys.exit(2)
 
         if 0 < len(current & upa) < len(upa):
-            sys.stderr.write('please specify username and password or '
-                             'specify different credentials\n')
+            sys.stderr.write(
+                'Azure credentials must contain tenant, client ID '
+                'and client secret or username and password. '
+                'Use set to specify different credentials\n')
             sys.exit(2)
 
         if current == spa | upa:
@@ -1339,13 +1347,13 @@ def handle_change_of_branch_name(conf, args):
     if template_new_name:
         conf[TEMPLATES][template_new_name] = conf[TEMPLATES].pop(getattr(
             args, TEMPLATE_NAME))
-        setattr(args, TEMPLATE_NAME, TEMPLATE_NEW_NAME)
+        setattr(args, TEMPLATE_NAME, template_new_name)
         return True
 
     if controller_new_name:
         conf[CONTROLLERS][controller_new_name] = conf[CONTROLLERS].pop(getattr(
             args, CONTROLLER_NAME))
-        setattr(args, CONTROLLER_NAME, CONTROLLER_NEW_NAME)
+        setattr(args, CONTROLLER_NAME, controller_new_name)
         return True
 
     return False
@@ -1501,14 +1509,22 @@ def process_arguments(conf, args):
         delete_arguments(conf, args)
 
     validate_conf(conf, args)
-    conf = nested_protect_unprotect_fields(conf, PROTECTED, True)
 
-    if old_conf == conf:
+    unprotected_old_conf = copy.deepcopy(old_conf)
+    nested_protect_unprotect_fields(unprotected_old_conf, PROTECTED, False)
+
+    nested_protect_unprotect_fields(conf, PROTECTED, True)
+
+    unprotected_new_conf = copy.deepcopy(conf)
+    nested_protect_unprotect_fields(unprotected_new_conf, PROTECTED, False)
+
+    if unprotected_old_conf == unprotected_new_conf:
         sys.stdout.write(
-            'no changes were made \n')
+            'no changes were made\n')
         sys.exit(0)
 
-    write_to_file(conf)
+    if old_conf != conf:
+        write_to_file(conf)
 
     if args.force or prompt(
             'would you like to restart the autoprovision service now?'):
