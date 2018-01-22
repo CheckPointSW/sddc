@@ -975,23 +975,30 @@ def verify_AWS_credentials(conf, args, creds, sub=False):
     if not sub:
         if not ('cred-file' in creds or 'access-key' in creds):
             sys.stderr.write(
-                '%s is missing credentials. To set other credentials '
-                'use set.\n' % name)
+                'AWS controller "%s" is missing credentials. '
+                'AWS credentials must contain access and secret keys '
+                'or a path to a file containing them, '
+                'or specify IAM to use the Management\'s IAM role. '
+                'To change credentials, use set.\n' % name)
             sys.exit(2)
     else:
         if not creds:
             sys.stderr.write(
-                '%s is missing credentials. To remove this sub account use '
-                'delete.\n' % name)
+                'AWS controller "%s" is missing credentials. '
+                'AWS credentials must contain access and secret keys '
+                'or a path to a file containing them, '
+                'or specify IAM to use the Management\'s IAM role. '
+                'To change credentials, use set.\n' % name)
             sys.exit(2)
 
     # Missing either of access key or secret key (both or neither)
     if ('access-key' in creds) != ('secret-key' in creds):
         sys.stderr.write(
+            'AWS controller "%s" is missing credentials. '
             'AWS credentials must contain access and secret keys '
-            'or a path to a file containing them, or specify IAM to use '
-            'an IAM role profile.'
-            'Use set to specify different credentials.\n')
+            'or a path to a file containing them, '
+            'or specify IAM to use the Management\'s IAM role. '
+            'To change credentials, use set.\n' % name)
         sys.exit(2)
 
     # Has too many, explicit AND cred file
@@ -1015,10 +1022,11 @@ def verify_AWS_credentials(conf, args, creds, sub=False):
 
         if inserted_explicit_creds and inserted_non_explicit_creds:
             sys.stderr.write(
-                'the AWS credentials must contain access and secret keys '
-                'or a path to a file containing them, or specify IAM to use '
-                'an IAM role profile.'
-                'Use set to specify different credentials.\n')
+                'AWS controller "%s" is missing credentials. '
+                'AWS credentials must contain access and secret keys '
+                'or a path to a file containing them, '
+                'or specify IAM to use the Management\'s IAM role. '
+                'To change credentials, use set.\n' % name)
             sys.exit(2)
 
         if args.force or prompt(
@@ -1045,8 +1053,9 @@ def verify_AWS_credentials(conf, args, creds, sub=False):
 
     if 'sts-external-id' in creds and 'sts-role' not in creds:
         sys.stderr.write(
+            'AWS controller "%s" is missing credentials. '
             'AWS credentials must contain an STS role '
-            'if STS external id is specified.\n')
+            'if STS external id is specified.\n' % name)
         sys.exit(2)
 
 
@@ -1085,22 +1094,26 @@ def validate_controller_credentials(conf, args):
 
         if not current:
             sys.stderr.write(
-                'controller %s is missing credentials. To change '
-                'credentials use set\n' % controller_name)
+                'Azure controller "%s" is missing credentials. '
+                'Azure credentials must contain tenant, client ID '
+                'and client secret or username and password. '
+                'To change credentials, use set.\n' % controller_name)
             sys.exit(2)
 
         if 0 < len(current & spa) < len(spa):
             sys.stderr.write(
+                'Azure controller "%s" is missing credentials. '
                 'Azure credentials must contain tenant, client ID '
                 'and client secret or username and password. '
-                'Use set to specify different credentials\n')
+                'To change credentials, use set.\n' % controller_name)
             sys.exit(2)
 
         if 0 < len(current & upa) < len(upa):
             sys.stderr.write(
+                'Azure controller "%s" is missing credentials. '
                 'Azure credentials must contain tenant, client ID '
                 'and client secret or username and password. '
-                'Use set to specify different credentials\n')
+                'To change credentials, use set.\n' % controller_name)
             sys.exit(2)
 
         if current == spa | upa:
