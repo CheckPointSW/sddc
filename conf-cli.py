@@ -142,7 +142,8 @@ USAGE_EXAMPLES = {
 
 CONFPATH = os.environ.get(
     'AUTOPROVISION_CONFIG_FILE',
-    os.environ['FWDIR'] + '/conf/autoprovision.json')
+    os.environ.get('MDS_FWDIR',
+                   os.environ['FWDIR']) + '/conf/autoprovision.json')
 PROTECTED = '__protected__autoprovision'
 PROTECTED_FIELDS = ['password', 'b64password', 'client_secret', 'secret-key',
                     'one-time-password']
