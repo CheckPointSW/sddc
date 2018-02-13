@@ -202,8 +202,6 @@ AWS, AZURE, GCP = 'AWS', 'Azure', 'GCP'
 TEMPLATE_NAME = 'template name'
 CONTROLLER_NAME = 'controller name'
 SUBCREDENTIALS_NAME = 'sub-credentials name'
-TEMPLATE_NEW_NAME = 'template new name'
-CONTROLLER_NEW_NAME = 'controller new name'
 NEW_KEY = 'new key'
 SUBCREDS = 'sub-creds'
 
@@ -213,7 +211,6 @@ NON_CONFIG_KEYS = (TEMPLATE_NAME, CONTROLLER_NAME, SUBCREDENTIALS_NAME,
                    'force', 'mode', 'branch')
 MANDATORY_KEYS = {
     MANAGEMENT: ['name', 'host'],
-    TEMPLATES: ['one-time-password', 'version', 'policy'],
     AWS: ['class', 'regions'],
     AZURE: ['class', 'subscription'],
     GCP: ['class', 'project', 'credentials']
@@ -371,7 +368,7 @@ def create_parser_dict(conf):
         'set_template': [
             TEMPLATE, [(TEMPLATE_NAME, {'choices': get_templates(conf),
                                         'dest': TEMPLATE_NAME})],
-            [TEMPLATE_NEW_NAME, 'one time password', 'version', 'policy',
+            ['one time password', 'version', 'policy',
              'custom parameters', 'prototype', 'specific network',
              'generation', 'proxy ports', 'HTTPS Inspection',
              'Identity Awareness', 'Application Control',
@@ -390,7 +387,7 @@ def create_parser_dict(conf):
         'set_controller_aws': [
             AWS, [(CONTROLLER_NAME, {'choices': get_controllers(conf, AWS),
                                      'dest': CONTROLLER_NAME})],
-            [CONTROLLER_NEW_NAME, 'controller templates', 'controller domain',
+            ['controller templates', 'controller domain',
              'regions', 'AWS access key', 'AWS secret key', 'AWS IAM',
              'AWS credentials file path', 'STS role', 'STS external id',
              SUBCREDENTIALS_NAME, 'AWS sub-credentials access key',
@@ -407,9 +404,8 @@ def create_parser_dict(conf):
             AZURE,
             [(CONTROLLER_NAME, {'choices': get_controllers(conf, AZURE),
                                 'dest': CONTROLLER_NAME})],
-            [CONTROLLER_NEW_NAME, 'controller templates',
-             'controller domain', 'subscription', 'environment',
-             'Service Principal credentials tenant',
+            ['controller templates', 'controller domain', 'subscription',
+             'environment', 'Service Principal credentials tenant',
              'Service Principal credentials client id',
              'Service Principal credentials client secret',
              'Azure username', 'Azure password'],
@@ -421,8 +417,8 @@ def create_parser_dict(conf):
         'set_controller_gcp': [
             GCP, [(CONTROLLER_NAME, {'choices': get_controllers(conf, GCP),
                                      'dest': CONTROLLER_NAME})],
-            [CONTROLLER_NEW_NAME, 'controller templates', 'controller domain',
-             'GCP project', 'GCP credentials'], 'set GCP controller values',
+            ['controller templates', 'controller domain', 'GCP project',
+             'GCP credentials'], 'set GCP controller values',
             'usage examples: \n' + '\n'.join(
                 USAGE_EXAMPLES['set_controller_GCP']),
             None
@@ -699,10 +695,6 @@ ARGUMENTS = {
         '-tn', [TEMPLATES],
         'the name of the template. The name must be unique', None
     ],
-    TEMPLATE_NEW_NAME: [
-        '-nn', [],
-        'the new name of the template. The name must be unique', None
-    ],
     'one time password': [
         '-otp', [TEMPLATES, TEMPLATE_NAME, 'one-time-password'],
         'a random string consisting of at least %s alphanumeric characters'
@@ -807,7 +799,8 @@ ARGUMENTS = {
         'time together). In the case where no attribute is provided, '
         'a default policy will be used (the default policy has only '
         'the implied rules and a drop-all cleanup rule). '
-        'The value null can be used to explicitly avoid any such policy',
+        'The value "none" can be used to explicitly avoid any such policy.'
+        'Note: the name "none" cannot be used as a policy name.',
         None
     ],
     'section name': [
@@ -824,10 +817,6 @@ ARGUMENTS = {
         '-cn', [CONTROLLERS],
         'the name of the cloud environment controller. The name must be '
         'unique', None
-    ],
-    CONTROLLER_NEW_NAME: [
-        '-nn', [], 'the new name of the controller. The name must be '
-                   'unique', None
     ],
     'class': [
         '-cc', [CONTROLLERS, CONTROLLER_NAME, 'class'],
@@ -1149,8 +1138,14 @@ def validate_template_dependencies(conf, args):
     if 'version' in template and template['version'] != 'R77.30':
         if 'ips-profile' in template and template['ips-profile']:
             sys.stderr.write(
-                'IPS profile can only be associated with R77.30 gateway\n')
+                'IPS profile attribute is redundant for version R80.10 and '
+                'above\n')
             sys.exit(2)
+
+    restrictive_policy = getattr(args, 'restrictive policy', None)
+
+    if restrictive_policy == 'none':  # facilitates null value
+        nested_set(conf, ARGUMENTS['restrictive policy'][1], None)
 
 
 def validate_management(conf, args):
@@ -1313,8 +1308,18 @@ def delete_branch(conf, args, branch):
 
     if branch is CONTROLLERS:
         controller_name = getattr(args, CONTROLLER_NAME)
-        if args.force or prompt('are you sure you want to delete %s?' %
-                                controller_name):
+        if args.force or prompt('warning: to delete %s you should '
+                                'first make sure that there are no Gateways '
+                                'that are auto-provisioned via this '
+                                'controller. To do so, terminate all the '
+                                'Gateways in the cloud environment and make '
+                                'sure that the objects that represent them '
+                                'in the SmartConsole are removed. Deleting '
+                                '%s before its Gateways are removed may '
+                                'cause unexcpeted behavior. If you have '
+                                'already done so and wish to delete the '
+                                'controller, type yes. '
+                                % (controller_name, controller_name)):
             nested_delete(conf, [CONTROLLERS, controller_name])
 
     if branch is SUBCREDS:
@@ -1350,27 +1355,6 @@ def delete_arguments(conf, args):
             elif args.force or prompt('are you sure you want to delete %s\'s '
                                       '%s?' % (path[-2], path[-1])):
                 nested_delete(conf, path)
-
-
-def handle_change_of_branch_name(conf, args):
-    """Pop a configuration branch an re-add it under a new key name. """
-
-    template_new_name = getattr(args, TEMPLATE_NEW_NAME, None)
-    controller_new_name = getattr(args, CONTROLLER_NEW_NAME, None)
-
-    if template_new_name:
-        conf[TEMPLATES][template_new_name] = conf[TEMPLATES].pop(getattr(
-            args, TEMPLATE_NAME))
-        setattr(args, TEMPLATE_NAME, template_new_name)
-        return True
-
-    if controller_new_name:
-        conf[CONTROLLERS][controller_new_name] = conf[CONTROLLERS].pop(getattr(
-            args, CONTROLLER_NAME))
-        setattr(args, CONTROLLER_NAME, controller_new_name)
-        return True
-
-    return False
 
 
 def is_adding_an_existing_object(conf, args):
@@ -1513,8 +1497,7 @@ def process_arguments(conf, args):
             sys.exit(0)
 
     if args.mode == 'set':
-        if not (handle_change_of_branch_name(conf, args) or
-                set_all_none_control_args(conf, args)):
+        if not set_all_none_control_args(conf, args):
             sys.stdout.write(
                 'too few arguments. No changes were made\n')
             sys.exit(0)
