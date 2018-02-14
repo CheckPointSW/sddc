@@ -963,7 +963,9 @@ class Azure(Controller):
 
             address_type = tags.get('x-chkp-ip-address', 'private')
             anti_spoofing = {}
-            for s in tags.get('x-chkp-anti-spoofing', ''):
+            for s in tags.get('x-chkp-anti-spoofing', '').split(','):
+                if not s:
+                    continue
                 ifname, _, val = s.partition(':')
                 if val.lower() == 'false':
                     anti_spoofing[ifname] = False
@@ -972,6 +974,8 @@ class Azure(Controller):
 
             topology = {}
             for t in tags.get('x-chkp-topology', '').split(','):
+                if not t:
+                    continue
                 ifname, _, val = t.partition(':')
                 topology[ifname] = val
 
@@ -1001,7 +1005,8 @@ class Azure(Controller):
                 for nic in vm_nics:
                     interface = vmss_nics.get(nic['id'])
                     if not interface:
-                        log('no interface %s for %s\n' % nic['id'], vm['name'])
+                        log('no interface %s for %s\n' % (
+                            nic['id'], vm['name']))
                         break
                     ifname = interface['name']
                     config = self.get_primary_configuration(interface)
