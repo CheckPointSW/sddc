@@ -306,7 +306,7 @@ def create_parser_dict(conf):
              'HTTPS Inspection', 'Identity Awareness', 'Application Control',
              'Intrusion Prevention', 'IPS Profile', 'URL Filtering',
              'Anti-Bot', 'Anti-Virus', 'restrictive policy', 'section name',
-             NEW_KEY],
+             'send logs to server', NEW_KEY],
             'add a gateway configuration template. When a new gateway '
             'instance is detected, the template\'s name is used to '
             'determines the eventual gateway configuration',
@@ -374,7 +374,7 @@ def create_parser_dict(conf):
              'Identity Awareness', 'Application Control',
              'Intrusion Prevention', 'IPS Profile', 'URL Filtering',
              'Anti-Bot', 'Anti-Virus', 'restrictive policy', 'section name',
-             NEW_KEY],
+             'send logs to server', NEW_KEY],
             'set template arguments', 'usage examples: \n' + '\n'.join(
                 USAGE_EXAMPLES['set_template']), None
         ],
@@ -459,6 +459,7 @@ def create_parser_dict(conf):
              ('Anti-Virus', {'action': 'store_true'}),
              ('restrictive policy', {'action': 'store_true'}),
              ('section name', {'action': 'store_true'}),
+             ('send logs to server', {'action': 'store_true'}),
              (NEW_KEY, {'nargs': 1,
                         'help': 'optional attributes of a gateway. Usage '
                                 '-nk [KEY]'})],
@@ -800,13 +801,17 @@ ARGUMENTS = {
         'a default policy will be used (the default policy has only '
         'the implied rules and a drop-all cleanup rule). '
         'The value "none" can be used to explicitly avoid any such policy.'
-        'Note: the name "none" cannot be used as a policy name.',
+        'Note: the name "none" cannot be used as a policy name',
         None
     ],
     'section name': [
         '-secn', [TEMPLATES, TEMPLATE_NAME, 'section-name'],
         'a name of a rule section in the access and NAT layers in the '
         'policy, where to insert the automatically generated rules', None
+    ],
+    'send logs to server': [
+        '-sl', [TEMPLATES, TEMPLATE_NAME, 'send-logs-to-server'],
+        'the name of a log server object in SmartConsole, to send logs to'
     ],
     NEW_KEY: [
         '-nk', [TEMPLATES, TEMPLATE_NAME, NEW_KEY],
@@ -1302,8 +1307,11 @@ def delete_branch(conf, args, branch):
 
     if branch is TEMPLATES:
         template_name = getattr(args, TEMPLATE_NAME)
-        if args.force or prompt('are you sure you want to delete %s?' %
-                                template_name):
+        if args.force or prompt('warning: to delete %s you should '
+                                'first make sure that there are no Gateways '
+                                'that are auto-provisioned using this '
+                                'template. are you sure you want to delete '
+                                '%s?' % (template_name, template_name)):
             nested_delete(conf, [TEMPLATES, template_name])
 
     if branch is CONTROLLERS:
