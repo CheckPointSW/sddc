@@ -306,7 +306,7 @@ def create_parser_dict(conf):
              'HTTPS Inspection', 'Identity Awareness', 'Application Control',
              'Intrusion Prevention', 'IPS Profile', 'URL Filtering',
              'Anti-Bot', 'Anti-Virus', 'restrictive policy', 'section name',
-             'send logs to server', NEW_KEY],
+             'send logs to server', 'send alerts to server', NEW_KEY],
             'add a gateway configuration template. When a new gateway '
             'instance is detected, the template\'s name is used to '
             'determines the eventual gateway configuration',
@@ -374,7 +374,7 @@ def create_parser_dict(conf):
              'Identity Awareness', 'Application Control',
              'Intrusion Prevention', 'IPS Profile', 'URL Filtering',
              'Anti-Bot', 'Anti-Virus', 'restrictive policy', 'section name',
-             'send logs to server', NEW_KEY],
+             'send logs to server', 'send alerts to server', NEW_KEY],
             'set template arguments', 'usage examples: \n' + '\n'.join(
                 USAGE_EXAMPLES['set_template']), None
         ],
@@ -460,6 +460,7 @@ def create_parser_dict(conf):
              ('restrictive policy', {'action': 'store_true'}),
              ('section name', {'action': 'store_true'}),
              ('send logs to server', {'action': 'store_true'}),
+             ('send alerts to server', {'action': 'store_true'}),
              (NEW_KEY, {'nargs': 1,
                         'help': 'optional attributes of a gateway. Usage '
                                 '-nk [KEY]'})],
@@ -492,8 +493,9 @@ def create_parser_dict(conf):
              ('AWS sub-credentials file path', {'action': 'store_true'}),
              ('AWS sub-credentials IAM', {'action': 'store_true'}),
              ('AWS sub-credentials STS role', {'action': 'store_true'}),
-             ('AWS sub-credentials STS external id', {'action': 'store_true'})
-             ], 'delete an AWS controller or its values',
+             ('AWS sub-credentials STS external id',
+             {'action': 'store_true'})],
+            'delete an AWS controller or its values',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES[
                                              'delete_controller_AWS']),
             None
@@ -609,11 +611,6 @@ def validate_hex(value):
                                          value)
     return value
 
-
-def validate_communities(input):
-    """Split the communities string into array. """
-
-    return input.split(',')
 
 """
 Structure of ARGUMENTS dictionary:
@@ -812,6 +809,10 @@ ARGUMENTS = {
     'send logs to server': [
         '-sl', [TEMPLATES, TEMPLATE_NAME, 'send-logs-to-server'],
         'the name of a log server object in SmartConsole, to send logs to'
+    ],
+    'send alerts to server': [
+        '-sa', [TEMPLATES, TEMPLATE_NAME, 'send-alerts-to-server'],
+        'the name of a log server object in SmartConsole, to send alerts to'
     ],
     NEW_KEY: [
         '-nk', [TEMPLATES, TEMPLATE_NAME, NEW_KEY],
