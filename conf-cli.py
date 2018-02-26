@@ -808,11 +808,13 @@ ARGUMENTS = {
     ],
     'send logs to server': [
         '-sl', [TEMPLATES, TEMPLATE_NAME, 'send-logs-to-server'],
-        'the name of a log server object in SmartConsole, to send logs to'
+        'the name of a log server object in SmartConsole, to send logs to',
+        None
     ],
     'send alerts to server': [
         '-sa', [TEMPLATES, TEMPLATE_NAME, 'send-alerts-to-server'],
-        'the name of a log server object in SmartConsole, to send alerts to'
+        'the name of a log server object in SmartConsole, to send alerts to',
+        None
     ],
     NEW_KEY: [
         '-nk', [TEMPLATES, TEMPLATE_NAME, NEW_KEY],
