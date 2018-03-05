@@ -2503,6 +2503,19 @@ def test():
     log('\nTesting management connectivity...\n')
     with Management.init(domains, **config) as managements:
         for management in managements.values():
+            if management.domain:
+                log('\nTesting domain: %s\n' % management.domain)
+            try:
+                management('discard', {})
+            except Exception:
+                log('\n%s' % traceback.format_exc())
+                msg = 'Failed'
+                if management.user:
+                    msg += '\nPlease check the user/password credentials'
+                if management.domain:
+                    msg += ('\nPlease verify that domain "%s" exists' %
+                            management.domain)
+                raise Exception(msg + '\n')
             management.get_gateways()
 
     log('\nAll Tests passed successfully\n')
