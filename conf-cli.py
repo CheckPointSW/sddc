@@ -98,27 +98,25 @@ USAGE_EXAMPLES = {
     ],
     'set_delay': ['set delay 60'],
     'set_management': [
-        'set management [-mn <NEW-NAME>] [-ho <NEW-HOST> [-d <DOMAIN>] [-fp '
+        'set management [-mn <NEW-NAME>] [-mh <NEW-HOST> [-d <DOMAIN>] [-fp '
         '<FINGERPRINT>] [-u <USER>] [-pass <PASSWORD>] [-pr <PROXY>] [-cs '
         '<CUSTOM-SCRIPT-PATH>]'
     ],
     'set_template': [
-        'set template -tn <NAME> [-nn <NEW-NAME>] [-otp <SIC-KEY>] [-ver {'
-        'R77.30,R80.10}] [-po <POLICY>]',
-        'set template -tn <NAME> [-hi] [-ia] [-appi]'
+        'set template -tn <NAME> [-otp <SIC-KEY>] [-ver {R77.30,R80.10}]',
+        '[-po <POLICY>]', 'set template -tn <NAME> [-hi] [-ia] [-appi]'
     ],
     'set_controller_AWS': [
-        'set controller AWS -tn <NAME> [-nn <NEW-NAME>]',
-        'set controller AWS -tn <NAME> [-fi <FILE-PATH> | -iam]'
+        'set controller AWS -cn <NAME> '
+        '[-r <COMMA-SEPARATED-LIST-OF-AWS-REGIONS>]',
+        'set controller AWS -cn <NAME> [-fi <FILE-PATH> | -iam]'
     ],
     'set_controller_Azure': [
-        'set controller Azure -cn <NAME> [-nn <NEW-NAME>] [-au <USERNAME>] ['
-        '-ap <PASSWORD>]',
+        'set controller Azure -cn <NAME> [-au <USERNAME>] [-ap <PASSWORD>]',
         'set controller Azure -cn <NAME> [-cd <DOMAIN>]'
     ],
     'set_controller_GCP': [
-        'set controller GCP -cn <NAME> [-nn <NEW-NAME>] [-cr <FILE-PATH> | '
-        '"IAM"]'
+        'set controller GCP -cn <NAME> [-cr <FILE-PATH> | "IAM"]'
     ],
     'delete_management': ['delete management',
                           'delete management -pr'],
@@ -622,7 +620,7 @@ or 'action:')
 
 ARGUMENTS = {
     'branch': ['branch', [], 'the branch of the configuration to show',
-               {'choices': ['all', 'management', 'templates', 'controllers']}],
+               {'choices': ['all', MANAGEMENT, TEMPLATES, CONTROLLERS]}],
     DELAY: [DELAY, [DELAY],
             'time to wait in seconds after each poll cycle',
             {'type': int}],
@@ -818,8 +816,9 @@ ARGUMENTS = {
     ],
     NEW_KEY: [
         '-nk', [TEMPLATES, TEMPLATE_NAME, NEW_KEY],
-        'an optional attributes of a gateway. Usage -nk [KEY] [VALUE]',
-        {'nargs': 2}
+        'any other attribute that can be set with the set-simple-gateway '
+        'Management API. Usage -nk [KEY] [VALUE]',
+        {'nargs': 2, 'metavar': ('KEY', 'VALUE')}
     ],
     CONTROLLER_NAME: [
         '-cn', [CONTROLLERS],
@@ -962,18 +961,39 @@ ARGUMENTS = {
 
 
 def verify_AWS_credentials(conf, args, creds, sub=False):
-    """Verifies main and sub-account AWS credentials dependencies."""
+    """Verifies AWS credentials dependencies.
+
+    creds is a dictionary object:
+    {
+        "access-key": "AWS-ACCESS-KEY",
+        "secret-key": "AWS-SECRET-KEY",
+        "cred-file": "IAM",
+        "sts-role": "STS-ROLE",
+        "sts-external-id": "STS-EXTERNAL-ID"
+    }
+
+    where:
+        access-key and secret-key must exist together.
+        access-key & secret-key and cred-file can't exist together.
+        external-id must exist with STS role
+
+    if not sub, either access-key and secret-key or cred-file must be present.
+    sub means it can inherit from top level.
+
+    args is required to determine what to delete ("what's the user doing
+    now?")
+    """
 
     if sub and getattr(args, SUBCREDENTIALS_NAME, None):
         name = getattr(args, SUBCREDENTIALS_NAME)
     else:
         name = getattr(args, CONTROLLER_NAME)
 
-    # No mandatory credentials in the main account
+    # minimum credentials
     if not sub:
         if not ('cred-file' in creds or 'access-key' in creds):
             sys.stderr.write(
-                'AWS controller "%s" is missing credentials. '
+                '"%s" is missing credentials. '
                 'AWS credentials must contain access and secret keys '
                 'or a path to a file containing them, '
                 'or specify IAM to use the Management\'s IAM role. '
@@ -982,7 +1002,7 @@ def verify_AWS_credentials(conf, args, creds, sub=False):
     else:
         if not creds:
             sys.stderr.write(
-                'AWS controller "%s" is missing credentials. '
+                '"%s" is missing credentials. '
                 'AWS credentials must contain access and secret keys '
                 'or a path to a file containing them, '
                 'or specify IAM to use the Management\'s IAM role. '
@@ -992,7 +1012,7 @@ def verify_AWS_credentials(conf, args, creds, sub=False):
     # Missing either of access key or secret key (both or neither)
     if ('access-key' in creds) != ('secret-key' in creds):
         sys.stderr.write(
-            'AWS controller "%s" is missing credentials. '
+            '"%s" is missing credentials. '
             'AWS credentials must contain access and secret keys '
             'or a path to a file containing them, '
             'or specify IAM to use the Management\'s IAM role. '
@@ -1051,7 +1071,7 @@ def verify_AWS_credentials(conf, args, creds, sub=False):
 
     if 'sts-external-id' in creds and 'sts-role' not in creds:
         sys.stderr.write(
-            'AWS controller "%s" is missing credentials. '
+            '"%s" is missing credentials. '
             'AWS credentials must contain an STS role '
             'if STS external id is specified.\n' % name)
         sys.exit(2)
@@ -1078,7 +1098,7 @@ def validate_controller_credentials(conf, args):
                 verify_AWS_credentials(conf, args, v, sub=True)
 
     elif controller['class'] == 'Azure':
-        credentials = controller['credentials']
+        credentials = controller.get('credentials', {})
         spa = {'tenant', 'grant_type', 'client_id', 'client_secret'}
         upa = {'username', 'password'}
 
@@ -1313,8 +1333,16 @@ def delete_branch(conf, args, branch):
         if args.force or prompt('warning: to delete %s you should '
                                 'first make sure that there are no Gateways '
                                 'that are auto-provisioned using this '
-                                'template. are you sure you want to delete '
-                                '%s?' % (template_name, template_name)):
+                                'template. To do so, terminate all the '
+                                'Gateways in the cloud environment that are '
+                                'auto-provisioned using this template and '
+                                'make sure that the objects that represent '
+                                'them in the SmartConsole are removed. '
+                                'Deleting s before the Gateways are removed '
+                                'may cause unexcpeted behavior. If you have '
+                                'already done so and wish to delete the '
+                                'template, type yes.'
+                                % (template_name, template_name)):
             nested_delete(conf, [TEMPLATES, template_name])
 
     if branch is CONTROLLERS:
@@ -1340,19 +1368,32 @@ def delete_branch(conf, args, branch):
         if args.force or prompt('are you sure you want to delete %s\'s '
                                 '%s sub-account?' % (path[-3], path[-1])):
             nested_delete(conf, path)
+            if not nested_get(conf, path[:-1]):
+                nested_delete(conf, path[:-1])
+
+
+def get_branch(args):
+    """Get the branch that is being edited by the current command"""
+
+    if args.branch == 'template':
+        return TEMPLATES
+    elif args.branch == 'controller':
+        return CONTROLLERS
+    else:
+        return args.branch
 
 
 def delete_arguments(conf, args):
     """Remove either a value or an entire object. """
 
-    branches = (TEMPLATES, CONTROLLERS, SUBCREDS)
+    branches = (get_branch(args), SUBCREDS)
     for branch in branches:
-        list_of_args_of_branch = [arg for arg in vars(args)
-                                  if getattr(args, arg, None) and
-                                  ARGUMENTS.get(arg, False) and
-                                  branch in ARGUMENTS[arg][1]]
+        args_of_branch = [arg for arg in vars(args)
+                          if getattr(args, arg) and
+                          ARGUMENTS.get(arg, False) and
+                          branch in ARGUMENTS[arg][1]]
 
-        if len(list_of_args_of_branch) == 1:
+        if len(args_of_branch) == 1:
             delete_branch(conf, args, branch)
 
     for arg in sorted(vars(args)):
@@ -1363,8 +1404,8 @@ def delete_arguments(conf, args):
             if not nested_get(conf, path):
                 sys.stdout.write('%s does not exist in %s\n' %
                                  (path[-1], (path[-2])))
-            elif args.force or prompt('are you sure you want to delete %s\'s '
-                                      '%s?' % (path[-2], path[-1])):
+            elif args.force or prompt('are you sure you want to delete %s?'
+                                      % path[-1]):
                 nested_delete(conf, path)
 
 
@@ -1433,24 +1474,32 @@ def custom_validations(conf, args):
                 sys.exit(2)
 
 
+def safe_string(v):
+    if isinstance(v, basestring) and re.match(
+            r'[A-Za-z][-0-9A-Za-z]*$', v) and v.lower() not in {
+                'null', 'true', 'yes', 'on', 'false', 'no', 'off',
+                'infinity', 'nan'}:
+        return v
+    return json.dumps(v)
+
+
 def print_conf(root, indent=0):
     """Print the configuration in a user friendly format."""
 
-    if type(root) == collections.OrderedDict:
-        for key, value in root.items():
-            if hasattr(value, '__iter__'):
-                sys.stdout.write('%s%s:\n' % (' ' * indent, key))
-                print_conf(value, indent + 2)
-            else:
-                sys.stdout.write('%s%s: %s\n' % (' ' * indent, key, value))
-    elif type(root) == list:
-        for value in root:
-            if hasattr(value, '__iter__'):
-                print_conf(value, indent + 2)
-            else:
-                sys.stdout.write('%s- %s\n' % (' ' * indent, value))
+    if isinstance(root, (dict, list)):
+        if indent:
+            sys.stdout.write('\n')
+        if isinstance(root, list):
+            items = [('-', v) for v in root]
+        else:
+            items = [(safe_string(k) + ':', v) for k, v in root.items()]
+        for k, v in items:
+            sys.stdout.write(indent * ' ' + k)
+            print_conf(v, indent + 2)
     else:
-        sys.stdout.write('%s%s\n' % (' ' * indent, root))
+        if indent:
+            sys.stdout.write(' ')
+        sys.stdout.write(safe_string(root) + '\n')
 
 
 def process_arguments(conf, args):
@@ -1554,7 +1603,10 @@ def update_paths_with_user_input(args):
     if new_key_args:
         new_key = new_key_args[0]
         if len(new_key_args) == 2:
-            new_value = new_key_args[1]
+            try:
+                new_value = json.loads(new_key_args[1])
+            except ValueError:
+                new_value = new_key_args[1]
         elif len(new_key_args) == 1:  # facilitates delete
             new_value = True
 
