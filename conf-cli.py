@@ -1338,7 +1338,7 @@ def delete_branch(conf, args, branch):
                                 'auto-provisioned using this template and '
                                 'make sure that the objects that represent '
                                 'them in the SmartConsole are removed. '
-                                'Deleting s before the Gateways are removed '
+                                'Deleting %s before the Gateways are removed '
                                 'may cause unexcpeted behavior. If you have '
                                 'already done so and wish to delete the '
                                 'template, type yes.'
@@ -1433,7 +1433,7 @@ def set_all_none_control_args(conf, args):
 
     changed = False
     for key, value in vars(args).iteritems():
-        if value and key not in NON_CONFIG_KEYS:
+        if value not in (None, False) and key not in NON_CONFIG_KEYS:
             path = ARGUMENTS[key][1]
             nested_set(conf, path, value)
             changed = True
@@ -1483,23 +1483,34 @@ def safe_string(v):
     return json.dumps(v)
 
 
-def print_conf(root, indent=0):
+def print_conf(root, stream=sys.stdout):
     """Print the configuration in a user friendly format."""
 
-    if isinstance(root, (dict, list)):
-        if indent:
-            sys.stdout.write('\n')
-        if isinstance(root, list):
-            items = [('-', v) for v in root]
-        else:
-            items = [(safe_string(k) + ':', v) for k, v in root.items()]
-        for k, v in items:
-            sys.stdout.write(indent * ' ' + k)
-            print_conf(v, indent + 2)
+    if stream:
+        stream.write('\n'.join(print_conf(root, None) + ['']))
+        return
+
+    if not isinstance(root, (dict, list)) or not root:
+        return [safe_string(root)]
+
+    if isinstance(root, dict):
+        items = root.iteritems()
     else:
-        if indent:
-            sys.stdout.write(' ')
-        sys.stdout.write(safe_string(root) + '\n')
+        items = ((None, v) for v in root)
+    lines = []
+    for k, v in items:
+        v_lines = print_conf(v, None)
+        indent = '  '
+        if k is None:
+            lines.append('- ' + v_lines.pop(0))
+        else:
+            lines.append(safe_string(k) + ':')
+            if isinstance(v, list):
+                indent = ''
+            if not v or not isinstance(v, (dict, list)):
+                lines[-1] += ' ' + v_lines.pop(0)
+        lines.extend([indent + line for line in v_lines])
+    return lines
 
 
 def process_arguments(conf, args):
