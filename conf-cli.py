@@ -138,6 +138,10 @@ USAGE_EXAMPLES = {
     ]
 }
 
+filename = os.path.basename(__file__)
+for k, v in USAGE_EXAMPLES.iteritems():
+    USAGE_EXAMPLES[k] = [filename + ' ' + example for example in v]
+
 CONFPATH = os.environ.get(
     'AUTOPROVISION_CONFIG_FILE',
     os.environ.get('MDS_FWDIR',
