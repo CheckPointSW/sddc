@@ -46,6 +46,7 @@ import azure
 import gcp
 
 TAG = 'managed-virtual-gateway'
+BLOCKED_PORTS = ['444', '8082', '8880']
 
 conf = collections.OrderedDict()
 log_buffer = [None]
@@ -295,19 +296,41 @@ class AWS(Controller):
         https_ports = tags.get('x-chkp-https-ports', [])
         if https_ports:
             https_ports = set(https_ports.split(':'))
+        source_cidrs = tags.get('x-chkp-source-cidrs', [])
+        if source_cidrs:
+            source_cidrs = set(source_cidrs.split())
+            bad_cidrs = {s for s in source_cidrs if not re.compile(
+                '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}'
+                '([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])'
+                '(\/([1-9]|[1-2][0-9]|3[0-2]))$').match(s)}
+            if bad_cidrs:
+                raise Exception(
+                    'malformed CIDRs: %s in tag x-chkp-source-cidrs' %
+                    ', '.join(bad_cidrs))
         protocol_ports = []
         for pp in lb['Front']:
             protocol, _, port = pp.partition('-')
+            translated = port
             if port in ignore_ports:
                 continue
+            if port in BLOCKED_PORTS:
+                raise Exception(
+                    'Port %s cannot be used for internal LB listener'
+                    % port)
+            if port in {'80', '443'}:
+                protocol, port_list = (('HTTP', http_ports)
+                                       if port == '80'
+                                       else ('HTTPS', https_ports))
+                port = ([p[1:] for p in port_list if p.startswith('@')] +
+                        [str(int(port) + 9000)])[0]
             if port in http_ports:
                 protocol = 'HTTP'
             if port in https_ports:
                 protocol = 'HTTPS'
-            protocol_ports.append('%s-%s' % (protocol, port))
+            protocol_ports.append('%s-%s-%s' % (protocol, port, translated))
         template = tags.get('x-chkp-template')
         by_template.setdefault(template, {})
-        by_template[template][lb['DNSName']] = protocol_ports
+        by_template[template][lb['DNSName']] = (protocol_ports, source_cidrs)
 
     def retrieve_all_elbs(self, region, sub_cred=None):
         elb_list = self.retrieve_all(
@@ -452,13 +475,10 @@ class AWS(Controller):
             for target_group in i2target_groups[i]:
                 for port in i2target_groups[i][target_group]:
                     for dns_name in target_group2dns_names.get(
-                            target_group, set()):
-                        by_instance[i].setdefault(port, set()).update(
-                            dns_name2cidrs[dns_name])
-                        if v2lb_dict[dns_name]['Type'] == 'network':
-                            by_instance[i][port].add(None)
-            by_instance[i] = {
-                k: v for k, v in by_instance[i].iteritems() if None not in v}
+                            target_group, []):
+                        by_instance[i].setdefault(port, []).append(
+                            (dns_name2cidrs[dns_name],
+                             v2lb_dict[dns_name]['Type'] == 'network'))
 
     def retrieve_foreign_internal_lbs(self, region, by_template):
         for sub_cred in self.sub_creds:
@@ -468,6 +488,24 @@ class AWS(Controller):
                 self.register_internal_lb(elb, by_template)
             for v2lb in v2lb_dict.values():
                 self.register_internal_lb(v2lb, by_template)
+
+    def validate_port_overlap(self, by_template):
+        used_ports = {}
+        for template in by_template:
+            used_ports[template] = {}
+            for dns_name, (protocol_ports, cidrs) in by_template[
+                    template].iteritems():
+                for port in [protocol_port.split('-')[1]
+                             for protocol_port in protocol_ports]:
+                    used_ports[template].setdefault(port, []).append(dns_name)
+        exception_msg = []
+        for port, DNS_name in [(port, used_ports[template][port]) for template
+                               in used_ports for port in used_ports[template]
+                               if 1 < len(used_ports[template][port])]:
+            exception_msg.append('Multiple listeners on port %s: %s' %
+                                 (port, ', '.join(DNS_name)))
+        if exception_msg:
+            raise Exception('\n' + '\n'.join(exception_msg))
 
     def retrieve_elbs(self, subnets):
         by_template = {}
@@ -486,6 +524,7 @@ class AWS(Controller):
                 region, subnets[region], auto_scaling_groups, v2lb_dict,
                 by_template[region], by_instance[region])
             self.retrieve_foreign_internal_lbs(region, by_template[region])
+            self.validate_port_overlap(by_template[region])
         return {'by-template': by_template, 'by-instance': by_instance}
 
     def retrieve_all(self, service, region, path, top_set, collect_set,
@@ -619,11 +658,27 @@ class AWS(Controller):
                 external_elbs = elbs['by-instance'].get(region, {}).get(
                     instance['instanceId'], {})
                 for dns_name in internal_elbs:
-                    for protocol_port in internal_elbs[dns_name]:
+                    protocol_ports, tag_cidrs = internal_elbs[dns_name]
+                    for protocol_port in protocol_ports:
+                        cidrs_type = external_elbs.get(
+                            protocol_port.split('-')[1], set())
+                        transparent_cidrs = set(sum(
+                            [ct[0] for ct in cidrs_type if ct[1]], []))
+                        non_transparent_cidrs = set(sum(
+                            [ct[0] for ct in cidrs_type if not ct[1]], []))
+                        if tag_cidrs:
+                            if non_transparent_cidrs:
+                                raise Exception(
+                                    'external non NLB with cidr tag on the'
+                                    'internal LB')
+                            cidrs = set(tag_cidrs) | transparent_cidrs
+                        else:
+                            if transparent_cidrs:
+                                cidrs = set()
+                            else:
+                                cidrs = non_transparent_cidrs
                         load_balancers.setdefault(
-                            dns_name, {})[protocol_port] = list(
-                                external_elbs.get(protocol_port.split('-')[1],
-                                                  set()))
+                            dns_name, {})[protocol_port] = list(cidrs)
                 instances.append(Instance(
                     instance_name, ip_address, interfaces, template,
                     load_balancers))
@@ -1944,7 +1999,7 @@ class Management(object):
                     {'uid': layer['uid']})['firewallOn']:
                 layers.append(layer)
         if not layers:
-            raise Exception('failed to find a firwall layer in "%s"' % layer)
+            raise Exception('failed to find a firewall layer in "%s"' % layer)
         for layer in layers:
             for section in self.get_rulebase(layer['uid'], sections=True):
                 if section.get('name') == section_name:
@@ -1964,9 +2019,13 @@ class Management(object):
         else:
             nat_position = 'top'
         for protocol_port in protocol_ports:
-            lb_protocol, dash, port = protocol_port.partition('-')
+            translated_service = None
+            lb_protocol, port, translated = protocol_port.split('-')
+            service_name = '%s-%s_%s' % (lb_protocol, port, gw['name'])
+            if translated != port:
+                translated_service = '%s-%s_%s' % (
+                    lb_protocol, translated, gw['name'])
             # add a service
-            service_name = '%s_%s' % (protocol_port, gw['name'])
             log('\nadding %s' % service_name)
             self('add-service-tcp', {
                 'name': service_name, 'port': port, 'match-for-any': False})
@@ -1975,6 +2034,16 @@ class Management(object):
                 self('set-generic-object', {
                     'uid': self.get_uid(service_name),
                     'protoType': protocol})
+            if translated_service:
+                log('\nadding %s' % translated_service)
+                self('add-service-tcp', {
+                    'name': translated_service, 'port': translated,
+                    'match-for-any': False})
+                protocol = self.get_protocol_type(lb_protocol)
+                if protocol:
+                    self('set-generic-object', {
+                        'uid': self.get_uid(translated_service),
+                        'protoType': protocol})
             # add subnets
             net_uids = []
             for subnet in protocol_ports[protocol_port]:
@@ -2012,7 +2081,7 @@ class Management(object):
                 'install-on': gw['name']})
             # add nat rule
             log('\nadding nat rule for %s' % service_name)
-            self('add-nat-rule', {
+            nat_rule_body = {
                 'comments': 'nat_%s' % service_name,
                 'package': policy,
                 'position': nat_position,
@@ -2021,7 +2090,10 @@ class Management(object):
                 'original-service': service_name,
                 'translated-source': nat_name,
                 'method': 'hide',
-                'install-on': gw['name']})
+                'install-on': gw['name']}
+            if translated_service:
+                nat_rule_body['translated-service'] = translated_service
+            self('add-nat-rule', nat_rule_body)
 
     def set_policy(self, gw, policy):
         name = gw['name']
