@@ -412,8 +412,8 @@ class AWS(Controller):
             by_instance.setdefault(i, {})
             for lb_name in i2lb_names[i]:
                 for port in lb_name2cidrs.get(lb_name, {}):
-                    by_instance[i].setdefault(port, set()).update(
-                        lb_name2cidrs[lb_name].get(port, []))
+                    by_instance[i].setdefault(port, []).append(
+                        (lb_name2cidrs[lb_name].get(port, [])), False)
 
     def retrieve_v2_lbs(self, region, subnets, auto_scaling_groups, v2lb_dict,
                         by_template, by_instance):
@@ -669,7 +669,7 @@ class AWS(Controller):
                         if tag_cidrs:
                             if non_transparent_cidrs:
                                 raise Exception(
-                                    'external non NLB with cidr tag on the'
+                                    'external non NLB with cidr tag on the '
                                     'internal LB')
                             cidrs = set(tag_cidrs) | transparent_cidrs
                         else:
