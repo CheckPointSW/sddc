@@ -1935,11 +1935,14 @@ class Management(object):
 
     def get_protocol_type(self, protocol):
         if not hasattr(self, 'protocol_map'):
-            self.protocol_map = {
-                'HTTP': self('show-generic-object', {
-                    'uid': self.get_uid('http')})['protoType'],
-                'HTTPS': self('show-generic-object', {
-                    'uid': self.get_uid('https')})['protoType']}
+            protocol_map = {}
+            for service, proto in [('http', 'HTTP'), ('https', 'HTTPS')]:
+                uid = self.get_uid(service)
+                obj = self('show-generic-object', {'uid': uid})
+                if 'protoType' not in obj and 'parent' in obj:
+                    obj = self('show-generic-object', {'uid': obj['parent']})
+                protocol_map[proto] = obj['protoType']
+            self.protocol_map = protocol_map
         return self.protocol_map.get(protocol)
 
     def add_load_balancer(self, gw, policy, section_name, dns_name,
