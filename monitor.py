@@ -1633,6 +1633,10 @@ class Management(object):
         by_domain = [o for o in by_name if self.in_domain(o)]
         if len(by_domain) == 1:
             return by_domain[0]['uid']
+        if not len(by_domain):
+            by_domain = [o for o in by_name if o['domain']['name'] == 'Global']
+            if len(by_domain) == 1:
+                return by_domain[0]['uid']
         raise Exception('more than one object named "%s"' % name)
 
     def set_proxy(self, gw, proxy_ports):
