@@ -130,11 +130,11 @@ def redact(active, log, redact_patterns):
 
 class Template(object):
     EXCLUDED = set(['proto'])
-    templates = {None: None}
+    templates = collections.OrderedDict([(None, None)])
 
     def __init__(self, name, **options):
         self.name = name
-        self.proto = self.templates[options.get('proto')]
+        self.proto = options.get('proto')
         self.self = self
         self.options = {
             k: v for k, v in options.items() if k not in self.EXCLUDED}
@@ -143,8 +143,9 @@ class Template(object):
     def __getattr__(self, attr):
         if attr in self.options:
             return self.options[attr]
-        if self.proto:
-            return getattr(self.proto, attr)
+        proto = Template.templates[self.proto]
+        if proto:
+            return getattr(proto, attr)
         raise AttributeError()
 
     @staticmethod
@@ -2548,8 +2549,14 @@ def test():
                 'The parameter "templates" in controller %s should be an array'
                 % name)
         templates.update(controller['templates'])
-    for name in templates:
+    for name, template in Template.templates.items():
+        if name is None:
+            continue
         log('\nTesting %s...\n' % name)
+        if template.proto and template.proto not in Template.templates:
+            raise Exception('The proto "%s" does not exist' % template.proto)
+        if name not in templates:
+            continue
         for key in ['version', 'one-time-password', 'policy']:
             if not Template.get(name, key, None):
                 raise Exception('The parameter "%s" is missing' % key)
