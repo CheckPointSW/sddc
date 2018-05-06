@@ -223,8 +223,13 @@ class Controller(object):
         return []
 
     def filter_instances(self):
-        return [i for i in self.get_instances()
-                if not self.templates or i.template in self.templates]
+        instances = []
+        for i in self.get_instances():
+            if self.templates and i.template not in self.templates:
+                continue
+            i.controller = self
+            instances.append(i)
+        return instances
 
     @staticmethod
     @contextlib.contextmanager
