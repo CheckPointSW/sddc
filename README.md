@@ -9,7 +9,7 @@ The monitor.py script works in conjunction with:
 
 * A Check Point R80 SmartCenter Server (the management)
 
-* One or more cloud environments such as AWS, Azure, GCP, or OpenStack (controllers)
+* One or more cloud environments such as AWS, Azure, or GCP (controllers)
 
 
 The script will:
@@ -21,7 +21,7 @@ The script will:
 * Install a security policy
 
 
-The script uses specific tags (AWS, Azure and GCP) or metadata (OpenStack) in order to:
+The script uses specific tags in order to:
 
 * Identify that an instance is as a Check Point gateway that should belong to the management
 
@@ -50,7 +50,6 @@ The following tags should be added to gateway instances (in GCP, tags do not hav
 |x-chkp-template|A name of a template as it appears in the configuration file|Mandatory|
 |x-chkp-ip-address|The main IP address of the gateway or "private" or "public"|AWS and Azure, defaults to "public"|
 |x-chkp-tags|"TAG-NAME-1=TAG-VALUE-1:TAG-NAME-2=TAG-VALUE-2..." a list of tags separated by colons, with the name and value separated by an equal sign, the name should only include the part after the "x-chkp-" prefix (e.g., "management=my-management:template=my-template:ip-address=public")|Only in AWS, use the compound tag when instances already have close to 10 tags|
-|x-chkp-interfaces|"NET-NAME-FOR-eth0:NET-NAME-FOR-eth1:..." a list of the neutron networks that are attached to each of the gateway interfaces|Only in OpenStack, Mandatory for gateways with more than one interface|
 
 Optionally, in AWS and in Azure, network interface objects (ENIs/networkInterfaces) can have the following tags (in GCP these tags are specified as part of the instance tags, as x-chkp-TAGNAME-eth0--TAGVALUE):
 
@@ -103,6 +102,16 @@ The script takes a configuration file in JSON format
                 "proto": "BASE-TEMPLATE-NAME",
                 "policy": "POLICY2-NAME",
                 ...  // optional attributes of a simple-gateway web_api object
+            },
+            "VPN-TEMPLATE-NAME": {
+                "one-time-password": "STRING",
+                "policy": "VPN-POLICY-NAME",
+                "version": "R80.10",
+                // VPN specific settings:
+                "vpn-community-star-as-center": "STAR-COMMUNITY-NAME",
+                "vpn-domain": "ENCRYPTION-DOMAIN-GROUP-NAME",
+                "vpn": true,
+                ...
             }
         },
         "controllers": {
@@ -110,6 +119,7 @@ The script takes a configuration file in JSON format
                 "class": "AWS",
                 "domain": "DOMAIN-1 (Optional)",
                 "templates": ["TEMPLATE1-NAME"],  // Optional
+                "communities": ["COMMUNITY1-NAME"],  // Optional
                 "access-key": "AWS-ACCESS-KEY",
                 "secret-key": "AWS-SECRET-KEY",
                 "sub-creds": {  // Optional
@@ -139,15 +149,6 @@ The script takes a configuration file in JSON format
                 "domain": "DOMAIN-2 (Optional)",
                 "project": "my-project",
                 "credentials": "IAM"
-            },
-            "OPENSTACK-DEVTEST": {
-                "class": "OpenStack",
-                "scheme": "https",
-                "host": "IP-ADDRESS-OR-HOST-NAME:KEYSTONE-PORT",
-                "fingerprint": "sha256:FINGERPRINT-IN-HEX",
-                "user": "OPENSTACK-USER",
-                "password": "STRING",
-                "tenant": "TENANT-UUID"
             }
         }
     }
@@ -217,6 +218,10 @@ In reference to the above configuration:
 
         * ips-profile: an optional IPS profile name to associate with a pre-R80 gateway
 
+        * vpn-community-star-as-center: the star community in which to place the VPN gateway (with "vpn": true) as center (optional)
+
+        * vpn-domain: the group object to be set as the VPN domain for the VPN gateway (with "vpn": true). An empty string will automatically set an empty group as the encryption domain. No value or null will set the encryption domain to addresses behind the gateways
+
         * custom-parameters: an optional string with space separated parameters or a list of string parameters to specify when a gateway is added and a custom script is specified in the management section.
 
         * any other attribute that can be set with the set-simple-gateway R80 Web API as documented in the [Management API Reference](https://sc1.checkpoint.com/documents/R80/APIs/index.html#web/set-simple-gateway)
@@ -230,7 +235,7 @@ In reference to the above configuration:
 
     * Controller attributes:
 
-        * class: either "AWS", "Azure", "GCP", or "OpenStack"
+        * class: either "AWS", "Azure" or "GCP"
 
         * domain: the name or UID of the management domain if applicable (optional). In MDS, instances that are discovered by this controller, will be defined in this domain. If not specified, the domain specified in the management object (in the configuration), will be used. This attribute should not be specified if the management server is not an MDS
 
@@ -270,6 +275,8 @@ In reference to the above configuration:
 
             * sub-creds: an optional object containing credentials specified with the options above (access-key/secret-key or cred-file, optionally with STS role to assume)
 
+            * communities: an optional list of of communities, which are allowed for VPN connections that are discovered by this controller. If this attribute is missing or its value is an empty list, the meaning is that any community may be joined by VPN connections that belong to this controller. This is useful to prevent automatic addition of VPN connections to a community based on the customer gateway public IP address
+
         * For Azure controllers:
 
             * subscription: the Azure subscription ID
@@ -299,24 +306,6 @@ In reference to the above configuration:
             * project: the GCP project ID in which to scan for VM instances
 
             * credentials: a string with the special value "IAM" for automatic retrieval of the service account credentials from the VM instance metadata (when the management server is run in GCP; or a path to a file containing service account credentials
-
-        * For OpenStack controllers:
-
-            * scheme: one of "https" or "http"
-
-            * host: The IP address and port of the keystone endpoint
-
-            * fingerprint: the SHA256 fingerprint of the controller certificate. disable fingerprint checking by providing an empty string "" (insecure)
-
-            * tenant: The tenant UUID
-
-            * user: An OpenStack username
-
-            * One of the following:
-
-                * password: The password associated with the user
-
-                * b64password: The base64 encoded password (for additional obscurity)
 
 
 ## AWS IAM role

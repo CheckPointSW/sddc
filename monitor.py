@@ -182,6 +182,30 @@ class Instance(object):
             self.template, json.dumps(self.load_balancers)])
 
 
+class VPNConn(object):
+    def __init__(self, name, controller, short_name, tag, gateway,
+                 peer, local, remote, asn, pre_shared_key, cidr):
+        self.name = name
+        self.controller = controller
+        self.short_name = short_name
+        self.tag = tag
+        self.gateway = gateway
+        self.peer = peer
+        self.local = local
+        self.remote = remote
+        self.asn = asn
+        self.pre_shared_key = pre_shared_key
+        self.cidr = cidr
+
+    def __str__(self):
+        name = self.name
+        if self.tag:
+            name = '%s(%s)' % (name, self.tag)
+        gw = self.gateway
+        return ' '.join([name, gw, self.peer, self.local, self.remote,
+                         self.asn, self.cidr])
+
+
 class Controller(object):
     SEPARATOR = '--'
 
@@ -189,9 +213,14 @@ class Controller(object):
         self.name = options['name']
         self.management = options['management']
         self.templates = options.get('templates', [])
+        self.communities = options.get('communities', [])
+        self.sync = options.get('sync', {'gateway': True, 'lb': True}).copy()
 
     def get_instances(self):
         raise Exception('not implemented')
+
+    def get_vpn_conns(self, vpn_env=None, test=False):
+        return []
 
     def filter_instances(self):
         return [i for i in self.get_instances()
@@ -202,8 +231,12 @@ class Controller(object):
     def Tester(cls, **options):
         controller = cls(**options)
         yield controller
-        instances = controller.filter_instances()
-        log('\n'.join([''] + [str(i) for i in instances] + ['']))
+        if controller.sync.get('gateway', False):
+            instances = controller.filter_instances()
+            log('\n'.join([''] + [str(i) for i in instances] + ['']))
+        if controller.sync.get('vpn', False):
+            vpn_conns = controller.get_vpn_conns(test=True)
+            log('\n'.join([''] + [str(v) for v in vpn_conns] + ['']))
 
     @staticmethod
     def test(cls, **options):
@@ -212,34 +245,56 @@ class Controller(object):
 
 
 class AWS(Controller):
+    BASE_CRED_OPTS = ['access-key', 'secret-key', 'cred-file']
+    OPT_TO_ARG = {
+        'access-key': 'key', 'secret-key': 'secret', 'cred-file': 'key_file',
+        'sts-role': 'sts_role', 'sts-external-id':  'sts_ext_id'}
+    ARG_TO_ENV = {
+        'key': 'AWS_ACCESS_KEY_ID', 'secret': 'AWS_SECRET_ACCESS_KEY',
+        'key_file': 'AWS_KEY_FILE', 'sts_role': 'AWS_STS_ROLE',
+        'sts_ext_id': 'AWS_STS_EXTERNAL_ID', 'sts_session': 'AWS_STS_SESSION'}
+    CREDENTIAL = '__credential__'
+    VPC = '__vpc__'
+    VGW = '__vgw__'
+    RTB = '__rtb__'
+    NUM_CIDRS = 65536 // 4
+    FREE_CIDRS = {
+        '%s.%s' % (k * 4 // 256, k * 4 % 256) for k in xrange(NUM_CIDRS)} - {
+            '0.0', '1.0', '2.0', '3.0', '4.0', '5.0', '169.252'}
+
     def __init__(self, **options):
         super(AWS, self).__init__(**options)
+        self.regions = options['regions']
         sts_session = 'autoprovision-%s' % (
             datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ'))
-        self.aws = aws.AWS(
-            key=options.get('access-key'), secret=options.get('secret-key'),
-            key_file=options.get('cred-file'),
-            sts_role=options.get('sts-role'),
-            sts_ext_id=options.get('sts-external-id'),
-            sts_session=sts_session if 'sts-role' in options else None)
+        kwargs = {a: options.get(o) for o, a in self.OPT_TO_ARG.items()}
+        kwargs['sts_session'] = sts_session if 'sts-role' in options else None
+        self.aws = aws.AWS(**kwargs)
+        self.env_creds = {None: {
+            e: kwargs[a] for a, e in self.ARG_TO_ENV.items() if kwargs[a]}}
         self.sub_creds = {}
         if 'sub-creds' in options:
             for sub_cred in options['sub-creds']:
                 val = options['sub-creds'][sub_cred]
                 if 'sts-role' in val:
-                    keys = 'access-key', 'secret-key', 'cred-file'
-                    if all([k not in val for k in keys]):
-                        for k in keys:
-                            if k in options:
-                                val[k] = options[k]
-                self.sub_creds[sub_cred] = aws.AWS(
-                    key=val.get('access-key'),
-                    secret=val.get('secret-key'),
-                    key_file=val.get('cred-file'),
-                    sts_role=val.get('sts-role'),
-                    sts_ext_id=val.get('sts-external-id'),
-                    sts_session=sts_session if 'sts-role' in val else None)
-        self.regions = options['regions']
+                    if all(k not in val for k in self.BASE_CRED_OPTS):
+                        val.update({k: options[k]
+                                    for k in self.BASE_CRED_OPTS
+                                    if k in options})
+                kwargs = {
+                    a: val.get(o) for o, a in self.OPT_TO_ARG.items()}
+                kwargs['sts_session'] = (
+                    sts_session if 'sts-role' in val else None)
+                self.sub_creds[sub_cred] = aws.AWS(**kwargs)
+                self.env_creds = {sub_cred: {
+                    e: kwargs[a]
+                    for a, e in self.ARG_TO_ENV.items() if kwargs[a]}}
+        self.callers = {}
+        for cred in [None] + self.sub_creds.keys():
+            self.callers[cred] = self.request(
+                'sts', self.regions[0], 'GET',
+                '/?Action=GetCallerIdentity&Version=2011-06-15',
+                '')[1]['GetCallerIdentityResult']
 
     def request(self, service, *args, **kwargs):
         aws_obj = self.aws
@@ -347,7 +402,7 @@ class AWS(Controller):
                 elb['LoadBalancerName'], '', sub_cred=sub_cred)
             elb['Tags'] = self.get_tags(aws.listify(
                 body['DescribeTagsResult']['TagDescriptions'],
-                'member')[0]['Tags'])
+                'member')[0].get('Tags'))
             protocol_ports = []
             for listener in elb['ListenerDescriptions']:
                 protocol_ports.append('%s-%s' % (
@@ -372,7 +427,7 @@ class AWS(Controller):
                 sub_cred=sub_cred)
             v2lb['Tags'] = self.get_tags(aws.listify(
                 body['DescribeTagsResult']['TagDescriptions'],
-                'member')[0]['Tags'])
+                'member')[0].get('Tags'))
             v2lb['Listeners'] = self.retrieve_all(
                 'elasticloadbalancing', region,
                 '/?' + urllib.urlencode({
@@ -513,6 +568,9 @@ class AWS(Controller):
     def retrieve_elbs(self, subnets):
         by_template = {}
         by_instance = {}
+        result = {'by-template': by_template, 'by-instance': by_instance}
+        if not self.sync.get('lb', False):
+            return result
         for region in self.regions:
             by_template[region] = {}
             by_instance[region] = {}
@@ -528,17 +586,19 @@ class AWS(Controller):
                 by_template[region], by_instance[region])
             self.retrieve_foreign_internal_lbs(region, by_template[region])
             self.validate_port_overlap(by_template[region])
-        return {'by-template': by_template, 'by-instance': by_instance}
+        return result
 
     def retrieve_all(self, service, region, path, top_set, collect_set,
                      sub_cred=None):
         MEMBER = {'ec2': 'item'}.get(service, 'member')
         MARKER = {
             'autoscaling': 'NextToken',
+            'cloudformation': 'NextToken',
             'ec2': 'NextToken',
             'elasticloadbalancing': 'Marker'}[service]
         NEXT_MARKER = {
             'autoscaling': 'NextToken',
+            'cloudformation': 'NextToken',
             'ec2': 'nextToken',
             'elasticloadbalancing': 'NextMarker'}[service]
         objects = []
@@ -569,35 +629,36 @@ class AWS(Controller):
             instances[region] = self.retrieve_all(
                 'ec2',
                 region,
-                '/?Action=DescribeInstances' +
-                '&Filter.1.Name=tag-key&Filter.1.Value=x-chkp-management',
-                'reservationSet', 'instancesSet')
-            instances[region] += self.retrieve_all(
-                'ec2',
-                region,
-                '/?Action=DescribeInstances' +
-                '&Filter.2.Name=tag-key&Filter.2.Value=x-chkp-tags',
+                '/?Action=DescribeInstances',
                 'reservationSet', 'instancesSet')
             instances[region] = [
                 i for i in instances[region]
-                if self.get_tags(i['tagSet']).get(
+                if self.get_tags(i.get('tagSet')).get(
                     'x-chkp-management') == self.management]
         return instances
 
     def get_tags(self, tag_list):
+        if not tag_list:
+            tag_list = []
         tags = collections.OrderedDict()
+        joined = []
         for t in tag_list:
-            tags[t.get('key', t.get('Key'))] = t.get(
-                'value', t.get('Value', ''))
-        joined_tags = tags.get('x-chkp-tags')
-        if joined_tags:
-            for part in joined_tags.split(':'):
+            k = t.get('key', t.get('Key'))
+            v = t.get('value', t.get('Value', ''))
+            if k.startswith('x-chkp-tags'):
+                joined.append((k[len('x-chkp-tags'):], v))
+            else:
+                tags[k] = v
+        for sep, joined_tags in sorted(joined):
+            if not sep:
+                sep = ':'
+            for part in joined_tags.split(sep):
                 key, es, value = part.partition('=')
                 tags.setdefault('x-chkp-' + key, value)
         return tags
 
     def get_topology(self, eni, subnets):
-        tags = self.get_tags(eni['tagSet'])
+        tags = self.get_tags(eni.get('tagSet'))
         topology = tags.get('x-chkp-topology', '').lower()
         anti_spoofing = (tags.get('x-chkp-anti-spoofing', 'true').lower() ==
                          'true')
@@ -635,7 +696,7 @@ class AWS(Controller):
                         'shutting-down', 'terminated'}:
                     continue
 
-                tags = self.get_tags(instance['tagSet'])
+                tags = self.get_tags(instance.get('tagSet'))
                 ip_address = tags.get('x-chkp-ip-address', 'public')
 
                 if ip_address == 'private':
@@ -687,6 +748,492 @@ class AWS(Controller):
                     load_balancers))
         return instances
 
+    def retrieve_vpcs(self, vpcs, sub_cred):
+        for region in self.regions:
+            headers, body = self.request(
+                'ec2', region, 'GET',
+                '/?Action=DescribeVpcs&Version=2016-11-15', '',
+                sub_cred=sub_cred)
+            vpcs.setdefault(region, {})
+            for v in aws.listify(body, 'item')['vpcSet']:
+                v[self.CREDENTIAL] = sub_cred
+                vpcs[region][v['vpcId']] = v
+
+    def retrieve_vgws(self, vgws, sub_cred):
+        for region in self.regions:
+            headers, body = self.request(
+                'ec2', region, 'GET', '/?Action=DescribeVpnGateways', '',
+                sub_cred=sub_cred)
+            vgws.setdefault(region, {})
+            for v in aws.listify(body, 'item')['vpnGatewaySet']:
+                vgws[region][v['vpnGatewayId']] = v
+        return vgws
+
+    def retrieve_vconns(self, vconns, sub_cred):
+        for region in self.regions:
+            headers, body = self.request(
+                'ec2', region, 'GET', '/?Action=DescribeVpnConnections', '',
+                sub_cred=sub_cred)
+            vconns.setdefault(region, {})
+            for s in aws.listify(body, 'item')['vpnConnectionSet']:
+                if 'customerGatewayConfiguration' not in s:
+                    continue
+                vconns[region][s['vpnConnectionId']] = s
+                s['customerGatewayConfiguration'] = aws.parse_element(
+                    aws.xml.dom.minidom.parseString(
+                        s['customerGatewayConfiguration']))['vpn_connection']
+
+    def retrieve_cgws(self, cgws, sub_cred):
+        for region in self.regions:
+            headers, body = self.request(
+                'ec2', region, 'GET', '/?Action=DescribeCustomerGateways', '',
+                sub_cred=sub_cred)
+            cgws.setdefault(region, {})
+            for c in aws.listify(body, 'item')['customerGatewaySet']:
+                if c['state'] == 'deleted':
+                    continue
+                c[self.CREDENTIAL] = sub_cred
+                cgws[region][c['customerGatewayId']] = c
+
+    def retrieve_rtbs(self, rtbs, sub_cred):
+        for region in self.regions:
+            headers, body = self.request(
+                'ec2', region, 'GET', '/?Action=DescribeRouteTables', '',
+                sub_cred=sub_cred)
+            rtbs.setdefault(region,  {})
+            for rtb in aws.listify(body, 'item')['routeTableSet']:
+                rtbs[region][rtb['routeTableId']] = rtb
+
+    def retrieve_stacks(self, stacks, cred):
+        for region in self.regions:
+            stacks.setdefault(region, {})
+            for stack in self.retrieve_all(
+                    'cloudformation', region, '/?Action=DescribeStacks',
+                    'DescribeStacksResult', 'Stacks', sub_cred=cred):
+                match = re.match(r'stack/vpn-by-tag--(vpc-[0-9a-z]+)/.*$',
+                                 stack['StackId'].split(':')[-1])
+                if not match:
+                    continue
+                vpc_id = match.group(1)
+                stacks[region][vpc_id] = stack
+                log('\n%s: %s' % (stack['StackName'], stack['StackStatus']))
+                if '_FAILED' not in stack['StackStatus']:
+                    stack[self.CREDENTIAL] = cred
+                    continue
+                try:
+                    reason = stack.get('StackStatusReason')
+                    if reason:
+                        log(': %s' % reason)
+                    resources = self.retrieve_all(
+                        'cloudformation', region,
+                        '/?Action=DescribeStackResources&StackName=' +
+                        stack['StackName'],
+                        'DescribeStackResourcesResult', 'StackResources',
+                        sub_cred=cred)
+                    for resource in resources:
+                        status = resource['ResourceStatus']
+                        if '_PROGRESS' in status or '_COMPLETE' in status:
+                            continue
+                        log('\n  %s: %s' % (
+                            resource['LogicalResourceId'], status))
+                        reason = resource.get('ResourceStatusReason')
+                        if reason:
+                            log(': %s' % reason)
+                finally:
+                    self.request(
+                        'cloudformation', region, 'GET',
+                        '/?Action=DeleteStack&StackName=' + stack['StackName'],
+                        '', sub_cred=cred)
+
+    def get_parameter(self, stack, key, split=None):
+        for p in stack.get('Parameters'):
+            if p['ParameterKey'] == key:
+                value = p['ParameterValue']
+                if split:
+                    return value.split(split)
+                return value
+        if split:
+            return []
+        return None
+
+    def get_sub_cidr(self, cidr):
+        octets = cidr.partition('/')[0].split('.')
+        return '%s.%s' % (octets[2], int(octets[3]) // 4 * 4)
+
+    def update_used_cgws_cidrs(self, vgws, cgws, vconns, stacks, used_cgws,
+                               sub_cidrs_by_vpc_id, sub_cidrs_by_cgw_addr):
+        for vconn_id, vconn in vconns.items():
+            used_cgws.add(vconn['customerGatewayId'])
+            vgw_id = vconn['vpnGatewayId']
+            vpc_id = vgws[vgw_id].get(self.VPC)
+            vconn_tunnels = vconn[
+                'customerGatewayConfiguration']['ipsec_tunnel']
+            for tunnel in vconn_tunnels:
+                addr = tunnel['customer_gateway'][
+                    'tunnel_outside_address']['ip_address']
+                sub_cidr = self.get_sub_cidr(tunnel['customer_gateway'][
+                    'tunnel_inside_address']['ip_address'])
+                if sub_cidr in sub_cidrs_by_cgw_addr.get(addr, set()):
+                    log('\nWARNING: 169.254.%s/30 already used by %s' % (
+                        sub_cidr, addr))
+                sub_cidrs_by_cgw_addr.setdefault(addr, set()).add(sub_cidr)
+                if vpc_id:
+                    sub_cidrs_by_vpc_id.setdefault(vpc_id, set()).add(sub_cidr)
+        for vpc_id, stack in stacks.items():
+            cgw_ids = self.get_parameter(stack, 'cgws', ',')
+            cidrs = self.get_parameter(stack, 'cidrs', ',')
+            for i, cgw_id in enumerate(cgw_ids):
+                used_cgws.add(cgw_id)
+                for j in xrange(2):
+                    sub_cidr = self.get_sub_cidr(cidrs[2 * i + j])
+                    sub_cidrs_by_vpc_id.setdefault(vpc_id, set()).add(sub_cidr)
+                    sub_cidrs_by_cgw_addr.setdefault(
+                        cgws[cgw_id]['ipAddress'], set()).add(sub_cidr)
+
+    def resolve_tag(self, prefix, vpn_tags, vpc):
+        tag = self.get_tags(vpc.get('tagSet')).get('x-chkp-vpn')
+        if not tag:
+            return None, None
+        log('\n%s: "%s"' % (vpc['vpcId'], tag))
+        if ':' not in tag and '/' not in tag:
+            return tag, tag
+        if prefix is None:  # test
+            prefixes = {'/'.join(t.split('/')[:-1] + [''])
+                        for t in tag.split(':')}
+            if len(prefixes) != 1:
+                log(': no common prefix ["%s"]' % '" "'.join(prefixes))
+            return tag, tag
+        hub_tags = []
+        for hub_tag in tag.split(':'):
+            if not hub_tag.startswith(prefix):
+                log(': "%s" must start with "%s"' % (hub_tag, prefix))
+                return None, None
+            new_tag = vpn_tags.get(hub_tag)
+            if new_tag is None:
+                log(': could not resolve "%s"' % hub_tag)
+                return None, None
+            hub_tags.append(new_tag)
+        log(' -> (%s)' % '):('.join(hub_tags))
+        return ' '.join(hub_tags), tag
+
+    def get_cgw_ids(self, region, tag, orig_tag, vpc, cgws, cgw_by_cred_addr):
+        cred = vpc[self.CREDENTIAL]
+        cgw_by_addr = cgw_by_cred_addr.get(cred, {})
+        cgw_ids = []
+        for val in tag.split():
+            cgw_ids.append(None)
+            match_cgw = re.match(r'(cgw-[0-9a-f]{8})', val)
+            if match_cgw:
+                cgw_id = match_cgw.group(1)
+                if cgw_id in cgws[region]:
+                    cgw_ids[-1] = cgw_id
+                else:
+                    log('\nunknown customer gateway: "%s"' % cgw_id)
+                continue
+            match_addr = re.match(r'((\d{1,3}\.){3}\d{1,3})(@(\d+))?', val)
+            if match_addr:
+                addr = match_addr.group(1)
+                asn = match_addr.group(4)
+                cgw = cgw_by_addr.get(addr)
+                if cgw and cgw['state'] == 'available':
+                    cgw_id = cgw['customerGatewayId']
+                    cgw_ids[-1] = cgw_id
+                elif asn:
+                    log('\ncreating customer gateway: %s %s' % (addr, asn))
+                    cgw = self.request(
+                        'ec2', region, 'GET', '/?' + urllib.urlencode({
+                            'Action': 'CreateCustomerGateway',
+                            'IpAddress': addr,
+                            'Type': 'ipsec.1',
+                            'BgpAsn': asn}), '', sub_cred=cred)[1][
+                                'customerGateway']
+                    cgw_id = cgw['customerGatewayId']
+                    cgw_ids[-1] = cgw_id
+                    cgw[self.CREDENTIAL] = cred
+                    cgws[region][cgw_id] = cgw
+                    cgw_by_addr[cgw['ipAddress']] = cgw
+                    cgw_by_cred_addr[cred] = cgw_by_addr
+                else:
+                    log('\nmissing asn for customer gateway for "%s"' % addr)
+                continue
+            log('\nignoring unrecognized tag: "%s" in "%s" ("%s")' % (
+                val, tag, orig_tag))
+            cgw_ids.pop()
+        return cgw_ids
+
+    def get_free_cidr(self, vpc_id, addr,
+                      sub_cidrs_by_vpc_id, sub_cidrs_by_cgw_addr):
+        free = (self.FREE_CIDRS -
+                sub_cidrs_by_vpc_id.setdefault(vpc_id, set()) -
+                sub_cidrs_by_cgw_addr.setdefault(addr, set()))
+        start = random.randrange(self.NUM_CIDRS)
+        for i in xrange(self.NUM_CIDRS):
+            j = (i + start) % self.NUM_CIDRS * 4
+            sub_cidr = '%s.%s' % (j // 256, j % 256)
+            if sub_cidr not in free:
+                continue
+            break
+        else:
+            raise Exception('no more CIDRs available')
+        sub_cidrs_by_vpc_id[vpc_id].add(sub_cidr)
+        sub_cidrs_by_cgw_addr[addr].add(sub_cidr)
+        return '169.254.%s/30' % sub_cidr
+
+    def provision(self, region, prefix, tag, vpc, cgw_ids, cidrs):
+        def cf_resource(typ, props, deps=None):
+            obj = {'Type': typ, 'Properties': props}
+            if deps:
+                obj['DependsOn'] = deps
+            return obj
+
+        resources = {}
+        vpc_id = vpc['vpcId']
+        vgw_ref = vpc.get(self.VGW)
+        vgw_id = vgw_ref
+        deps = None
+        if not vgw_ref:
+            resources['vgw'] = cf_resource(
+                'AWS::EC2::VPNGateway', {'Type': 'ipsec.1'})
+            vgw_ref = {'Ref': 'vgw'}
+            resources['attachment'] = cf_resource(
+                'AWS::EC2::VPCGatewayAttachment', {
+                    'VpcId': vpc_id, 'VpnGatewayId': vgw_ref})
+            deps = ['attachment']
+            resources['propagation'] = cf_resource(
+                'AWS::EC2::VPNGatewayRoutePropagation', {
+                    'RouteTableIds': [vpc[self.RTB]],
+                    'VpnGatewayId': vgw_ref},
+                deps=deps)
+
+        for i, cgw_id in enumerate(cgw_ids):
+            resources['conn%d' % i] = cf_resource(
+                'AWS::EC2::VPNConnection', {
+                    'Type': 'ipsec.1',
+                    'CustomerGatewayId': cgw_id,
+                    'VpnGatewayId': vgw_ref,
+                    'VpnTunnelOptionsSpecifications': [
+                        {'TunnelInsideCidr': cidrs[2 * i]},
+                        {'TunnelInsideCidr': cidrs[2 * i + 1]}]},
+                deps=deps)
+
+        log('\nprovisioning: %s [%s] "%s" (%s) (%s) (%s) (%s)' % (
+            vpc_id, prefix, tag[0], tag[1], vgw_id,
+            ' '.join(cgw_ids), ' '.join(cidrs)))
+
+        self.request('cloudformation', region, 'GET', '/?' + urllib.urlencode({
+            'Action': 'CreateStack',
+            'StackName': 'vpn-by-tag' + '--' + vpc_id,
+            'Parameters.member.1.ParameterKey': 'cgws',
+            'Parameters.member.1.ParameterValue': ','.join(cgw_ids),
+            'Parameters.member.2.ParameterKey': 'cidrs',
+            'Parameters.member.2.ParameterValue': ','.join(cidrs),
+            'Parameters.member.3.ParameterKey': 'prefix',
+            'Parameters.member.3.ParameterValue': prefix,
+            'TemplateBody': json.dumps({
+                'Parameters': {
+                    'cgws': {'Type': 'String'}, 'cidrs': {'Type': 'String'},
+                    'prefix': {'Type': 'String'}},
+                'Resources': resources}, separators=(',', ':')),
+            'OnFailure': 'DO_NOTHING'}), '', sub_cred=vpc[self.CREDENTIAL])
+
+    def vpn_by_tag(self, vpn_env, vpcs, vgws, vconns, test=False):
+        if test and vpn_env is None:
+            vpn_env = None, {}, {}
+        prefix, vpn_tags, gw_tun_addrs = vpn_env
+        cgws = {}
+        rtbs = {}
+        stacks = {}
+        for cred in [None] + self.sub_creds.keys():
+            self.retrieve_cgws(cgws, cred)
+            self.retrieve_rtbs(rtbs, cred)
+            self.retrieve_stacks(stacks, cred)
+
+        sub_cidrs_by_vpc_id = {}
+        sub_cidrs_by_cgw_addr = {}
+        used_cgws = {}
+        for region in self.regions:
+            self.update_used_cgws_cidrs(
+                vgws[region], cgws[region], vconns[region], stacks[region],
+                used_cgws.setdefault(region, set()), sub_cidrs_by_vpc_id,
+                sub_cidrs_by_cgw_addr)
+
+        if test:
+            log('\nUsed tunnel CIDRs by vpc ID and gateway address:')
+            for d in [sub_cidrs_by_vpc_id, sub_cidrs_by_cgw_addr]:
+                for k in sorted(d):
+                    log('\n  %s' % k)
+                    for c in sorted(d[k]):
+                        log('\n    169.254.%s/30' % c)
+
+        for gw_addr, tun_addrs in gw_tun_addrs.items():
+            if not tun_addrs:
+                continue
+            for tun_addr in tun_addrs.split(':'):
+                if not tun_addr.startswith('169.254.'):
+                    continue
+                sub_cidrs = sub_cidrs_by_cgw_addr.setdefault(gw_addr, set())
+                sub_cidr = self.get_sub_cidr(tun_addr)
+                if sub_cidr not in sub_cidrs:
+                    log('\nGateway %s uses 169.254.%s/30' % (
+                        gw_addr, sub_cidr))
+                    sub_cidrs.add(sub_cidr)
+
+        for region in self.regions:
+            log('\n%s' % region)
+            cgw_by_cred_addr = {}
+            for cgw in cgws[region].values():
+                cgw_by_cred_addr.setdefault(cgw[self.CREDENTIAL], {})[
+                    cgw['ipAddress']] = cgw
+            for rtb in rtbs[region].values():
+                if any(a['main'] == 'true' for a in rtb['associationSet']):
+                    assert self.RTB not in vpcs[region][rtb['vpcId']]  # FIXME
+                    vpcs[region][rtb['vpcId']][self.RTB] = rtb['routeTableId']
+            tagged_vpcs = set()
+            updated_vpcs = set()
+            for vpc_id in vpcs[region]:
+                vpc = vpcs[region][vpc_id]
+                tag, orig_tag = self.resolve_tag(prefix, vpn_tags, vpc)
+                if not tag:
+                    continue
+                tagged_vpcs.add(vpc_id)
+                if test:
+                    log('\nwould synchronize: %s' % vpc_id)
+                    continue
+                cgw_ids = self.get_cgw_ids(
+                    region, tag, orig_tag, vpc, cgws, cgw_by_cred_addr)
+                if None in cgw_ids:
+                    log('\nskipping: %s "%s" (%s)' % (vpc_id, tag, orig_tag))
+                    continue
+
+                stack = stacks[region].get(vpc_id)
+                if stack:
+                    old_cgws = set(self.get_parameter(stack, 'cgws', ','))
+                    new_cgws = set(cgw_ids)
+                    if old_cgws != new_cgws:
+                        log('\nneed to reprovision: %s "%s" (%s) (%s->%s)' % (
+                            vpc_id, tag, orig_tag,
+                            sorted([str(c) for c in old_cgws]),
+                            sorted([str(c) for c in new_cgws])))
+                        updated_vpcs.add(vpc_id)
+                    continue
+
+                if not cgw_ids:
+                    continue
+
+                cidrs = []
+                for cgw_id in cgw_ids:
+                    used_cgws[region].add(cgw_id)
+                    addr = cgws[region][cgw_id]['ipAddress']
+                    for _ in xrange(2):
+                        cidrs.append(self.get_free_cidr(
+                            vpc_id, addr,
+                            sub_cidrs_by_vpc_id, sub_cidrs_by_cgw_addr))
+                self.provision(
+                    region, prefix, (tag, orig_tag), vpc, cgw_ids, cidrs)
+
+            for vpc_id in (
+                    set(stacks[region]) - set(tagged_vpcs)) | updated_vpcs:
+                stack = stacks[region][vpc_id]
+                stack_prefix = self.get_parameter(stack, 'prefix')
+                if stack_prefix is None:
+                    log('\n%s has no prefix parameter' %
+                        stack['StackName'])
+                elif stack_prefix != prefix:
+                    continue
+                if stack['StackStatus'] == 'DELETE_IN_PROGRESS':
+                    continue
+                if test:
+                    log('\nwould deprovision: %s' % stack['StackName'])
+                    continue
+                log('\ndeprovisioning: %s' % stack['StackName'])
+                self.request(
+                    'cloudformation', region, 'GET',
+                    '/?Action=DeleteStack&StackName=' + stack['StackName'], '',
+                    sub_cred=stack[self.CREDENTIAL])
+
+            for cgw_id in set(cgws[region]) - used_cgws[region]:
+                cgw = cgws[region][cgw_id]
+                if cgw.get('tagSet', []):
+                    continue
+                if test:
+                    log('\nwould delete: %s' % cgw_id)
+                    continue
+                log('\ndeleting customer gateway %s (%s %s)' % (
+                    cgw_id, cgw['ipAddress'], cgw['bgpAsn']))
+                self.request(
+                    'ec2', region, 'GET',
+                    '/?Action=DeleteCustomerGateway&CustomerGatewayId=' +
+                    cgw_id, '', sub_cred=cgw[self.CREDENTIAL])
+        log('\n')
+
+    def get_vpn_conns(self, vpn_env=None, test=False):
+        vpcs = {}
+        vgws = {}
+        vconns = {}
+        for cred in [None] + self.sub_creds.keys():
+            self.retrieve_vpcs(vpcs, cred)
+            self.retrieve_vgws(vgws, cred)
+            self.retrieve_vconns(vconns, cred)
+        for region in self.regions:
+            for vgw_id in vgws[region]:
+                vgw = vgws[region][vgw_id]
+                for attachment in vgw.get('attachments', []):
+                    if attachment['state'] != 'attached':
+                        continue
+                    vpc = vpcs[region].get(attachment['vpcId'])
+                    if vpc:
+                        assert self.VGW not in vpc
+                        vpc[self.VGW] = vgw_id
+                        assert self.VPC not in vgw
+                        vgw[self.VPC] = vpc['vpcId']
+
+        self.vpn_by_tag(vpn_env, vpcs, vgws, vconns, test=test)
+
+        vpn_conns = []
+        for region in self.regions:
+            for vconn in vconns.get(region, {}).values():
+                short_name = vconn['vpnConnectionId']
+                base_name = self.SEPARATOR.join([
+                    self.name, short_name, region])
+                tag = self.get_tags(vconn.get('tagSet')).get('x-chkp-vpn')
+                vpc_id = vgws[region].get(vconn['vpnGatewayId'], {}).get(
+                    self.VPC)
+                vpc = None
+                if vpc_id:
+                    vpc = vpcs[region].get(vpc_id)
+                if not vpc:
+                    log('\nskipping %s - no vpc' % short_name)
+                    continue
+                cidr_set = set()
+                for assoc in vpc['cidrBlockAssociationSet']:
+                    if assoc['cidrBlockState']['state'] != 'associated':
+                        continue
+                    cidr_set.add(assoc['cidrBlock'])
+                cidr_set.discard(vpc['cidrBlock'])
+                cidrs = ','.join([vpc['cidrBlock']] + sorted(cidr_set))
+                vconn_tunnels = vconn[
+                    'customerGatewayConfiguration']['ipsec_tunnel']
+                if any('bgp' not in t['vpn_gateway'] for t in vconn_tunnels):
+                    log('\nat least one non-BGP tunnel for %s' % short_name)
+                    continue
+                for tunnel in vconn_tunnels:
+                    peer = tunnel['vpn_gateway'][
+                        'tunnel_outside_address']['ip_address']
+                    remote = tunnel['vpn_gateway'][
+                        'tunnel_inside_address']['ip_address']
+                    gateway = tunnel['customer_gateway'][
+                        'tunnel_outside_address']['ip_address']
+                    local = tunnel['customer_gateway'][
+                        'tunnel_inside_address']['ip_address']
+                    asn = tunnel['vpn_gateway']['bgp']['asn']
+                    pre_shared_key = tunnel['ike']['pre_shared_key']
+                    name = self.SEPARATOR.join([base_name, peer])
+                    vpn_conns.append(
+                        VPNConn(name, self.name, short_name, tag, gateway,
+                                peer, local, remote, asn, pre_shared_key,
+                                cidrs))
+        return vpn_conns
+
     @staticmethod
     def test(cls, **options):
         for key in ['regions']:
@@ -707,194 +1254,6 @@ class AWS(Controller):
                 'Your system clock is not accurate, please set up NTP')
 
         Controller.test(cls, **options)
-
-
-class OpenStack(Controller):
-    def __init__(self, **options):
-        super(OpenStack, self).__init__(**options)
-        self.scheme = options.get('scheme', 'https')
-        self.fingerprint = None
-        if self.scheme == 'https':
-            self.fingerprint = options['fingerprint']
-        self.host = options['host']
-        self.user = options['user']
-        if 'b64password' in options:
-            self.password = base64.b64decode(options['b64password'])
-        else:
-            self.password = options['password']
-        self.tenant = options['tenant']
-        self.token = None
-        self.expiration = 0
-        self.services = None
-
-    def __call__(self, service, method, path, data=None, desired_status=200):
-        # FIXME: need to redact tokens in auth reply and other requests
-        redact_patterns = [(r'send: .*"password":\s*"([^"]*)".*$', '***')]
-
-        def check_http(desired_status, path, url, resp_headers, resp_body):
-            if resp_headers['_status'] != desired_status:
-                log('\n%s\n' % url)
-                log('%s\n' % resp_headers)
-                log('%s\n' % resp_body)
-                msg = '%s (%d != %d)' % (
-                    resp_headers['_reason'], resp_headers['_status'],
-                    desired_status)
-                if resp_headers['content-type'] == 'application/json':
-                    message = json.loads(resp_body).get('message')
-                    if message:
-                        msg = message
-                raise Exception('failed API call: %s: %s' % (path, msg))
-        headers = {'content-type': 'application/json'}
-        if time.time() + 30 > self.expiration:
-            progress('+')
-            auth_data = {
-                "auth": {
-                    "identity": {
-                        "methods": ["password"],
-                        "password": {
-                            "user": {
-                                "name": self.user,
-                                "domain": {"id": "default"},
-                                "password": self.password
-                            }
-                        }
-                    },
-                    "scope": {
-                        "project": {
-                            "name": self.tenant,
-                            "domain": {"id": "default"}
-                        }
-                    }
-                }
-            }
-            auth_path = '/v3/auth/tokens'
-            auth_url = self.scheme + '://' + self.host + auth_path
-            resp_headers, resp_body = http(
-                'POST', auth_url, self.fingerprint,
-                headers, json.dumps(auth_data), redact_patterns)
-            check_http(201, auth_path, auth_url, resp_headers, resp_body)
-            resp_data = json.loads(resp_body)
-            self.token = resp_headers['x-subject-token']
-            self.expiration = (
-                datetime.datetime.strptime(resp_data['token']['expires_at'],
-                                           '%Y-%m-%dT%H:%M:%S.%fZ') -
-                datetime.datetime.utcfromtimestamp(0)).total_seconds() - 30
-            self.services = {}
-            for svc in resp_data['token']['catalog']:
-                for endpoint in svc['endpoints']:
-                    if endpoint['interface'] == 'public':
-                        self.services[svc['type']] = endpoint['url']
-                        break
-                else:
-                    raise Exception('no public endpoint for %s' %
-                                    svc['type'])
-        progress('.')
-        headers['x-auth-token'] = self.token
-        if data:
-            data = json.dumps(data)
-        url = self.services[service] + path
-        resp_headers, resp_body = http(
-            method, url, self.fingerprint, headers, data, redact_patterns)
-        check_http(desired_status, path, url, resp_headers, resp_body)
-        if resp_body:
-            return json.loads(resp_body)
-
-    def retrieve_ports(self):
-        ports = {}
-        for port in self('network', 'GET', '/v2.0/ports.json')['ports']:
-            if port['device_id'] not in ports:
-                ports[port['device_id']] = []
-            ports[port['device_id']].append(port)
-        return ports
-
-    def retrieve_subnets(self):
-        subnets = {}
-        for subnet in self('network', 'GET', '/v2.0/subnets.json')['subnets']:
-            subnets[subnet['id']] = subnet
-        return subnets
-
-    def retrieve_networks(self):
-        networks = {}
-        for net in self('network', 'GET', '/v2.0/networks.json')['networks']:
-            if net['name'] in networks:
-                raise Exception('duplicate network name: "%s"' % net['name'])
-            networks[net['name']] = net
-        return networks
-
-    def retrieve_instances(self):
-        servers = []
-        # FIXME: paging?
-        for server in self('compute', 'GET', '/servers/detail')['servers']:
-            if 'x-chkp-management' in server['metadata'] and server[
-                    'metadata']['x-chkp-management'] == self.management:
-                servers.append(server)
-        return servers
-
-    def get_instances(self):
-        nova_instances = self.retrieve_instances()
-        ports = self.retrieve_ports()
-        subnets = self.retrieve_subnets()
-        networks = self.retrieve_networks()
-        instances = []
-        for instance in nova_instances:
-            instance_name = self.SEPARATOR.join([self.name, instance['id']])
-            if instance['status'] not in ['ACTIVE', 'SUSPENDED', 'STOPPED']:
-                continue
-            # FIXME: assumes external interface iff has floating ip
-            ip_address = None
-            interfaces = []
-            if len(instance['addresses']) == 1:
-                net2if = {instance['addresses'].keys()[0]: 'eth0'}
-            else:
-                if 'x-chkp-interfaces' not in instance['metadata']:
-                    raise Exception(
-                        'could not find interface mapping: %s for %s' % (
-                            'x-chkp-interfaces', instance_name))
-                net2if = {}
-                for i, net in enumerate(
-                        instance['metadata']['x-chkp-interfaces'].split(',')):
-                    if net:
-                        net2if[net] = 'eth%d' % i
-            for net in instance['addresses']:
-                interface = {
-                    'name': net2if[net],
-                    'anti-spoofing': True,
-                    'topology': 'internal'
-                }
-                for address in instance['addresses'][net]:
-                    # FIXME: taking only the first fixed address
-                    if 'ipv4-address' not in address and address[
-                            'OS-EXT-IPS:type'] == 'fixed' and address[
-                            'version'] == 4:
-                        interface['ipv4-address'] = address['addr']
-                        subnet_id = None
-                        for port in ports[instance['id']]:
-                            if port['network_id'] != networks[net]['id']:
-                                continue
-                            for fixed_ip in port['fixed_ips']:
-                                if fixed_ip['ip_address'] == address['addr']:
-                                    subnet_id = fixed_ip['subnet_id']
-                                    break
-                            if subnet_id:
-                                break
-                        if subnet_id:
-                            cidr = subnets[subnet_id]['cidr']
-                            interface['ipv4-mask-length'] = int(
-                                cidr.partition('/')[2])
-                        else:
-                            raise Exception(
-                                'could not find subnet for %s: %s' % (
-                                    instance_name, address['addr']))
-                    elif address['OS-EXT-IPS:type'] == 'floating':
-                        ip_address = address['addr']
-                        interface['topology'] = 'external'
-                interfaces.append(interface)
-            if not ip_address:
-                ip_address = interfaces[0]['ipv4-address']
-            instances.append(Instance(
-                instance_name, ip_address, interfaces,
-                instance['metadata']['x-chkp-template']))
-        return instances
 
 
 class Azure(Controller):
@@ -1334,6 +1693,12 @@ class Management(object):
     ONCE_PREFIX = '__once__'
     GATEWAY_PREFIX = '__gateway__'
     VSEC_DUMMY_HOST = DUMMY_PREFIX + 'vsec_internal_host'
+    CONTROLLER_PREFIX = '__controller__'
+    CIDR_PREFIX = '__cidr__'
+    VPN_PREFIX = '__vpn__'
+    COMMUNITY_PREFIX = '__community__'
+    SPOKE_ROUTES = 'spoke-routes'
+    EXPORT_ROUTES = 'export-routes'
 
     CPMI_IDENTITY_AWARE_BLADE = (
         'com.checkpoint.objects.classes.dummy.CpmiIdentityAwareBlade')
@@ -1354,6 +1719,8 @@ class Management(object):
     CPMI_INTERFACE_SECURITY = (
         'com.checkpoint.objects.classes.dummy.CpmiInterfaceSecurity')
     CPMI_NETACCESS = 'com.checkpoint.objects.classes.dummy.CpmiNetaccess'
+    CPMI_GATEWAY_PLAIN = (
+        'com.checkpoint.objects.classes.dummy.CpmiGatewayPlain')
 
     BAD_SESSION_PATTERNS = [
         re.compile(r'.*Wrong session id'),
@@ -1361,6 +1728,8 @@ class Management(object):
         re.compile(r'.* has no permission '),
         re.compile(r'.*Operation is not allowed in read only mode'),
         re.compile(r'.*Work session was not found'),
+        # FIXME: this is a normal failure for management HA
+        re.compile(r'.*This domain is in standby mode on this machine'),
         re.compile(r'.*Management server failed to execute command')]
 
     IDA_API_MAIN_URI = 'https://0.0.0.0/_IA_API'
@@ -1391,7 +1760,7 @@ class Management(object):
         os.environ['no_proxy'] = ','.join(no_proxy)
 
     def __call__(self, command, body, aggregate=None,
-                 silent=False):
+                 silent=False, version='v1'):
         redact_patterns = [(r'send: .*x-chkp-sid\s*:\s*([^\\]*)\\.*$', '***')]
         if command == 'login':
             redact_patterns = [
@@ -1403,6 +1772,8 @@ class Management(object):
                 return None
             c = '-'
         elif command == 'publish':
+            if not self.sid:
+                raise Exception('cannot publish with no sid')
             c = '|'
         else:
             if not self.sid:
@@ -1421,7 +1792,8 @@ class Management(object):
             if aggregate:
                 body['limit'] = 500
             resp_headers, resp_body = http(
-                'POST', 'https://%s/web_api/v1/%s' % (self.host, command),
+                'POST', 'https://%s/web_api/%s/%s' % (
+                    self.host, version, command),
                 self.fingerprint, headers, json.dumps(body), redact_patterns)
             if resp_headers['_status'] != 200:
                 if not silent:
@@ -1445,8 +1817,6 @@ class Management(object):
                 task_id = payload.get(
                     'tasks', [{}])[0].get('task-id')
             if command != 'show-task' and task_id:
-                # FIXME: it takes some time for the task to appear
-                time.sleep(2)
                 while True:
                     task = self('show-task',
                                 {'task-id': task_id})['tasks'][0]
@@ -1478,6 +1848,7 @@ class Management(object):
             if self.auto_publish and (
                     command.startswith('set-') or
                     command.startswith('add-') or
+                    command.startswith('get-interfaces') or
                     command.startswith('delete-')):
                 self('publish', {})
             if command == 'logout':
@@ -1503,7 +1874,11 @@ class Management(object):
                               'login']
                 if self.domain:
                     login_args += ['domain', self.domain]
-                resp = json.loads(subprocess.check_output(login_args))
+                out, err, rc = run_local(login_args)
+                if rc:
+                    raise Exception('\nfailed to run %s: %s\n%s\n%s' % (
+                        login_args, rc, err, out))
+                resp = json.loads(out)
             else:
                 login_data = {'user': self.user, 'password': self.password}
                 if self.domain:
@@ -1523,7 +1898,10 @@ class Management(object):
                     self('discard', {'uid': session['uid']}, silent=True)
                 except Exception:
                     debug('\n%s' % traceback.format_exc())
-                    log(': failed')
+                    log('\ndiscard uid %s: failed' % session['uid'])
+                    if not self.sid:
+                        log('\nrestoring sid')
+                        self.sid = resp['sid']
             return self
         except:
             self.__exit__(*sys.exc_info())
@@ -1534,12 +1912,38 @@ class Management(object):
             if self.sid:
                 self('discard', {})
                 self('logout', {})
+            else:
+                log('\ncalled __exit__ with no sid')
         except Exception:
             log('\n%s' % traceback.format_exc())
 
-    def get_gateway(self, name):
+    def run_script(self, target, script, name=None):
+        if not name:
+            name = script[:100]
+            if name != script:
+                name += '...'
+        log('\nrunning: %s on %s' % (json.dumps(script), target))
+        run_script_x = os.path.join(os.path.dirname(__file__), 'run-script')
+        if os.path.exists(run_script_x):
+            addr = self('show-simple-gateway',
+                        {'name': target})['ipv4-address']
+            out, err, status = run_local([run_script_x, addr, script])
+            if status:
+                raise Exception('run-script failed\n%s\n%s' % (out, err))
+            return out
+        response = self('run-script', {
+            'script-name': name,
+            'script': script,
+            'targets': [target]}).get('task-details', [{}])[0]
+        if response.get('statusCode') != self.SUCCEEDED:
+            raise Exception('run-script failed\n%s' % (
+                base64.b64decode(response.get('responseError'))))
+        return base64.b64decode(response.get('responseMessage'))
+
+    def get_gateway(self, name, filtered=True, version='v1'):
         try:
-            gw = self('show-simple-gateway', {'name': name}, silent=True)
+            gw = self('show-simple-gateway', {'name': name}, silent=True,
+                      version=version)
         except Exception:
             # FIXME: remove when all gateways are able to show
             if str(sys.exc_info()[1]).endswith(
@@ -1552,15 +1956,15 @@ class Management(object):
                 return None
             else:
                 raise
-        if TAG not in self.get_object_tags(gw):
+        if filtered and TAG not in self.get_object_tags(gw):
             return None
         return gw
 
-    def get_gateways(self):
+    def get_gateways(self, filtered=True, version='v1'):
         objects = self('show-simple-gateways', {}, aggregate='objects')
         gateways = {}
         for name in (o['name'] for o in objects):
-            gw = self.get_gateway(name)
+            gw = self.get_gateway(name, filtered=filtered, version=version)
             if gw:
                 gateways[gw['name']] = gw
         return gateways
@@ -1623,9 +2027,11 @@ class Management(object):
                          '|'.join(self.targets.get(gw['name'], ['-'])),
                          str(self.domain)])
 
-    def get_uid(self, name):
+    def get_uid(self, name, obj_type=None):
         objects = self('show-generic-objects', {'name': name},
                        aggregate='objects')
+        if obj_type:
+            objects = [o for o in objects if o['type'] == obj_type]
         by_name = [o for o in objects if o['name'] == name]
         if len(by_name) == 1:
             return by_name[0]['uid']
@@ -1807,7 +2213,6 @@ class Management(object):
 
         gw_obj = {
             'uid': uid,
-            'cdmModule': 'NOT_MINUS_INSTALLED',
             'identityAwareBlade': {
                 'create': self.CPMI_IDENTITY_AWARE_BLADE,
                 'owned-object': {
@@ -1859,6 +2264,16 @@ class Management(object):
 
         self('set-generic-object', client_obj)
 
+    def set_vpn_community_star_as_center(self, gw, communities):
+        if isinstance(communities, basestring):
+            communities = [communities]
+        for community in communities:
+            log('\nadding %s to community %s' % (gw['name'], community))
+            self(
+                'set-vpn-community-star', {
+                    'name': community, 'center-gateways': {'add': gw['uid']}},
+                version='v1.1')
+
     def get_targets(self):
         """map instance name to a policy where it is an install target"""
         policy_summaries = self('show-packages', {},
@@ -1885,6 +2300,18 @@ class Management(object):
                     [protocol_port] + sorted(
                         protocol_ports[protocol_port])))
         return ':'.join(sorted(parts))
+
+    def get_unique_name(self, base, ext_len=6, retries=100):
+        for i in xrange(retries):
+            extension = ''.join([random.choice('0123456789' +
+                                               'ABCDEFGHIJKLMNOPQRSTUVWXYZ' +
+                                               'abcdefghijklmnopqrstuvwxyz')
+                                 for j in xrange(ext_len)])
+            candidate = '%s_%s' % (base, extension)
+            if self.get_uid(candidate):
+                continue
+            return candidate
+        raise Exception('Failed to find a unique name for "%s"' % base)
 
     def get_flat_rules(self, command, body):
         body['limit'] = 100
@@ -1974,20 +2401,7 @@ class Management(object):
         else:
             nat_address = private_address
             nat_name = private_name
-        # create logical server
-        logical_server = None
-        for i in xrange(100):
-            extension = ''.join([random.choice('0123456789' +
-                                               'ABCDEFGHIJKLMNOPQRSTUVWXYZ' +
-                                               'abcdefghijklmnopqrstuvwxyz')
-                                 for j in xrange(6)])
-            candidate = '%s_%s' % (dns_name, extension)
-            if self.get_uid(candidate):
-                continue
-            logical_server = candidate
-            break
-        if not logical_server:
-            raise Exception('Failed to find a name for a logical server')
+        logical_server = self.get_unique_name(dns_name)
         if self.get_uid(logical_server):
             return
         log('\nadding %s' % logical_server)
@@ -2126,6 +2540,9 @@ class Management(object):
     def customize(self, name, parameters=None):
         if not self.custom_script:
             return True
+        env = {}
+        if self.domain:
+            env['AUTOPROVISION_DOMAIN'] = self.domain
         if parameters is None:
             cmd = [self.custom_script, 'delete', name]
         else:
@@ -2133,13 +2550,10 @@ class Management(object):
                 parameters = re.split(r'\s+', parameters)
             cmd = [self.custom_script, 'add', name] + parameters
         log('\ncustomizing %s\n' % cmd)
-        proc = subprocess.Popen(
-            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE)
-        out, err = proc.communicate()
+        out, err, status = run_local(cmd, env=env)
         log(err)
         log(out)
-        return not proc.wait()
+        return not status
 
     def delete_objects_for_gw(self, gw):
         name = gw['name']
@@ -2171,6 +2585,32 @@ class Management(object):
             except Exception:
                 log('\n%s' % traceback.format_exc())
                 log('\nskipping policy "%s"' % policy)
+        # remove from communities
+        for comm_name, centers, satellites in self.get_star_communities():
+            if gw['name'] in satellites:
+                log('\nremoving from %s satellites' % comm_name)
+                self(
+                    'set-vpn-community-star', {
+                        'name': comm_name,
+                        'satellite-gateways': {'remove': gw['name']}},
+                    version='v1.1')
+            if gw['name'] in centers:
+                log('\nremoving from %s centers' % comm_name)
+                self(
+                    'set-vpn-community-star', {
+                        'name': comm_name,
+                        'center-gateways': {'remove': gw['name']}},
+                    version='v1.1')
+        for community in self(
+                'show-vpn-communities-meshed', {'details-level': 'full'},
+                aggregate='objects', version='v1.1'):
+            if gw['name'] in community['gateways']:
+                log('\nremoving from %s' % community['name'])
+                self(
+                    'set-vpn-community-meshed', {
+                        'name': community['name'],
+                        'gateways': {'remove': gw['name']}},
+                    version='v1.1')
         # remove groups defined for the gateway
         for group in self('show-groups', {}, aggregate='objects'):
             if group['name'].endswith('_' + name):
@@ -2274,6 +2714,9 @@ class Management(object):
         https_inspection = simple_gateway.pop('https-inspection', False)
         identity_awareness = simple_gateway.pop('identity-awareness', False)
         ips_profile = simple_gateway.pop('ips-profile', None)
+        vpn_community_star_as_center = simple_gateway.pop(
+            'vpn-community-star-as-center', None)
+        vpn_domain = simple_gateway.pop('vpn-domain', None)
         specific_network = simple_gateway.pop('specific-network', None)
         policy = simple_gateway.pop('policy')
         otp = simple_gateway.pop('one-time-password')
@@ -2332,6 +2775,26 @@ class Management(object):
                     'uid': gw['uid'], 'protectInternalInterfacesOnly': False})
                 if ips_profile:
                     self.set_ips_profile(gw, ips_profile)
+            if vpn_community_star_as_center:
+                self.set_vpn_community_star_as_center(
+                    gw, vpn_community_star_as_center)
+                enc_domain_type = 'ADDRESSES_BEHIND_GW'
+                enc_domain_uid = None
+                if vpn_domain is not None:
+                    enc_domain_type = 'MANUAL'
+                    if vpn_domain == '':
+                        enc_domain_uid = self.get_empty_encryption_domain()
+                        log('\nsetting encryption domain to "%s"' % 'EMPTY')
+                    else:
+                        enc_domain_uid = self.get_uid(vpn_domain)
+                        log('\nsetting encryption domain to "%s"' % vpn_domain)
+                self('set-generic-object', {
+                    'uid': gw['uid'],
+                    'encdomain': enc_domain_type,
+                    'manualEncdomain': enc_domain_uid,
+                    'vpn': {
+                        'singleVpnIp': instance.ip_address,
+                        'ipResolutionMechanismGw': 'SINGLENATIPVPN'}})
             load_balancers = instance.load_balancers
             if load_balancers is not None:
                 for dns_name in load_balancers:
@@ -2347,16 +2810,12 @@ class Management(object):
 
             if gw['version'] == 'R77.30' and identity_awareness:
                 cmd = 'pdp api enable'
-                log('\nrunning: "%s" on %s' % (cmd, instance.name))
-                response = self('run-script', {
-                    'script-name': cmd,
-                    'script': cmd,
-                    'targets': [instance.name]
-                    }).get('task-details', [{}])[0]
-                log('\n%s' % base64.b64decode(response.get('responseMessage')))
-                if response.get('statusCode') != self.SUCCEEDED:
-                    log('\nfailed to enable pdp api on the gateway\n%s', (
-                        base64.b64decode(response.get('responseError'))))
+                try:
+                    out = self.run_script(instance.name, cmd)
+                    log('\n%s' % out)
+                except Exception:
+                    log('\n%s' % traceback.format_exc())
+                    log('\nfailed to enable pdp api on the gateway')
             if not self.customize(instance.name, custom_parameters):
                 raise Exception('customization has failed')
             self.set_object_tag_value(gw['uid'],
@@ -2410,6 +2869,211 @@ class Management(object):
         elif name in self.state:
             del self.state[name]
 
+    def get_star_communities(self):
+        communities = []
+        for comm in self('show-vpn-communities-star', {
+                'details-level': 'full'}, aggregate='objects', version='v1.1'):
+            centers = sorted([gw['name'] for gw in comm['center-gateways']])
+            gateways = {n: i for i, n in enumerate(centers)}
+            satellites = sorted([gw['name']
+                                 for gw in comm['satellite-gateways']])
+            communities.append((comm['name'], gateways, satellites))
+        return communities
+
+    def show_interoperable_device(self, i):
+        result = ['%s:' % i['name']]
+        for prefix in [self.GATEWAY_PREFIX, self.CIDR_PREFIX,
+                       self.CONTROLLER_PREFIX, self.VPN_PREFIX,
+                       self.COMMUNITY_PREFIX]:
+            result.append('%s=%s' % (
+                prefix.split('__')[1], self.get_object_tag_value(i, prefix)))
+        return ' '.join(result)
+
+    def get_interoperable_devices(self, controller):
+        interop_devices = self(
+            'show-generic-objects', {'class-name': self.CPMI_GATEWAY_PLAIN,
+                                     'details-level': 'full'},
+            aggregate='objects')
+        iods = {}
+        for i in interop_devices:
+            c = self.get_object_tag_value(i, self.CONTROLLER_PREFIX)
+            if controller.name != c:
+                continue
+            vconn = self.get_object_tag_value(i, self.VPN_PREFIX)
+            if vconn in iods:
+                raise Exception(
+                    'duplicate interoperable devices: %s\n%s\n%s' % (
+                        vconn, self.show_interoperable_device(iods[vconn]),
+                        self.show_interoperable_device(i)))
+            iods[vconn] = i
+        for vconn in iods:
+            log('\n%s' % self.show_interoperable_device(iods[vconn]))
+        log('\n')
+        return iods
+
+    def reinstall_policy(self, gw_name):
+        policies = self.targets.get(gw_name, [])
+        if len(policies) != 1:
+            raise Exception(
+                'Cannot select policy for gateway "%s" (%s)' % (
+                    gw_name, policies))
+        log('\ninstalling policy "%s" on "%s"' % (policies[0], gw_name))
+        self('install-policy', {
+            'policy-package': policies[0], 'targets': gw_name})
+
+    def add_vpn(self, iod, vpn_conn, gw_name, index, community):
+        if iod:
+            reason = None
+            if community != self.get_object_tag_value(
+                    iod, self.COMMUNITY_PREFIX, ''):
+                reason = 'incomplete'
+            elif vpn_conn.cidr != self.get_object_tag_value(
+                    iod, self.CIDR_PREFIX, ''):
+                reason = 'cidr mismatch'
+            if not reason:
+                return
+            log('\nDeleting (%s): %s' % (
+                reason, self.show_interoperable_device(iod)))
+            self.delete_vpn(iod)
+            iod_name = iod['name']
+        else:
+            iod_name = self.get_unique_name(vpn_conn.short_name)
+        uid = self.create_interoperable_device(iod_name, gw_name, vpn_conn)
+
+        log('\ngoing to provision "%s":' % gw_name)
+        tags = self('show-vpn-community-star',
+                    {'name': community}, version='v1.1')['tags']
+        tags_dict = dict([tag['name'].partition('=')[::2] for tag in tags])
+        tags_dict = {key: value for (key, value) in tags_dict.iteritems() if
+                     key in {self.SPOKE_ROUTES, self.EXPORT_ROUTES}}
+        tag_params = []
+        if self.SPOKE_ROUTES in tags_dict:
+            tag_params.append(tags_dict[self.SPOKE_ROUTES])
+            if self.EXPORT_ROUTES in tags_dict:
+                tag_params.extend(tags_dict[self.EXPORT_ROUTES].split(','))
+        out = self.run_script(gw_name, 'config-vpn add \'%s\'' % (
+            '\' \''.join([
+                str(index), vpn_conn.local, vpn_conn.asn, vpn_conn.remote,
+                iod_name, vpn_conn.cidr] + tag_params)))
+        log('\n%s' % out)
+
+        log('\ngetting interfaces')
+        self('get-interfaces', {'target-name': gw_name}, version='v1.1')
+
+        log('\nadding interoperable device to community "%s"' % community)
+        self(
+            'set-vpn-community-star',
+            {
+                'name': community,
+                'satellite-gateways': {'add': uid},
+                'shared-secrets': {'add': {
+                    'external-gateway': iod_name,
+                    'shared-secret': vpn_conn.pre_shared_key}}},
+            version='v1.1')
+
+        self.reinstall_policy(gw_name)
+
+        self.set_object_tag_value(uid, self.COMMUNITY_PREFIX, community)
+
+    def delete_vpn(self, iod):
+        iod_name = iod['name']
+        gw_name = self.get_object_tag_value(iod, self.GATEWAY_PREFIX)
+        cidr = self.get_object_tag_value(iod, self.CIDR_PREFIX)
+        log('\ndeleting vpn for: %s (%s %s)' % (iod_name, gw_name, cidr))
+        for comm, _, satellites in self.get_star_communities():
+            if iod_name not in satellites:
+                continue
+            log('\nremove interoperable from community: "%s"' % comm)
+            self('set-vpn-community-star', {
+                'name': comm, 'satellite-gateways': {
+                    'remove': iod_name}}, version='v1.1')
+        gw_uid = self.get_uid(gw_name, obj_type='simple-gateway')
+        if gw_uid:
+            log('\ngoing to deprovision "%s":' % gw_name)
+            out = self.run_script(
+                gw_name, 'config-vpn delete \'%s\' \'%s\'' % (
+                    iod_name, cidr))
+            log('\n%s' % out)
+            log('\ngetting interfaces')
+            self('get-interfaces', {'target-name': gw_name}, version='v1.1')
+            self.reinstall_policy(gw_name)
+
+        log('\ndeleting interoperable device')
+        self('delete-generic-object', {
+            "uid": iod['uid'], 'ignore-warnings': True})
+
+    def create_interoperable_device(self, name, gw_name, vpn_conn):
+        log('\ncreate interoperable device: %s %s %s' % (
+            name, gw_name, vpn_conn))
+
+        enc_domain_uid = self.get_empty_encryption_domain()
+
+        obj = {
+            'create': self.CPMI_GATEWAY_PLAIN,
+            'name': name,
+            'ipaddr': vpn_conn.peer,
+            'thirdPartyEncryption': True,
+            'osInfo': {
+                'osName': 'Gaia'
+            },
+            'vpn': {
+                'create': 'com.checkpoint.objects.classes.dummy.CpmiVpn',
+                'owned-object': {
+                    'vpnClientsSettingsForGateway': {
+                        'create':
+                            'com.checkpoint.objects.classes.dummy.'
+                            'CpmiVpnClientsSettingsForGateway',
+                        'owned-object': {
+                            'endpointVpnClientSettings': {
+                                'create':
+                                    'com.checkpoint.objects.classes.dummy.'
+                                    'CpmiEndpointVpnClientSettingsForGateway',
+                                'owned-object': {
+                                    'endpointVpnEnable': True
+                                }
+                            }
+                        }
+                    },
+                    'ike': {
+                        'create':
+                            'com.checkpoint.objects.classes.dummy.CpmiIke'
+                    },
+                    'sslNe': {
+                        'create': 'com.checkpoint.objects.classes.dummy.'
+                            'CpmiSslNetworkExtender',
+                        'owned-object': {
+                            'sslEnable': False,
+                            'gwCertificate': 'defaultCert'
+                        }
+                    }
+                }
+            },
+            'dataSourceSettings': None,
+            'nat': None,
+            'manualEncdomain': enc_domain_uid,
+            'encdomain': 'MANUAL',
+            'ignore-warnings': True}
+
+        self.put_object_tag_value(obj, self.GATEWAY_PREFIX, gw_name)
+        self.put_object_tag_value(obj, self.CIDR_PREFIX, vpn_conn.cidr)
+        self.put_object_tag_value(obj, self.CONTROLLER_PREFIX,
+                                  vpn_conn.controller)
+        self.put_object_tag_value(obj, self.VPN_PREFIX, vpn_conn.name)
+
+        obj = self('add-generic-object', obj)
+
+        self(
+            'set-generic-object',
+            {'uid': obj['uid'], 'vpn': {'isakmpIpcompSupport': True}})
+        return obj['uid']
+
+    def get_empty_encryption_domain(self):
+        name = self.MONITOR_PREFIX + 'empty_encryption_domain'
+        uid = self.get_uid(name)
+        if uid:
+            return uid
+        return self('add-group', {'name': name})['uid']
+
     @staticmethod
     @contextlib.contextmanager
     def init(domains, **config):
@@ -2417,11 +3081,10 @@ class Management(object):
         options = config['management'].copy()
         default_domain = options.pop('domain', None)
         try:
-            for domain in domains:
+            for domain in set(domains) | {None}:
                 actual_domain = default_domain if domain is None else domain
-                if domain not in managements:
-                    managements[domain] = Management(
-                        domain=actual_domain, **options)
+                managements[domain] = Management(
+                    domain=actual_domain, **options)
             yield managements
         finally:
             for management in reversed(managements.values()):
@@ -2446,8 +3109,95 @@ def signal_handler(signum, frame):
     raise KeyboardInterrupt('signal %d' % signum)
 
 
+def sync_vpn(controller, management):
+    log('\n%s: vpn sync' % controller.name)
+    if not conf.get('debug'):
+        log('\n')
+    gateways = management.get_gateways(filtered=False, version='v1.1')
+    communities = management.get_star_communities()
+    vpn_conns = controller.get_vpn_conns(
+        get_vpn_env(controller, management, communities, gateways))
+    addr_to_gw_comm = {}
+    for community, centers, _ in communities:
+        if controller.communities and (
+                community not in controller.communities):
+            continue
+        for gw_name in centers:
+            vpn_tag = management.get_object_tag_value(
+                gateways[gw_name], management.VPN_PREFIX)
+            addr = None
+            if vpn_tag:
+                addr = vpn_tag.partition('@')[0]
+                debug('\ngot "%s" for %s by vpn tag' % (addr, gw_name))
+            if not addr:
+                addr = gateways[gw_name]['ipv4-address']
+            name_index_comm = (gw_name, centers[gw_name], community)
+            addr_to_gw_comm.setdefault(addr, []).append(name_index_comm)
+    vpn_conn_to_gw_comm = {}
+    filtered_vpn_conns = {}
+    for vconn in vpn_conns:
+        if vconn.tag == 'ignore':
+            continue
+        if vconn.gateway in addr_to_gw_comm:
+            if len(addr_to_gw_comm[vconn.gateway]) != 1:
+                raise Exception(
+                    'ambiguous gateway by address %s for %s (%s)' % (
+                        vconn.gateway, vconn.name, json.dumps(
+                            addr_to_gw_comm[vconn.gateway])))
+            vpn_conn_to_gw_comm[vconn.name] = addr_to_gw_comm[vconn.gateway][0]
+        else:
+            continue
+        filtered_vpn_conns[vconn.name] = vconn
+        log('\n%s' % vconn)
+    log('\n')
+    filtered_iods = management.get_interoperable_devices(controller)
+
+    deleting_iod_cidrs = {}
+    for name in set(filtered_iods) - set(filtered_vpn_conns):
+        try:
+            management.set_state(name, 'DELETING')
+            management.delete_vpn(filtered_iods[name])
+        except Exception:
+            log('\n%s' % traceback.format_exc())
+            cidr = management.get_object_tag_value(
+                filtered_iods[name], management.CIDR_PREFIX)
+            gw_name = management.get_object_tag_value(
+                filtered_iods[name], management.GATEWAY_PREFIX)
+            log('\nblocking provisioning of %s for %s' % (gw_name, cidr))
+            deleting_iod_cidrs.setdefault((gw_name, cidr), []).append(name)
+        finally:
+            management.set_state(name, None)
+    for name in set(filtered_vpn_conns):
+        iod = filtered_iods.get(name)
+        try:
+            gw_name, gw_index, comm_name = vpn_conn_to_gw_comm[name]
+            log('\nsynchronizing: %s %s %s %s' % (
+                filtered_vpn_conns[name].name, gw_name, gw_index, comm_name))
+            if not management.get_object_tag_value(
+                    gateways[gw_name], management.TEMPLATE_PREFIX):
+                log('\nskipping incompletely configured gateway: %s' % gw_name)
+                continue
+            other_iod_names = deleting_iod_cidrs.get(
+                (gw_name, filtered_vpn_conns[name].cidr))
+            if other_iod_names:
+                log('\nskipping %s because cidr is used by: %s' % (
+                    name, other_iod_names))
+                continue
+            if not iod and any(
+                    i['ipv4-address'] == filtered_vpn_conns[name].local
+                    for i in gateways[gw_name]['interfaces']):
+                log('\nskipping %s: %s already has an interface with %s' % (
+                    name, gw_name, filtered_vpn_conns[name].remote))
+                continue
+            management.add_vpn(
+                iod, filtered_vpn_conns[name], gw_name, gw_index, comm_name)
+            management.set_state(name, 'COMPLETE')
+        except Exception:
+            log('\n%s' % traceback.format_exc())
+
+
 def sync(controller, management, gateways):
-    log('\n' + controller.name)
+    log('\n%s: gateway sync' % controller.name)
     if not conf.get('debug'):
         log('\n')
     instances = {}
@@ -2482,6 +3232,44 @@ def sync(controller, management, gateways):
             log('\n%s' % traceback.format_exc())
 
 
+def get_vpn_env(controller, management, communities, gateways):
+    prefix = controller.management + '/'
+    if management.domain is not None:
+        prefix += management.domain + '/'
+    vpn_tags = {}
+    tun_addrs = {}
+    for community, centers, _ in communities:
+        try:
+            if controller.communities and (
+                    community not in controller.communities):
+                continue
+            t = prefix + community
+            vpn_tag_list = []
+            for gw in centers:
+                vpn_tag = management.get_object_tag_value(
+                    gateways[gw], management.VPN_PREFIX)
+                if not vpn_tag:
+                    vpn_tag = management.run_script(
+                        gateways[gw]['name'],
+                        'config-vpn show').strip()
+                    management.set_object_tag_value(
+                        gateways[gw]['uid'],
+                        management.VPN_PREFIX, vpn_tag)
+                vpn_tag_list.append(vpn_tag)
+                gw_addr = vpn_tag.partition('@')[0]
+                tun_addrs[gw_addr] = ':'.join([
+                    i['ipv4-address']
+                    for i in gateways[gw].get('interfaces', [])
+                    if i.get('name', '').startswith('vpnt')])
+                log('\n%s: %s' % (vpn_tag, tun_addrs[gw_addr]))
+            v = ' '.join(vpn_tag_list)
+            log('\n%s: %s' % (t, v))
+            vpn_tags[t] = v
+        except Exception:
+            log('\n%s' % traceback.format_exc())
+    return prefix, vpn_tags, tun_addrs
+
+
 def loop(managements, controllers, delay):
     while True:
         for domain in controllers.keys():
@@ -2497,7 +3285,13 @@ def loop(managements, controllers, delay):
                     ['']))
                 for c in controllers[domain]:
                     try:
-                        sync(c, management, gateways)
+                        if c.sync.get('gateway', False):
+                            sync(c, management, gateways)
+                    except Exception:
+                        log('\n%s' % traceback.format_exc())
+                    try:
+                        if c.sync.get('vpn', False):
+                            sync_vpn(c, management)
                     except Exception:
                         log('\n%s' % traceback.format_exc())
                 log('\n')
@@ -2628,8 +3422,8 @@ def main(argv=None):
     logfile = getattr(args, 'logfile', None)
     if logfile:
         handler = logging.handlers.RotatingFileHandler(args.logfile,
-                                                       maxBytes=1000000,
-                                                       backupCount=3)
+                                                       maxBytes=20000000,
+                                                       backupCount=10)
         logger = logging.getLogger('MONITOR')
         handler.setFormatter(logging.Formatter(
             '%(asctime)s %(name)s %(levelname)s %(message)s'))

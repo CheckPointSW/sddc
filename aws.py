@@ -296,15 +296,22 @@ def get_iam_credentials(role=''):
 class AWS(object):
     def __init__(self, key=None, secret=None, token=None, key_file=None,
                  sts_role=None, sts_ext_id=None, sts_session=None,
-                 max_time=None):
+                 sts_other=None, max_time=None):
         self.max_time = max_time
 
         self.creds = {}
 
-        if key_file == 'IAM':
+        if sts_role is not None and sts_other is not None:
+            if isinstance(sts_other, AWS):
+                self.creds['sts_other'] = sts_other
+            elif '_once' in globals():
+                self.creds['sts_other'] = globals()['request'].im_self
+            else:
+                raise EnvException('unknown sts_other')
+        elif key_file == 'IAM':
             try:
                 http('GET', META_DATA + '/ami-id', '', max_time=15)
-            except:
+            except Exception:
                 raise RoleException('not in AWS')
             self.creds['iam_role'] = get_iam_credentials()
             self.creds['iam_expiration'] = 0.0
@@ -407,7 +414,8 @@ AWS_SESSION_TOKEN - (optional)
                 params['ExternalId'] = self.creds['sts_ext_id']
             try:
                 setattr(self, 'for_sts', None)
-                h, b = self.request(
+                obj = self.creds.get('sts_other', self)
+                h, b = obj.request(
                     'sts', region, 'GET', '/?' + urllib.urlencode(params), '')
             finally:
                 delattr(self, 'for_sts')
@@ -540,6 +548,7 @@ AWS_SESSION_TOKEN - (optional)
             max_time = self.max_time
         headers, body = http(method, url, payload, req_headers, max_time)
         ct = headers.get('content-type')
+        ce = headers.get('content-encoding')
         if method == 'HEAD':
             body = None
             headers['_parsed'] = True
@@ -549,7 +558,7 @@ AWS_SESSION_TOKEN - (optional)
                 body = parse_element(
                     xml.dom.minidom.parseString(body).documentElement)
                 headers['_parsed'] = True
-            except:
+            except Exception:
                 if ct is not None:
                     raise
         elif body and ct in {'application/x-amz-json-1.0',
@@ -559,8 +568,9 @@ AWS_SESSION_TOKEN - (optional)
                 body = json.loads(
                     body, object_pairs_hook=collections.OrderedDict)
                 headers['_parsed'] = True
-            except:
-                raise
+            except Exception:
+                if ce is None:
+                    raise
         return headers, body
 
 
