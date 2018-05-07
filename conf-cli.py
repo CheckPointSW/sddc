@@ -1133,12 +1133,8 @@ def validate_controller_credentials(old_conf, conf, args):
 
     controller_name = getattr(args, CONTROLLER_NAME, None)
 
-    try:
-        controller = conf[CONTROLLERS][controller_name]
-    except KeyError:
-        return
-
-    old_controller = old_conf[CONTROLLERS].get(controller_name, {})
+    controller = conf.get(CONTROLLERS, {}).get(controller_name, {})
+    old_controller = old_conf.get(CONTROLLERS, {}).get(controller_name, {})
 
     if controller['class'] == AWS:
         verify_AWS_credentials(conf, args, controller_name, controller,
