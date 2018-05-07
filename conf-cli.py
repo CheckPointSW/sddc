@@ -206,17 +206,20 @@ CONTROLLER_NAME = 'controller name'
 SUBCREDENTIALS_NAME = 'sub-credentials name'
 NEW_KEY = 'new key'
 SUBCREDS = 'sub-creds'
+SYNC = 'sync'
 
 KEYS_TO_UPDATE_WITH_USER_INPUT = (TEMPLATE_NAME, CONTROLLER_NAME,
                                   SUBCREDENTIALS_NAME, NEW_KEY)
 NON_CONFIG_KEYS = (TEMPLATE_NAME, CONTROLLER_NAME, SUBCREDENTIALS_NAME,
                    'force', 'mode', 'branch')
+
 MANDATORY_KEYS = {
     MANAGEMENT: ['name', 'host'],
     AWS: ['class', 'regions'],
     AZURE: ['class', 'subscription'],
     GCP: ['class', 'project', 'credentials']
 }
+
 AWS_SUBACCOUNT_ARGS = (SUBCREDENTIALS_NAME,
                        'AWS sub-credentials access key',
                        'AWS sub-credentials secret key',
@@ -281,7 +284,8 @@ def create_parser_dict(conf):
             ['Management name', TEMPLATE_NAME, 'one time password', 'version',
              'policy', CONTROLLER_NAME, 'regions'],
             ['AWS access key', 'AWS secret key', 'AWS IAM',
-             'AWS credentials file path', 'STS role', 'STS external id'],
+             'AWS credentials file path', 'STS role', 'STS external id',
+             'vpn', 'community name', 'vpn-domain'],
             'initialize autoprovision settings for AWS',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['init_aws']),
             {'delay': 30, 'class': 'AWS', 'host': 'localhost'}],
@@ -307,7 +311,8 @@ def create_parser_dict(conf):
              'prototype', 'specific network', 'generation', 'proxy ports',
              'HTTPS Inspection', 'Identity Awareness', 'Application Control',
              'Intrusion Prevention', 'IPS Profile', 'URL Filtering',
-             'Anti-Bot', 'Anti-Virus', 'restrictive policy', 'section name',
+             'Anti-Bot', 'Anti-Virus', 'restrictive policy',
+             'vpn', 'community name', 'vpn-domain', 'section name',
              'send logs to server', 'send alerts to server', NEW_KEY],
             'add a gateway configuration template. When a new gateway '
             'instance is detected, the template\'s name is used to '
@@ -330,7 +335,8 @@ def create_parser_dict(conf):
              'AWS sub-credentials secret key',
              'AWS sub-credentials file path', 'AWS sub-credentials IAM',
              'AWS sub-credentials STS role',
-             'AWS sub-credentials STS external id'],
+             'AWS sub-credentials STS external id', 'communities',
+             'sync gateway', 'sync vpn', 'sync load balancers'],
             'add AWS Controller',
             'usage examples: \n' + '\n'.join(
                 USAGE_EXAMPLES['add_controller_AWS']),
@@ -375,7 +381,8 @@ def create_parser_dict(conf):
              'generation', 'proxy ports', 'HTTPS Inspection',
              'Identity Awareness', 'Application Control',
              'Intrusion Prevention', 'IPS Profile', 'URL Filtering',
-             'Anti-Bot', 'Anti-Virus', 'restrictive policy', 'section name',
+             'Anti-Bot', 'Anti-Virus', 'restrictive policy',
+             'vpn', 'community name', 'vpn-domain', 'section name',
              'send logs to server', 'send alerts to server', NEW_KEY],
             'set template arguments', 'usage examples: \n' + '\n'.join(
                 USAGE_EXAMPLES['set_template']), None
@@ -396,7 +403,8 @@ def create_parser_dict(conf):
              'AWS sub-credentials secret key',
              'AWS sub-credentials file path', 'AWS sub-credentials IAM',
              'AWS sub-credentials STS role',
-             'AWS sub-credentials STS external id'],
+             'AWS sub-credentials STS external id', 'communities',
+             'sync gateway', 'sync vpn', 'sync load balancers'],
             'set AWS controller values',
             'usage examples: \n' + '\n'.join(
                 USAGE_EXAMPLES['set_controller_AWS']),
@@ -465,7 +473,10 @@ def create_parser_dict(conf):
              ('send alerts to server', {'action': 'store_true'}),
              (NEW_KEY, {'nargs': 1,
                         'help': 'optional attributes of a gateway. Usage '
-                                '-nk [KEY]'})],
+                                '-nk [KEY]'}),
+             ('vpn', {'action': 'store_true'}),
+             ('community name', {'action': 'store_true'}),
+             ('vpn-domain', {'action': 'store_true'})],
             'delete a template or its values',
             'usage examples: \n' + '\n'.join(
                 USAGE_EXAMPLES['delete_template']),
@@ -496,7 +507,11 @@ def create_parser_dict(conf):
              ('AWS sub-credentials IAM', {'action': 'store_true'}),
              ('AWS sub-credentials STS role', {'action': 'store_true'}),
              ('AWS sub-credentials STS external id',
-             {'action': 'store_true'})],
+              {'action': 'store_true'}),
+             ('communities', {'action': 'store_true'}),
+             ('sync gateway', {'action': 'store_true'}),
+             ('sync vpn', {'action': 'store_true'}),
+             ('sync load balancers', {'action': 'store_true'})],
             'delete an AWS controller or its values',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES[
                                              'delete_controller_AWS']),
@@ -614,6 +629,11 @@ def validate_hex(value):
     return value
 
 
+def validate_comma_seperated_list(input):
+    """Split the input string into an array. """
+
+    return input.split(',')
+
 """
 Structure of ARGUMENTS dictionary:
 
@@ -656,7 +676,7 @@ ARGUMENTS = {
         {'type': validate_hex}
     ],
     'user': [
-        '-u', [MANAGEMENT, 'user'], 'a SmartCenter administrator username',
+        '-u', [MANAGEMENT, 'user'], 'a SmartConsole administrator username',
         None
     ],
     'Management password': [
@@ -790,6 +810,11 @@ ARGUMENTS = {
         'use this flag to specify whether to enable the Anti-Virus blade on '
         'the gateway', {'action': 'store_true'}
     ],
+    'vpn': [
+        '-vpn', [TEMPLATES, TEMPLATE_NAME, 'vpn'],
+        'use this flag to specify whether to enable the VPN blade on the '
+        'gateway', {'action': 'store_true'}
+    ],
     'restrictive policy': [
         '-rp', [TEMPLATES, TEMPLATE_NAME, 'restrictive-policy'],
         'an optional name of a pre-existing policy package to be '
@@ -802,6 +827,19 @@ ARGUMENTS = {
         'The value "none" can be used to explicitly avoid any such policy.'
         'Note: the name "none" cannot be used as a policy name',
         None
+    ],
+    'community name': [
+        '-con', [TEMPLATES, TEMPLATE_NAME, 'vpn-community-star-as-center'],
+        'a comma-separated list of star communities in which to place the VPN '
+        'gateway (with "vpn": true) as center (optional)',
+        {'type': validate_comma_seperated_list}
+    ],
+    'vpn-domain': [
+        '-vd', [TEMPLATES, TEMPLATE_NAME, 'vpn-domain'],
+        'the group object to be set as the VPN domain for the VPN gateway '
+        '(with "vpn": true). An empty string will automatically set an empty '
+        'group as the encryption domain. No value or null will set the '
+        'encryption domain to addresses behind the gateways', None
     ],
     'section name': [
         '-secn', [TEMPLATES, TEMPLATE_NAME, 'section-name'],
@@ -916,6 +954,31 @@ ARGUMENTS = {
         'an optional STS ExternalId to use when assuming the role in this '
         'sub account', None
     ],
+    'communities': [
+        '-com', [CONTROLLERS, CONTROLLER_NAME, 'communities'],
+        'an optional comma-separated list of of communities, which are '
+        'allowed for VPN connections that are discovered by this controller. '
+        'If this attribute is missing or its value is an empty list, '
+        'the meaning is that any community may be joined by VPN connections '
+        'that belong to this controller. This is useful to prevent automatic '
+        'addition of VPN connections to a community based on the customer '
+        'gateway public IP address', {'type': validate_comma_seperated_list}
+    ],
+    'sync gateway': [
+        '-sg', [CONTROLLERS, CONTROLLER_NAME, SYNC, 'gateway'],
+        'use this flag to specify whether to enable the auto provisioning '
+        'of gateways', {'action': 'store_true'}
+    ],
+    'sync vpn': [
+        '-sv', [CONTROLLERS, CONTROLLER_NAME, SYNC, 'vpn'],
+        'use this flag to specify whether to enable the auto provisioning '
+        'of VPN objects', {'action': 'store_true'}
+    ],
+    'sync load balancers': [
+        '-slb', [CONTROLLERS, CONTROLLER_NAME, SYNC, 'lb'],
+        'use this flag to specify whether to enable the auto provisioning of '
+        'load balancer access and NAT rules', {'action': 'store_true'}
+    ],
     'subscription': [
         '-sb', [CONTROLLERS, CONTROLLER_NAME, 'subscription'],
         'the Azure subscription ID', {'type': validate_guid_uuid}
@@ -924,8 +987,8 @@ ARGUMENTS = {
         '-en', [CONTROLLERS, CONTROLLER_NAME, 'environment'],
         'an optional attribute to specify the Azure environment. '
         'The default is "AzureCloud", but one of the other environments '
-        'like "AzureChinaCloud", "AzureGermanCloud" or "AzureUSGovernment"'
-        ' can be specified instead', {'choices': AZURE_ENVIRONMENTS}
+        'like "AzureChinaCloud", "AzureGermanCloud" or "AzureUSGovernment" '
+        'can be specified instead', {'choices': AZURE_ENVIRONMENTS}
     ],
     'Service Principal credentials tenant': [
         '-at', [CONTROLLERS, CONTROLLER_NAME, 'credentials', 'tenant'],
@@ -964,7 +1027,8 @@ ARGUMENTS = {
 }
 
 
-def verify_AWS_credentials(conf, args, creds, sub=False):
+def verify_AWS_credentials(conf, args, creds_name, creds, old_creds,
+                           sub=False):
     """Verifies AWS credentials dependencies.
 
     creds is a dictionary object:
@@ -984,14 +1048,12 @@ def verify_AWS_credentials(conf, args, creds, sub=False):
     if not sub, either access-key and secret-key or cred-file must be present.
     sub means it can inherit from top level.
 
-    args is required to determine what to delete ("what's the user doing
+    old_creds is required to determine what to delete ("what's the user doing
     now?")
     """
 
-    if sub and getattr(args, SUBCREDENTIALS_NAME, None):
-        name = getattr(args, SUBCREDENTIALS_NAME)
-    else:
-        name = getattr(args, CONTROLLER_NAME)
+    explicit_keys = ['access-key', 'secret-key']
+    non_explicit_keys = ['cred-file']
 
     # minimum credentials
     if not sub:
@@ -1001,7 +1063,7 @@ def verify_AWS_credentials(conf, args, creds, sub=False):
                 'AWS credentials must contain access and secret keys '
                 'or a path to a file containing them, '
                 'or specify IAM to use the Management\'s IAM role. '
-                'To change credentials, use set.\n' % name)
+                'To change credentials, use set.\n' % creds_name)
             sys.exit(2)
     else:
         if not creds:
@@ -1010,7 +1072,9 @@ def verify_AWS_credentials(conf, args, creds, sub=False):
                 'AWS credentials must contain access and secret keys '
                 'or a path to a file containing them, '
                 'or specify IAM to use the Management\'s IAM role. '
-                'To change credentials, use set.\n' % name)
+                'To delete %s use delete, to set '
+                'a different type of credentials use set.' %
+                (creds_name, creds_name))
             sys.exit(2)
 
     # Missing either of access key or secret key (both or neither)
@@ -1020,86 +1084,75 @@ def verify_AWS_credentials(conf, args, creds, sub=False):
             'AWS credentials must contain access and secret keys '
             'or a path to a file containing them, '
             'or specify IAM to use the Management\'s IAM role. '
-            'To change credentials, use set.\n' % name)
+            'To change credentials, use set.\n' % creds_name)
         sys.exit(2)
 
     # Has too many, explicit AND cred file
     if 'cred-file' in creds and 'access-key' in creds:
-        if not sub:
-            explicit_keys = ('AWS access key', 'AWS secret key')
-            non_explicit_keys = ('AWS credentials file path', 'AWS IAM')
-            inserted_explicit_creds = [key for key in explicit_keys
-                                       if getattr(args, key, None)]
-            inserted_non_explicit_creds = [key for key in non_explicit_keys
-                                           if getattr(args, key, None)]
-        else:
-            sub_explicit_keys = ('AWS sub-credentials access key',
-                                 'AWS sub-credentials secret key')
-            sub_non_explicit_keys = ('AWS sub-credentials file path',
-                                     'AWS sub-credentials IAM')
-            inserted_explicit_creds = [key for key in sub_explicit_keys
-                                       if getattr(args, key, None)]
-            inserted_non_explicit_creds = [key for key in sub_non_explicit_keys
-                                           if getattr(args, key, None)]
-
-        if inserted_explicit_creds and inserted_non_explicit_creds:
+        newly_added_creds = [key for key in creds.keys() if key not in
+                             old_creds.keys()]
+        # both types were added in the same command
+        if ('cred-file' in newly_added_creds) and ('access-key' in
+                                                   newly_added_creds):
             sys.stderr.write(
-                'AWS controller "%s" is missing credentials. '
+                '"%s" is missing credentials. '
                 'AWS credentials must contain access and secret keys '
                 'or a path to a file containing them, '
                 'or specify IAM to use the Management\'s IAM role. '
-                'To change credentials, use set.\n' % name)
+                'To change credentials, use set.\n' % creds_name)
             sys.exit(2)
 
-        if args.force or prompt(
-                'replace existing credentials for %s?' % name):
-            # Check what type has been inserted in the recent command and
-            # delete the other type
-            if inserted_explicit_creds:
-                if not sub:
-                    for k in non_explicit_keys:
-                        nested_delete(conf, ARGUMENTS[k][1])
-                else:
-                    for k in sub_non_explicit_keys:
-                        nested_delete(conf, ARGUMENTS[k][1])
-
-            if inserted_non_explicit_creds:
-                if not sub:
-                    for k in explicit_keys:
-                        nested_delete(conf, ARGUMENTS[k][1])
-                else:
-                    for k in sub_explicit_keys:
-                        nested_delete(conf, ARGUMENTS[k][1])
+        # cred file (filepath or IAM) was added, when creds had explicit
+        # keys
+        if 'cred-file' in newly_added_creds:
+            if args.force or prompt('replace existing credentials for %s?' %
+                                    creds_name):
+                for k in explicit_keys:
+                    creds.pop(k, None)
+            else:
+                sys.exit(0)
+        # explicit keys were added when creds had file path or IAM
         else:
-            sys.exit(0)
+            if args.force or prompt('replace existing credentials for %s?' %
+                                    creds_name):
+                for k in non_explicit_keys:
+                    creds.pop(k, None)
+            else:
+                sys.exit(0)
 
     if 'sts-external-id' in creds and 'sts-role' not in creds:
         sys.stderr.write(
             '"%s" is missing credentials. '
             'AWS credentials must contain an STS role '
-            'if STS external id is specified.\n' % name)
+            'if STS external id is specified.\n' % creds_name)
         sys.exit(2)
 
 
-def validate_controller_credentials(conf, args):
+def validate_controller_credentials(old_conf, conf, args):
     """Validate controller's key values and dependencies. """
 
     controller_name = getattr(args, CONTROLLER_NAME, None)
-    credentials_keys = ['access-key', 'secret-key', 'cred-file', 'sts-role',
-                        'sts-external-id']
+
     try:
         controller = conf[CONTROLLERS][controller_name]
     except KeyError:
         return
 
+    old_controller = old_conf[CONTROLLERS].get(controller_name, {})
+
     if controller['class'] == AWS:
-        credentials = dict((k, controller[k]) for k in credentials_keys if k in
-                           controller)
-        verify_AWS_credentials(conf, args, credentials)
+        verify_AWS_credentials(conf, args, controller_name, controller,
+                               old_controller)
         # verify sub-creds
         if SUBCREDS in controller:
-            for k, v in controller[SUBCREDS].iteritems():
-                verify_AWS_credentials(conf, args, v, sub=True)
+            for obj_name, cred_obj in controller[SUBCREDS].iteritems():
+                try:
+                    old_creds = old_conf[CONTROLLERS][controller_name][
+                        SUBCREDS][obj_name]
+                except KeyError:
+                    old_creds = {}
+                verify_AWS_credentials(conf, args, obj_name, cred_obj,
+                                       old_creds, sub=True)
 
     elif controller['class'] == 'Azure':
         credentials = controller.get('credentials', {})
@@ -1245,13 +1298,18 @@ def validate_min_objects(conf):
 def nested_delete(dic, keys):
     """Delete a key value in a nested dictionary.
 
-    According to the list of keys leading to the relevant key
+    According to the list of keys leading to the relevant key.
+    Deletes empty internal blocks (sync, subaccounts, etc.).
     """
 
+    origin = dic
     for key in keys[:-1]:
         dic = dic.get(key, {})
 
     dic.pop(keys[-1], None)
+
+    if not nested_get(origin, keys[:-1]) and len(keys) > 3:
+        nested_delete(origin, keys[:-1])
 
 
 def nested_set(conf, keys, value):
@@ -1302,7 +1360,7 @@ def validate_regions(args, input):
     an appropriate prompt to the user.
     """
 
-    regions = input.split(',')
+    regions = validate_comma_seperated_list(input)
     for region in regions:
         if region not in AWS_REGIONS:
             if not (args.force or prompt(
@@ -1312,7 +1370,7 @@ def validate_regions(args, input):
     return regions
 
 
-def validate_conf(conf, args):
+def validate_conf(old_conf, conf, args):
     """Validate the configuration.
 
     Validate additional dependencies after editing the configuration
@@ -1326,7 +1384,7 @@ def validate_conf(conf, args):
         validate_template_dependencies(conf, args)
 
     if getattr(args, CONTROLLER_NAME, None):
-        validate_controller_credentials(conf, args)
+        validate_controller_credentials(old_conf, conf, args)
 
 
 def delete_branch(conf, args, branch):
@@ -1372,8 +1430,6 @@ def delete_branch(conf, args, branch):
         if args.force or prompt('are you sure you want to delete %s\'s '
                                 '%s sub-account?' % (path[-3], path[-1])):
             nested_delete(conf, path)
-            if not nested_get(conf, path[:-1]):
-                nested_delete(conf, path[:-1])
 
 
 def get_branch(args):
@@ -1432,7 +1488,7 @@ def is_adding_an_existing_object(conf, args):
         sys.exit(2)
 
 
-def set_all_none_control_args(conf, args):
+def set_all_non_control_args(conf, args):
     """Exclude flow keys when editing the configuration file. """
 
     changed = False
@@ -1448,7 +1504,7 @@ def set_all_none_control_args(conf, args):
 def custom_validations(conf, args):
     """Validate user input on top of argparse's validations.
 
-    Validate the chosen regions (soft valiation) and verify sub-accounts.
+    Validate the chosen regions (soft validation) and verify sub-accounts.
     """
 
     inputted_regions = getattr(args, 'regions', None)
@@ -1544,7 +1600,7 @@ def process_arguments(conf, args):
         sys.exit(0)
 
     custom_validations(conf, args)
-    update_paths_with_user_input(args)
+    preprocesssing_user_input(args)
 
     if args.mode == 'init':
         if conf:
@@ -1553,11 +1609,11 @@ def process_arguments(conf, args):
                     'are you sure you would like to initialize it? '
                     '(previous settings will be deleted)'):
                 conf.clear()
-                set_all_none_control_args(conf, args)
+                set_all_non_control_args(conf, args)
             else:
                 sys.exit(0)
         else:
-            set_all_none_control_args(conf, args)
+            set_all_non_control_args(conf, args)
     else:
         if not conf:
             sys.stdout.write(
@@ -1566,13 +1622,13 @@ def process_arguments(conf, args):
 
     if args.mode == 'add':
         is_adding_an_existing_object(conf, args)
-        if not set_all_none_control_args(conf, args):
+        if not set_all_non_control_args(conf, args):
             sys.stdout.write(
                 'too few arguments. No changes were made\n')
             sys.exit(0)
 
     if args.mode == 'set':
-        if not set_all_none_control_args(conf, args):
+        if not set_all_non_control_args(conf, args):
             sys.stdout.write(
                 'too few arguments. No changes were made\n')
             sys.exit(0)
@@ -1580,7 +1636,7 @@ def process_arguments(conf, args):
     if args.mode == 'delete':
         delete_arguments(conf, args)
 
-    validate_conf(conf, args)
+    validate_conf(old_conf, conf, args)
 
     unprotected_old_conf = copy.deepcopy(old_conf)
     nested_protect_unprotect_fields(unprotected_old_conf, PROTECTED, False)
@@ -1603,29 +1659,17 @@ def process_arguments(conf, args):
         subprocess.call('service autoprovision restart', shell=True)
 
 
+def value_to_json(value):
+    """Convert, if possible, value to input."""
+
+    try:
+        return json.loads(value)
+    except ValueError:
+        return value
+
+
 def update_paths_with_user_input(args):
-    """Update paths in the ARGUMENT array accodring to user input.
-
-    Arguments' path in the configuration file are dependent on the
-    template or controller name (also sub-accounts). User specifies them when
-    running the script and this function updates the ARGUMENT array
-    accordingly.
-    """
-
-    new_key_args = getattr(args, NEW_KEY, None)
-    new_value = None
-
-    if new_key_args:
-        new_key = new_key_args[0]
-        if len(new_key_args) == 2:
-            try:
-                new_value = json.loads(new_key_args[1])
-            except ValueError:
-                new_value = new_key_args[1]
-        elif len(new_key_args) == 1:  # facilitates delete
-            new_value = True
-
-        setattr(args, NEW_KEY, new_key)
+    """Update paths in the ARGUMENT array accodring to user input. """
 
     for k, v in vars(args).iteritems():
         if v and k in KEYS_TO_UPDATE_WITH_USER_INPUT:
@@ -1635,8 +1679,24 @@ def update_paths_with_user_input(args):
                     index = path.index(k)
                     path[index] = v
 
+
+def preprocesssing_user_input(args):
+    """Preprocess user input."""
+
+    new_key_args = getattr(args, NEW_KEY, None)
+
     if new_key_args:
+        new_key = new_key_args[0]
+        if len(new_key_args) == 2:
+            new_value = value_to_json(new_key_args[1])
+        else:  # facilitates delete
+            new_value = True
+
+        setattr(args, NEW_KEY, new_key)
+        update_paths_with_user_input(args)
         setattr(args, NEW_KEY, new_value)
+    else:
+        update_paths_with_user_input(args)
 
 
 def add_arguments(parser, parser_data):
