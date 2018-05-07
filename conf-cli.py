@@ -1504,13 +1504,20 @@ def set_all_non_control_args(conf, args):
 def custom_validations(conf, args):
     """Validate user input on top of argparse's validations.
 
-    Validate the chosen regions (soft validation) and verify sub-accounts.
+    1. Validate the chosen regions (soft validation)
+    2. Verify sub-accounts arguments
+    3. Show warning to configure HTTPS Inspection when enabling it.
     """
 
     inputted_regions = getattr(args, 'regions', None)
     if inputted_regions and (args.mode == INIT or args.mode == ADD or
                              args.mode == SET):
         setattr(args, 'regions', validate_regions(args, inputted_regions))
+
+    if getattr(args, 'HTTPS Inspection', None) and (args.mode == ADD
+                                                    or args.mode == SET):
+        sys.stdout.write('Make sure to configure HTTPS Inspection in '
+                         'SmartConsole\n')
 
     if [key for key in AWS_SUBACCOUNT_ARGS if getattr(args, key, None)]:
         subcred_name = getattr(args, SUBCREDENTIALS_NAME, None)
