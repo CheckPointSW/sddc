@@ -306,22 +306,32 @@ class AWS(Controller):
         sub_cred = kwargs.pop('sub_cred', None)
         if sub_cred is not None:
             aws_obj = self.sub_creds[sub_cred]
-        headers, body = aws_obj.request(service, *args, **kwargs)
-        if headers.get('_code') == '200':
-            return headers, body
-        error = None
-        code = None
-        if headers.get('_parsed'):
-            if 'Errors' in body:
-                errors = aws.listify(body['Errors'], 'Error')
+        delays = [.5, 1., 2., 5.]
+        while True:
+            headers, body = aws_obj.request(service, *args, **kwargs)
+            if headers.get('_code') == '200':
+                return headers, body
+            error = None
+            code = None
+            if headers.get('_parsed'):
+                if 'Errors' in body:
+                    errors = aws.listify(body['Errors'], 'Error')
+                else:
+                    errors = [body.get('Error')]
+                error = errors[0] if errors else {}
+                code = error.get('Code')
+            if not error or not code:
+                msg = 'UnparsedError: %s (%s)' % (
+                    headers.get('_reason', '-'), headers.get('_code', '-'))
             else:
-                errors = [body.get('Error')]
-            error = errors[0] if errors else {}
-            code = error.get('Code')
-        if not error or not code:
-            raise Exception('UnparsedError: %s (%s)' % (
-                headers.get('_reason', '-'), headers.get('_code', '-')))
-        raise Exception('%s: %s' % (code, error.get('Message', '-')))
+                msg = '%s: %s' % (code, error.get('Message', '-'))
+            retry = (headers.get('_code', ' ')[0] == '5' or
+                     code.lower() == 'throttling')
+            if not delays or not retry:
+                raise Exception(msg)
+            log('\n%s request failed: %s [%s]' % (service, msg, len(delays)))
+            time.sleep(delays.pop(0))
+
 
     def retrieve_subnets(self):
         subnets = {}
