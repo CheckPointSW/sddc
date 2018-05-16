@@ -2308,13 +2308,20 @@ class Management(object):
         if load_balancers is None:
             return None
         parts = []
+        old_parts = []
         for dns_name in load_balancers:
             protocol_ports = load_balancers[dns_name]
             for protocol_port in protocol_ports:
+                old_protocol_port_parts = protocol_port.split('-')
+                if old_protocol_port_parts[1] == old_protocol_port_parts[2]:
+                    old_protocol_port_parts.pop(2)
                 parts.append('-'.join(
                     [protocol_port] + sorted(
                         protocol_ports[protocol_port])))
-        return ':'.join(sorted(parts))
+                old_parts.append('-'.join(
+                    ['-'.join(old_protocol_port_parts)] + sorted(
+                        protocol_ports[protocol_port])))
+        return [':'.join(sorted(parts)), ':'.join(sorted(old_parts))]
 
     def get_unique_name(self, base, ext_len=6, retries=100):
         for i in xrange(retries):
@@ -2681,8 +2688,8 @@ class Management(object):
                 self.get_object_tag_value(gw, self.GENERATION_PREFIX, '')):
             log('\nnew template generation')
             return False
-        if (self.load_balancer_tag(instance) !=
-                self.get_object_tag_value(gw, self.LOAD_BALANCER_PREFIX)):
+        if self.get_object_tag_value(gw, self.LOAD_BALANCER_PREFIX) not in (
+                self.load_balancer_tag(instance)):
             log('\nnew load balancer configuration')
             return False
         return True
@@ -2817,7 +2824,7 @@ class Management(object):
                                            load_balancers[dns_name])
             self.set_object_tag_value(gw['uid'],
                                       self.LOAD_BALANCER_PREFIX,
-                                      self.load_balancer_tag(instance))
+                                      self.load_balancer_tag(instance)[0])
             self('publish', {})
             published = True
             self.auto_publish = True
