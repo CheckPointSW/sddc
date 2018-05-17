@@ -332,7 +332,6 @@ class AWS(Controller):
             log('\n%s request failed: %s [%s]' % (service, msg, len(delays)))
             time.sleep(delays.pop(0))
 
-
     def retrieve_subnets(self):
         subnets = {}
         for region in self.regions:
