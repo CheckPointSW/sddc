@@ -2306,7 +2306,7 @@ class Management(object):
     def load_balancer_tag(self, instance):
         load_balancers = instance.load_balancers
         if load_balancers is None:
-            return None
+            return [None, None]
         parts = []
         old_parts = []
         for dns_name in load_balancers:
