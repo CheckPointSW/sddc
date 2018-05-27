@@ -818,7 +818,7 @@ class AWS(Controller):
             for rtb in aws.listify(body, 'item')['routeTableSet']:
                 rtbs[region][rtb['routeTableId']] = rtb
 
-    def retrieve_stacks(self, stacks, cred):
+    def retrieve_stacks(self, stacks, cred, test=False):
         for region in self.regions:
             stacks.setdefault(region, {})
             for stack in self.retrieve_all(
@@ -854,10 +854,11 @@ class AWS(Controller):
                         if reason:
                             log(': %s' % reason)
                 finally:
-                    self.request(
-                        'cloudformation', region, 'GET',
-                        '/?Action=DeleteStack&StackName=' + stack['StackName'],
-                        '', sub_cred=cred)
+                    if not test:
+                        self.request(
+                            'cloudformation', region, 'GET',
+                            '/?Action=DeleteStack&StackName=' +
+                            stack['StackName'], '', sub_cred=cred)
 
     def get_parameter(self, stack, key, split=None):
         for p in stack.get('Parameters'):
@@ -1060,7 +1061,7 @@ class AWS(Controller):
         for cred in [None] + self.sub_creds.keys():
             self.retrieve_cgws(cgws, cred)
             self.retrieve_rtbs(rtbs, cred)
-            self.retrieve_stacks(stacks, cred)
+            self.retrieve_stacks(stacks, cred, test)
 
         sub_cidrs_by_vpc_id = {}
         sub_cidrs_by_cgw_addr = {}
