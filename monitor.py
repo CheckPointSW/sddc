@@ -457,7 +457,7 @@ class AWS(Controller):
 
         return elb_list, v2lb_dict
 
-    def retrieve_classic_lbs(self, region, subnets, auto_scaling_groups,
+    def retrieve_classic_lbs(self, subnets, auto_scaling_groups,
                              elb_list, by_template, by_instance):
         i2lb_names = {}
         lb_name2cidrs = {}
@@ -593,7 +593,7 @@ class AWS(Controller):
                 'DescribeAutoScalingGroupsResult', 'AutoScalingGroups')
             elb_list, v2lb_dict = self.retrieve_all_elbs(region)
             self.retrieve_classic_lbs(
-                region, subnets[region], auto_scaling_groups, elb_list,
+                subnets[region], auto_scaling_groups, elb_list,
                 by_template[region], by_instance[region])
             self.retrieve_v2_lbs(
                 region, subnets[region], auto_scaling_groups, v2lb_dict,
@@ -2094,7 +2094,7 @@ class Management(object):
                     'interfacesType': 'INTERNAL_INTERFACES',
                     'ports': ports,
                     'tarnsparentMode': False}}
-            if (len(gw['interfaces']) == 1):
+            if len(gw['interfaces']) == 1:
                 body['proxyOnGwSettings'][
                     'interfacesType'] = 'SPECIFIC_INTERFACES'
                 body['proxyOnGwSettings'][
@@ -2104,12 +2104,10 @@ class Management(object):
         self('set-generic-object', body)
 
     def build_proxy_interface(self, gw_interface):
-        interface = {}
-        interface['create'] = self.CPMI_INTERFACE
-        interface['owned-object'] = {}
+        interface = {'create': self.CPMI_INTERFACE, 'owned-object': {}}
 
         attributes_to_ignore = ('folder', 'domainId', 'folderPath', 'objId',
-                                'text', 'checkPointObjId')
+                                'text', 'checkPointObjId', 'domainsPreset')
         for field in gw_interface:
             if field in attributes_to_ignore:
                 continue
