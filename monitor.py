@@ -2472,22 +2472,26 @@ class Management(object):
             # add a service
             log('\nadding %s' % service_name)
             self('add-service-tcp', {
-                'name': service_name, 'port': port, 'match-for-any': False})
+                'name': service_name, 'port': port, 'match-for-any': False,
+                'ignore-warnings': True})
             protocol = self.get_protocol_type(lb_protocol)
             if protocol:
                 self('set-generic-object', {
                     'uid': self.get_uid(service_name),
-                    'protoType': protocol})
+                    'protoType': protocol,
+                    'ignore-warnings': True})
             if translated_service:
                 log('\nadding %s' % translated_service)
                 self('add-service-tcp', {
                     'name': translated_service, 'port': translated,
-                    'match-for-any': False})
+                    'match-for-any': False,
+                    'ignore-warnings': True})
                 protocol = self.get_protocol_type(lb_protocol)
                 if protocol:
                     self('set-generic-object', {
                         'uid': self.get_uid(translated_service),
-                        'protoType': protocol})
+                        'protoType': protocol,
+                        'ignore-warnings': True})
             # add subnets
             net_uids = []
             for subnet in protocol_ports[protocol_port]:
