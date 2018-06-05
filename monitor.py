@@ -1633,6 +1633,19 @@ class GCP(Controller):
 
 class HTTPSConnection(httplib.HTTPSConnection):
     def connect(self):
+        proxy = os.environ.get('https_proxy')
+        if proxy:
+            no_proxy = os.environ.get('no_proxy', set())
+            if no_proxy:
+                no_proxy = set(no_proxy.split(','))
+            if self.host not in no_proxy:
+                self.set_tunnel(self.host, self.port)
+                self.host, _, self.port = urlparse.urlsplit(
+                    proxy).netloc.partition(':')
+                if self.port:
+                    self.port = int(self.port)
+                else:
+                    self.port = 8080
         httplib.HTTPConnection.connect(self)
         self.sock = ssl.wrap_socket(
             self.sock, self.key_file, self.cert_file,
