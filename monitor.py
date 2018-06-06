@@ -1915,6 +1915,8 @@ class Management(object):
             self.sid = resp['sid']
 
             log('\nnew session:  %s' % resp['uid'])
+            versions = self('show-api-versions', {}, version='v1.1')
+            with_take_over = versions['current-version'] not in {'v1', 'v1.1'}
             for session in self('show-sessions', {'details-level': 'full'},
                                 aggregate='objects'):
                 if session['uid'] == resp['uid'] or (
@@ -1923,7 +1925,15 @@ class Management(object):
                     continue
                 log('\ndiscarding session: %s' % session['uid'])
                 try:
-                    self('discard', {'uid': session['uid']}, silent=True)
+                    if with_take_over:
+                        self('take-over-session', {
+                            'uid': session['uid'],
+                            'disconnect-active-session': True},
+                            silent=True,
+                            version='v1.2')
+                        self('discard', {}, silent=True)
+                    else:
+                        self('discard', {'uid': session['uid']}, silent=True)
                 except Exception:
                     debug('\n%s' % traceback.format_exc())
                     log('\ndiscard uid %s: failed' % session['uid'])
