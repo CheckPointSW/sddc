@@ -1916,7 +1916,7 @@ class Management(object):
 
             log('\nnew session:  %s' % resp['uid'])
             versions = self('show-api-versions', {}, version='v1.1')
-            with_take_over = versions['current-version'] not in {'v1', 'v1.1'}
+            with_take_over = versions['current-version'] not in {'1', '1.1'}
             for session in self('show-sessions', {'details-level': 'full'},
                                 aggregate='objects'):
                 if session['uid'] == resp['uid'] or (
