@@ -3422,8 +3422,11 @@ def test():
     log('\nTesting management connectivity...\n')
     with Management.init(domains, **config) as managements:
         for management in managements.values():
+            is_mds = domains - {None}
             if management.domain:
                 log('\nTesting domain: %s\n' % management.domain)
+            elif is_mds:
+                continue
             try:
                 management('discard', {})
             except Exception:
