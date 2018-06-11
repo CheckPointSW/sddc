@@ -1136,7 +1136,8 @@ def validate_controller_credentials(old_conf, conf, args):
     controller = conf.get(CONTROLLERS, {}).get(controller_name, {})
     old_controller = old_conf.get(CONTROLLERS, {}).get(controller_name, {})
 
-    if controller['class'] == AWS:
+    controller_class = controller.get('class', None)
+    if controller_class == AWS:
         verify_AWS_credentials(conf, args, controller_name, controller,
                                old_controller)
         # verify sub-creds
@@ -1150,7 +1151,7 @@ def validate_controller_credentials(old_conf, conf, args):
                 verify_AWS_credentials(conf, args, obj_name, cred_obj,
                                        old_creds, sub=True)
 
-    elif controller['class'] == 'Azure':
+    elif controller_class == AZURE:
         credentials = controller.get('credentials', {})
         spa = {'tenant', 'grant_type', 'client_id', 'client_secret'}
         upa = {'username', 'password'}
@@ -1201,7 +1202,7 @@ def validate_controller_credentials(old_conf, conf, args):
             else:
                 sys.exit(0)
 
-    elif controller['class'] == 'GCP':
+    elif controller_class == GCP:
         # No dependencies between fields
         pass
 
