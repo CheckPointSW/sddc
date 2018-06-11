@@ -47,6 +47,8 @@ import gcp
 
 TAG = 'managed-virtual-gateway'
 BLOCKED_PORTS = ['444', '8082', '8880']
+PORT_REGEX = ('[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}'
+              '|65[0-3][0-9]{2}|653[0-4][0-9]|6535[0-5]')
 
 conf = collections.OrderedDict()
 log_buffer = [None]
@@ -366,6 +368,13 @@ class AWS(Controller):
         https_ports = tags.get('x-chkp-https-ports', [])
         if https_ports:
             https_ports = set(https_ports.split(':'))
+        bad_ports = ', '.join({p[1:] for p in set(
+            http_ports) | set(https_ports) if p.startswith('@')})
+        if bad_ports:
+            raise Exception(
+                'the "@" annotation is deprecated in x-chkp-http-ports and '
+                'x-chkp-https-ports, and is used with ports %s, consider using'
+                ' x-chkp-forwarding instead' % bad_ports)
         source_cidrs = tags.get('x-chkp-source-cidrs', [])
         if source_cidrs:
             source_cidrs = set(source_cidrs.split())
@@ -379,27 +388,37 @@ class AWS(Controller):
                 raise Exception(
                     'malformed CIDRs: %s in tag x-chkp-source-cidrs' %
                     ', '.join(bad_cidrs))
+        forwarding_rules = tags.get('x-chkp-forwarding', [])
+        if forwarding_rules:
+            forwarding_rules = set(forwarding_rules.split())
+            bad_rules = {r for r in forwarding_rules if not re.compile(
+                r'(TCP|HTTP|HTTPS)-' + PORT_REGEX + '-' + PORT_REGEX + '$'
+                ).match(r)}
+            if bad_rules:
+                raise Exception(
+                    'malformed forwarding rules: %s in tag x-chkp-forwarding' %
+                    ', '.join(bad_rules))
         protocol_ports = []
-        for pp in lb['Front']:
-            protocol, _, port = pp.partition('-')
-            translated = port
+
+        for pp in [p1 for p1 in lb['Front'] if p1.split('-')[1] not in [
+                p2.split('-')[2] for p2 in forwarding_rules]] + list(
+                forwarding_rules):
+            protocol, port, translated = (pp.split('-') + [None])[:3]
             if port in ignore_ports:
                 continue
             if port in BLOCKED_PORTS:
                 raise Exception(
                     'Port %s cannot be used for internal LB listener'
                     % port)
-            if port in {'80', '443'}:
-                protocol, port_list = (('HTTP', http_ports)
-                                       if port == '80'
-                                       else ('HTTPS', https_ports))
-                port = ([p[1:] for p in port_list if p.startswith('@')] +
-                        [str(int(port) + 9000)])[0]
+            if port in {'80', '443'} and not translated:
+                protocol = 'HTTP' if port == '80' else 'HTTPS'
+                port, translated = (str(int(port) + 9000), port)
             if port in http_ports:
                 protocol = 'HTTP'
             if port in https_ports:
                 protocol = 'HTTPS'
-            protocol_ports.append('%s-%s-%s' % (protocol, port, translated))
+            protocol_ports.append('%s-%s-%s' % (protocol, port,
+                                                translated or port))
         template = tags.get('x-chkp-template')
         by_template.setdefault(template, {})
         by_template[template][lb['DNSName']] = (protocol_ports, source_cidrs)
@@ -2410,18 +2429,6 @@ class Management(object):
                 'members': dummy_host})['uid']
         return self.dummy_group
 
-    def get_protocol_type(self, protocol):
-        if not hasattr(self, 'protocol_map'):
-            protocol_map = {}
-            for service, proto in [('http', 'HTTP'), ('https', 'HTTPS')]:
-                uid = self.get_uid(service)
-                obj = self('show-generic-object', {'uid': uid})
-                if 'protoType' not in obj and 'parent' in obj:
-                    obj = self('show-generic-object', {'uid': obj['parent']})
-                protocol_map[proto] = obj['protoType']
-            self.protocol_map = protocol_map
-        return self.protocol_map.get(protocol)
-
     def add_load_balancer(self, gw, policy, section_name, dns_name,
                           protocol_ports):
         debug('\nadding %s: %s\n' % (
@@ -2486,35 +2493,22 @@ class Management(object):
         else:
             nat_position = 'top'
         for protocol_port in protocol_ports:
-            translated_service = None
             lb_protocol, port, translated = protocol_port.split('-')
-            service_name = '%s-%s_%s' % (lb_protocol, port, gw['name'])
-            if translated != port:
-                translated_service = '%s-%s_%s' % (
-                    lb_protocol, translated, gw['name'])
+            services = []
             # add a service
-            log('\nadding %s' % service_name)
-            self('add-service-tcp', {
-                'name': service_name, 'port': port, 'match-for-any': False,
-                'ignore-warnings': True})
-            protocol = self.get_protocol_type(lb_protocol)
-            if protocol:
-                self('set-generic-object', {
-                    'uid': self.get_uid(service_name),
-                    'protoType': protocol,
-                    'ignore-warnings': True})
-            if translated_service:
-                log('\nadding %s' % translated_service)
+            for p in [port, translated]:
+                service = '%s-%s_%s' % (lb_protocol, p, gw['name'])
+                services.append(service)
+                if self.get_uid(service, obj_type='service-tcp'):
+                    continue
+                protocol = {'HTTP': 'HTTP', 'HTTPS': 'ENC-HTTP', 'TCP': None
+                            }[lb_protocol]
+                log('\nadding %s' % service)
                 self('add-service-tcp', {
-                    'name': translated_service, 'port': translated,
-                    'match-for-any': False,
-                    'ignore-warnings': True})
-                protocol = self.get_protocol_type(lb_protocol)
-                if protocol:
-                    self('set-generic-object', {
-                        'uid': self.get_uid(translated_service),
-                        'protoType': protocol,
-                        'ignore-warnings': True})
+                    'name': service, 'port': p, 'match-for-any': False,
+                    'ignore-warnings': True, 'protocol': protocol},
+                    version='v1.1')
+            service_name = services[0]
             # add subnets
             net_uids = []
             for subnet in protocol_ports[protocol_port]:
@@ -2562,8 +2556,8 @@ class Management(object):
                 'translated-source': nat_name,
                 'method': 'hide',
                 'install-on': gw['name']}
-            if translated_service:
-                nat_rule_body['translated-service'] = translated_service
+            if 2 == len(set(services)):
+                nat_rule_body['translated-service'] = services[-1]
             self('add-nat-rule', nat_rule_body)
 
     def set_policy(self, gw, policy):
