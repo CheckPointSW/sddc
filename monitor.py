@@ -1119,6 +1119,8 @@ class AWS(Controller):
                 cgw_by_cred_addr.setdefault(cgw[self.CREDENTIAL], {})[
                     cgw['ipAddress']] = cgw
             for rtb in rtbs[region].values():
+                if rtb['vpcId'] not in vpcs[region]:
+                    continue
                 if any(a['main'] == 'true' for a in rtb['associationSet']):
                     assert self.RTB not in vpcs[region][rtb['vpcId']]  # FIXME
                     vpcs[region][rtb['vpcId']][self.RTB] = rtb['routeTableId']
