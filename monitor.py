@@ -1913,6 +1913,19 @@ class Management(object):
         domain = 'SMC User' if self.domain is None else self.domain
         return obj['domain']['name'] == domain
 
+    def command_available(self, command, version='v1.1'):
+        try:
+            self(command, {
+                '__no_such_parameter__': None}, version=version, silent=True)
+        except Exception as e:
+            if 'Unrecognized parameter [__no_such_parameter__]' in str(e):
+                return True
+            elif 'Unknown API version' in str(e):
+                return False
+            elif 'command: [%s] not found' % command in str(e):
+                return False
+            raise
+
     def __enter__(self):
         # FIXME: if the polling period is longer than the session timeout
         #        we need to request a longer session or add keepalive
@@ -1936,8 +1949,8 @@ class Management(object):
             self.sid = resp['sid']
 
             log('\nnew session:  %s' % resp['uid'])
-            versions = self('show-api-versions', {}, version='v1.1')
-            with_take_over = versions['current-version'] not in {'1', '1.1'}
+            with_take_over = self.command_available(
+                'take-over-session', version='v1.2')
             for session in self('show-sessions', {'details-level': 'full'},
                                 aggregate='objects'):
                 if session['uid'] == resp['uid'] or (
@@ -3400,6 +3413,7 @@ def test():
 
     log('\nTesting controllers...\n')
     domains = set()
+    need_get_interfaces = False
     for name, c in config['controllers'].items():
         log('\nTesting %s...\n' % name)
         for key in ['class']:
@@ -3415,6 +3429,8 @@ def test():
 
         cls.test(cls, name=name, management=config['management']['name'], **c)
         domains.add(c.get('domain'))
+        if c.get('sync').get('vpn', False):
+            need_get_interfaces = True
     if domains and None in domains and domains - {None} and (
             not config['management'].get('domain')):
         raise Exception('Some controllers do not have a "domain"')
@@ -3445,6 +3461,10 @@ def test():
                             management.domain)
                 raise Exception(msg + '\n')
             management.get_gateways()
+        if need_get_interfaces and not managements[None].command_available(
+                'get-interfaces'):
+            raise Exception(
+                'Your management version does not support "get-interfaces"')
 
     log('\nAll Tests passed successfully\n')
 
