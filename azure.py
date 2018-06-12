@@ -28,13 +28,14 @@ import sys
 import time
 import urllib
 import urllib2
+import uuid
 import xml.dom.minidom
 
 # services with more specific path should precede
 ARM_VERSIONS = collections.OrderedDict([
     ('storage', '2015-06-15'),
     ('resources/deployments/operations', '2015-11-01'),
-    ('resources/deployments', '2015-11-01'),
+    ('resources/deployments', '2017-05-10'),
     ('resources/', '2015-01-01'),
     ('network/virtualnetworks', '2016-06-01'),
     ('network/', '2015-06-15'),
@@ -197,7 +198,7 @@ def request_curl(method, url, cert=None, body=None, headers=None,
         proto, code, reason = lines[0].split(' ', 2)
     except:
         raise CurlException(
-            'Bad status line: %s' % repr(lines[0]), args_no_auth)
+            'Bad status line: %s' % repr(lines), args_no_auth)
     headers = {'proto': proto, 'code': int(code), 'reason': reason}
     for line in lines[1:]:
         key, sep, value = line.partition(':')
@@ -207,6 +208,41 @@ def request_curl(method, url, cert=None, body=None, headers=None,
         headers[key] = value.strip()
 
     return headers, response
+
+
+def jwt_x5t(cert):
+    if os.path.exists(cert):
+        with open(cert) as f:
+            cert = f.read()
+    cert = subprocess.Popen([
+        os.environ.get('AZURE_REST_OPENSSL', 'openssl'), 'x509',
+        '-outform', 'DER'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE).communicate(cert)[0]
+    sha1 = hashlib.sha1()
+    sha1.update(cert)
+    return base64.urlsafe_b64encode(sha1.digest())
+
+
+def jwt_sign(data, key):
+    rfd, wfd = None, None
+    try:
+        if os.path.exists(key):
+            with open(key) as f:
+                key = f.read()
+        rfd, wfd = os.pipe()
+        os.write(wfd, key)
+        os.close(wfd)
+        wfd = None
+        return subprocess.Popen([
+            os.environ.get('AZURE_REST_OPENSSL', 'openssl'), 'dgst', '-sha256',
+            '-sign', '/dev/fd/%d' % rfd], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate(
+                data)[0]
+    finally:
+        if wfd is not None:
+            os.close(wfd)
+        if rfd is not None:
+            os.close(rfd)
 
 
 class Environment(object):
@@ -246,12 +282,17 @@ class Azure(object):
         self.accounts = {}
         self.subscription = subscription
         if isinstance(credentials, basestring):
-            if credentials.startswith('{'):
+            if credentials.startswith('IAM'):
+                pass
+            elif credentials.startswith('{'):
                 credentials = json.loads(credentials)
             else:
                 with open(credentials) as f:
                     credentials = json.load(f)
-        self.credentials = credentials.copy()
+        if isinstance(credentials, dict):
+            self.credentials = credentials.copy()
+        else:
+            self.credentials = credentials
         self.max_time = max_time
         if not environment:
             environment = 'AzureCloud'
@@ -267,21 +308,57 @@ class Azure(object):
                 not self.tokens[resource].get('access') or
                 self.tokens[resource].get('expires', 0) < time.time()):
             debug('get_token: %s: no cache\n' % resource)
-            credentials = self.credentials.copy()
-            tenant = credentials.pop('tenant', tenant)
+            if isinstance(self.credentials, dict):
+                credentials = self.credentials.copy()
+                tenant = credentials.pop('tenant', tenant)
             url = 'https://' + self.environment.login
             url += '/%s/oauth2/token?api-version=1.0' % tenant
-            credentials['resource'] = resource
-            if 'username' in credentials:
+            headers = None
+            now = time.time()
+            if isinstance(self.credentials, basestring) and (
+                    self.credentials.startswith('IAM')):
+                credentials = {}
+                port = '50342'
+                if '@' in self.credentials:
+                    port = self.credentials.partition('@')[2]
+                url = 'http://localhost:%s/oauth2/token' % port
+                headers = ['Metadata: true']
+            elif 'username' in credentials:
                 credentials.setdefault('grant_type', 'password')
                 credentials.setdefault(
                     'client_id', '04b07795-8ddb-461a-bbee-02f9e1bf7b46')
-            self.tokens[resource] = {'expires': time.time() - 120}
+            elif 'client_cert' in credentials:
+                client_cert = credentials.pop('client_cert')
+                client_key = client_cert
+                if 'client_key' in credentials:
+                    client_key = credentials.pop('client_key')
+                jwt = [base64.urlsafe_b64encode(json.dumps({
+                    'alg': 'RS256',
+                    'typ': 'JWT',
+                    'x5t': jwt_x5t(client_cert)})).replace('=', '')]
+                jwt += [base64.urlsafe_b64encode(json.dumps({
+                    'aud': url,
+                    'iss': credentials['client_id'],
+                    'sub': credentials['client_id'],
+                    'nbf': now - 60,
+                    'exp': now + 60,
+                    'jti': str(uuid.uuid4())})).replace('=', '')]
+                jwt += [base64.urlsafe_b64encode(jwt_sign(
+                    '.'.join(jwt), client_key)).replace('=', '')]
+                credentials['client_assertion_type'] = (
+                    'urn:ietf:params:oauth:client-assertion-type:jwt-bearer')
+                credentials['client_assertion'] = '.'.join(jwt)
+            credentials['resource'] = resource
+            self.tokens[resource] = {'expires': now - 120}
             h, b = request(
                 'POST', url, body=urllib.urlencode(credentials),
-                pool=self.pool, max_time=self.max_time)
+                headers=headers, pool=self.pool, max_time=self.max_time)
             self.tokens[resource]['access'] = b['access_token']
-            self.tokens[resource]['expires'] += int(b['expires_in'])
+            expires_in = int(b['expires_in'])
+            if 'expires_on' in b:
+                expires_in = int(b['expires_on']) - now
+            debug('expires_in: %d\n' % expires_in)
+            self.tokens[resource]['expires'] += expires_in
         try:
             yield self.tokens[resource]['access']
         except RequestException as e:
@@ -346,10 +423,11 @@ class Azure(object):
             url = b['nextLink']
         return {}, {'value': value}
 
-    def graph(self, method, path, body=None, headers=None):
+    def graph(self, method, path, body=None, headers=None, no_aggregate=False):
         if headers is None:
             headers = []
 
+        tenant = path.partition('/')[2].partition('/')[0]
         resource = 'https://' + self.environment.graph
         url = resource + path
 
@@ -360,18 +438,29 @@ class Azure(object):
             else:
                 headers += ['content-type: application/json']
 
-        if 'api-version=' not in url:
-            version = 'api-version=1.6'
-            if '?' in url:
-                url += '&'
-            else:
-                url += '?'
-            url += version
-
-        with self.get_token(resource=resource) as token:
-            headers_with_auth = headers + ['authorization: Bearer ' + token]
-            return request(method, url, body=body, headers=headers_with_auth,
-                           pool=self.pool, max_time=self.max_time)
+        value = []
+        while True:
+            if 'api-version=' not in url:
+                version = 'api-version=1.6'
+                if '?' in url:
+                    url += '&'
+                else:
+                    url += '?'
+                url += version
+            with self.get_token(resource=resource) as token:
+                headers_with_auth = headers + [
+                    'authorization: Bearer ' + token]
+                h, b = request(method, url, body=body,
+                               headers=headers_with_auth, pool=self.pool,
+                               max_time=self.max_time)
+            if no_aggregate or method != 'GET' or not isinstance(
+                    b, dict) or not isinstance(b.get('value'), list):
+                return h, b
+            value += b['value']
+            if 'odata.nextLink' not in b:
+                break
+            url = '/'.join([resource, tenant, b['odata.nextLink']])
+        return {}, {'value': value}
 
     def account_key(self, account):
         if account is None:
@@ -702,6 +791,7 @@ def main(*args):
         h, b = arm(method, args[3], **kwargs)
     elif api == 'graph':
         kwargs = collect(4)
+        kwargs['no_aggregate'] = os.environ.get('AZURE_GRAPH_NO_AGGREGATE')
         h, b = graph(method, args[3], **kwargs)
     elif api == 'eventhub':
         kwargs = collect(5)
