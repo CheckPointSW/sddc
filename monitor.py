@@ -3433,7 +3433,7 @@ def test():
 
         cls.test(cls, name=name, management=config['management']['name'], **c)
         domains.add(c.get('domain'))
-        if c.get('sync').get('vpn', False):
+        if c.get('sync', {}).get('vpn', False):
             need_get_interfaces = True
     if domains and None in domains and domains - {None} and (
             not config['management'].get('domain')):
