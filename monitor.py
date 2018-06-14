@@ -2725,7 +2725,11 @@ class Management(object):
         if self.get_object_tag_value(gw, self.LOAD_BALANCER_PREFIX) not in (
                 self.load_balancer_tag(instance)):
             log('\nnew load balancer configuration')
-            return False
+            if os.path.exists(os.path.join(os.path.dirname(__file__),
+                                           'x-no-lb-reprovisioning')):
+                log('\nskipping lb reprovisioning')
+            else:
+                return False
         return True
 
     def set_topology(self, interfaces, specific_network):
