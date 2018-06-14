@@ -2810,7 +2810,7 @@ class Management(object):
                 self.init_identity_awareness(gw)
 
         if self.ONCE_PREFIX not in self.get_object_tags(gw):
-            if restrictive_policy is not None:
+            if restrictive_policy not in (None, 'none'):
                 self.set_restrictive_policy(gw, restrictive_policy)
         tags += [TAG, self.ONCE_PREFIX]
 

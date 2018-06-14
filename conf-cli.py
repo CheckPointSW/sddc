@@ -228,6 +228,9 @@ AWS_SUBACCOUNT_ARGS = (SUBCREDENTIALS_NAME,
                        'AWS sub-credentials STS role',
                        'AWS sub-credentials STS external id')
 
+LIST_PARAMETERS = ('regions', 'custom parameters', 'proxy ports',
+                   'community name', 'controller templates', 'communities')
+
 
 def get_templates(conf):
     """Return an array of names of existing templates."""
@@ -1224,10 +1227,23 @@ def validate_template_dependencies(conf, args):
                 'above\n')
             sys.exit(2)
 
-    restrictive_policy = getattr(args, 'restrictive policy', None)
 
-    if restrictive_policy == 'none':  # facilitates null value
-        nested_set(conf, ARGUMENTS['restrictive policy'][1], None)
+def validate_controllers(old_conf, conf, args):
+    """Show a prompt before applying changes to controllers."""
+
+    old_controllers = old_conf.get(CONTROLLERS, {})
+    new_controllers = conf.get(CONTROLLERS, {})
+
+    for controller_name, new_controller in new_controllers.iteritems():
+        if controller_name in old_controllers.keys():
+            old_controller = old_controllers.get(controller_name)
+            if old_controller != new_controller:
+                if not args.force and not prompt(
+                        'you are about to modify an existing controller %s. '
+                        'Incorrect settings may result with the loss of all '
+                        'the controller\'s Security Management Server '
+                        'configuration. Are you sure?' % controller_name):
+                    sys.exit(0)
 
 
 def validate_management(conf, args):
@@ -1258,6 +1274,22 @@ def validate_management(conf, args):
                 'host is not local, please specify username, password and '
                 'fingerprint\n')
             sys.exit(2)
+
+
+def validate_lists(old_conf, conf, args):
+    """Show a prompt when running a command that removes items from lists"""
+
+    for list_parameter in LIST_PARAMETERS:
+        path = ARGUMENTS[list_parameter][1]
+        old_list = nested_get(old_conf, path)
+        new_list = nested_get(conf, path)
+        if old_list and new_list:
+            diff = set(old_list) - set(new_list)
+            if diff:
+                if not args.force and not prompt(
+                        'Are you sure you want to remove %s from %s?'
+                        % (', '.join(map(str, diff)), list_parameter)):
+                    sys.exit(0)
 
 
 def validate_min_objects(conf):
@@ -1375,7 +1407,9 @@ def validate_conf(old_conf, conf, args):
     """
 
     validate_min_objects(conf)
+    validate_lists(old_conf, conf, args)
     validate_management(conf, args)
+    validate_controllers(old_conf, conf, args)
 
     if getattr(args, TEMPLATE_NAME, None):
         validate_template_dependencies(conf, args)
@@ -1416,7 +1450,7 @@ def delete_branch(conf, args, branch):
                                 '%s before its Gateways are removed may '
                                 'cause unexcpeted behavior. If you have '
                                 'already done so and wish to delete the '
-                                'controller, type yes. '
+                                'controller, type yes.'
                                 % (controller_name, controller_name)):
             nested_delete(conf, [CONTROLLERS, controller_name])
 
@@ -1609,9 +1643,18 @@ def process_arguments(conf, args):
     if args.mode == 'init':
         if conf:
             if args.force or prompt(
-                    'configuration exists, '
-                    'are you sure you would like to initialize it? '
-                    '(previous settings will be deleted)'):
+                    'warning: configuration exists, '
+                    'previous settings will be deleted. '
+                    'First make sure that there are no Gateways '
+                    'that are auto-provisioned with this configuration.'
+                    'To do so, terminate all the '
+                    'Gateways in the cloud environment and make '
+                    'sure that the objects that represent them '
+                    'in the SmartConsole are removed. Initializing the '
+                    'configuration before its Gateways are removed may '
+                    'cause unexcpeted behavior. '
+                    'Are you sure you would like to initialize the '
+                    'configuration?'):
                 conf.clear()
                 set_all_non_control_args(conf, args)
             else:
