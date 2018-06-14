@@ -2973,6 +2973,10 @@ class Management(object):
             raise Exception(
                 'Cannot select policy for gateway "%s" (%s)' % (
                     gw_name, policies))
+        if os.path.exists(os.path.join(os.path.dirname(__file__),
+                                       'x-no-vpn-policy-install')):
+            log('\nskipping policy "%s" for "%s"' % (policies[0], gw_name))
+            return
         log('\ninstalling policy "%s" on "%s"' % (policies[0], gw_name))
         self('install-policy', {
             'policy-package': policies[0], 'targets': gw_name})
