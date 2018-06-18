@@ -47,8 +47,6 @@ import gcp
 
 TAG = 'managed-virtual-gateway'
 BLOCKED_PORTS = ['444', '8082', '8880']
-PORT_REGEX = ('[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}'
-              '|65[0-3][0-9]{2}|653[0-4][0-9]|6535[0-5]')
 
 conf = collections.OrderedDict()
 log_buffer = [None]
@@ -392,8 +390,9 @@ class AWS(Controller):
         if forwarding_rules:
             forwarding_rules = set(forwarding_rules.split())
             bad_rules = {r for r in forwarding_rules if not re.compile(
-                r'(TCP|HTTP|HTTPS)-' + PORT_REGEX + '-' + PORT_REGEX + '$'
-                ).match(r)}
+                r'(TCP|HTTP|HTTPS)(-([1-9][0-9]{0,3}|[1-5][0-9]{4}'
+                r'|6[0-4][0-9]{3}|65[0-2][0-9]{2}|653[0-4][0-9]'
+                r'|6535[0-5])){2}$').match(r)}
             if bad_rules:
                 raise Exception(
                     'malformed forwarding rules: %s in tag x-chkp-forwarding' %
