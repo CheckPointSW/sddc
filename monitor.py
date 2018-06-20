@@ -266,6 +266,11 @@ class AWS(Controller):
     FREE_CIDRS = {
         '%s.%s' % (k * 4 // 256, k * 4 % 256) for k in xrange(NUM_CIDRS)} - {
             '0.0', '1.0', '2.0', '3.0', '4.0', '5.0', '169.252'}
+    PORT_REGEX = (r'[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}'
+                  r'|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))')
+    CIDRS_REGEX = (r'^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}'
+                   r'([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])'
+                   r'(\/([0-9]|[1-2][0-9]|3[0-2]))$')
 
     def __init__(self, **options):
         super(AWS, self).__init__(**options)
@@ -377,9 +382,7 @@ class AWS(Controller):
         if source_cidrs:
             source_cidrs = set(source_cidrs.split())
             bad_cidrs = {s for s in source_cidrs if not re.compile(
-                '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}'
-                '([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])'
-                '(\/([0-9]|[1-2][0-9]|3[0-2]))$').match(s)}
+                self.CIDRS_REGEX).match(s)}
             if '0.0.0.0/0' in source_cidrs:
                 source_cidrs = set()
             if bad_cidrs:
@@ -390,9 +393,7 @@ class AWS(Controller):
         if forwarding_rules:
             forwarding_rules = set(forwarding_rules.split())
             bad_rules = {r for r in forwarding_rules if not re.compile(
-                r'(TCP|HTTP|HTTPS)(-([1-9][0-9]{0,3}|[1-5][0-9]{4}'
-                r'|6[0-4][0-9]{3}|65[0-2][0-9]{2}|653[0-4][0-9]'
-                r'|6535[0-5])){2}$').match(r)}
+                r'(TCP|HTTP|HTTPS)(-(%s){2}$' % self.PORT_REGEX).match(r)}
             if bad_rules:
                 raise Exception(
                     'malformed forwarding rules: %s in tag x-chkp-forwarding' %
