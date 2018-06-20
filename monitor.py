@@ -1746,7 +1746,6 @@ class Management(object):
     CIDR_PREFIX = '__cidr__'
     VPN_PREFIX = '__vpn__'
     COMMUNITY_PREFIX = '__community__'
-    SESSION_TIMEOUT = 550
     SPOKE_ROUTES = 'spoke-routes'
     EXPORT_ROUTES = 'export-routes'
 
@@ -1829,7 +1828,7 @@ class Management(object):
         else:
             if not self.sid or (
                     (time.time() - self.last_action_time) >
-                    self.SESSION_TIMEOUT):
+                    self.session_timeout):
                 self.__enter__()
             c = '.'
         progress(c)
@@ -1933,8 +1932,6 @@ class Management(object):
             raise
 
     def __enter__(self):
-        # FIXME: if the polling period is longer than the session timeout
-        #        we need to request a longer session or add keepalive
         try:
             self.last_action_time = time.time()
             if not self.user:
@@ -1954,6 +1951,9 @@ class Management(object):
                     login_data['domain'] = self.domain
                 resp = self('login', login_data)
             self.sid = resp['sid']
+            self.session_timeout = resp['session-timeout']
+            self.session_timeout = max(
+                self.session_timeout // 2, self.session_timeout - 50)
 
             log('\nnew session:  %s' % resp['uid'])
             with_take_over = self.command_available(
