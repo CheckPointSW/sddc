@@ -1746,6 +1746,7 @@ class Management(object):
     CIDR_PREFIX = '__cidr__'
     VPN_PREFIX = '__vpn__'
     COMMUNITY_PREFIX = '__community__'
+    SESSION_TIMEOUT = 550
     SPOKE_ROUTES = 'spoke-routes'
     EXPORT_ROUTES = 'export-routes'
 
@@ -1798,6 +1799,7 @@ class Management(object):
         self.custom_script = options.get('custom-script')
         self.auto_publish = True
         self.sid = None
+        self.last_action_time = 0
         self.local_host_uid = None
         self.targets = {}
         if 'proxy' in options:
@@ -1825,7 +1827,9 @@ class Management(object):
                 raise Exception('cannot publish with no sid')
             c = '|'
         else:
-            if not self.sid:
+            if not self.sid or (
+                    (time.time() - self.last_action_time) >
+                    self.SESSION_TIMEOUT):
                 self.__enter__()
             c = '.'
         progress(c)
@@ -1903,9 +1907,11 @@ class Management(object):
             if command == 'logout':
                 self.sid = None
             if not aggregate:
+                self.last_action_time = time.time()
                 return payload
             objects += payload[aggregate]
             if payload['total'] == 0 or payload['total'] <= payload['to']:
+                self.last_action_time = time.time()
                 return objects
             offset = payload['to']
 
@@ -1930,6 +1936,7 @@ class Management(object):
         # FIXME: if the polling period is longer than the session timeout
         #        we need to request a longer session or add keepalive
         try:
+            self.last_action_time = time.time()
             if not self.user:
                 progress('+')
                 login_args = ['mgmt_cli', '--root', 'true', '--format', 'json',
