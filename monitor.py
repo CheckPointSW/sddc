@@ -2655,14 +2655,16 @@ class Management(object):
                 self(
                     'set-vpn-community-star', {
                         'name': comm_name,
-                        'satellite-gateways': {'remove': gw['name']}},
+                        'satellite-gateways': {'remove': gw['name']},
+                        'ignore-warnings': True},
                     version='v1.1')
             if gw['name'] in centers:
                 log('\nremoving from %s centers' % comm_name)
                 self(
                     'set-vpn-community-star', {
                         'name': comm_name,
-                        'center-gateways': {'remove': gw['name']}},
+                        'center-gateways': {'remove': gw['name']},
+                        'ignore-warnings': True},
                     version='v1.1')
         for community in self(
                 'show-vpn-communities-meshed', {'details-level': 'full'},
@@ -2672,7 +2674,8 @@ class Management(object):
                 self(
                     'set-vpn-community-meshed', {
                         'name': community['name'],
-                        'gateways': {'remove': gw['name']}},
+                        'gateways': {'remove': gw['name']},
+                        'ignore-warnings': True},
                     version='v1.1')
         # remove groups defined for the gateway
         for group in self('show-groups', {}, aggregate='objects'):
@@ -3057,7 +3060,8 @@ class Management(object):
             log('\nremove interoperable from community: "%s"' % comm)
             self('set-vpn-community-star', {
                 'name': comm, 'satellite-gateways': {
-                    'remove': iod_name}}, version='v1.1')
+                    'remove': iod_name},
+                'ignore-warnings': True}, version='v1.1')
         gw_uid = self.get_uid(gw_name, obj_type='simple-gateway')
         if gw_uid:
             log('\ngoing to deprovision "%s":' % gw_name)
