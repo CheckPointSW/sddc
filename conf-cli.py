@@ -146,6 +146,15 @@ CONFPATH = os.environ.get(
     'AUTOPROVISION_CONFIG_FILE',
     os.environ.get('MDS_FWDIR',
                    os.environ['FWDIR']) + '/conf/autoprovision.json')
+
+VERSIONPATH = os.environ.get(
+    'AUTOPROVISION_VERSION_FILE',
+    os.path.join(os.path.dirname(os.path.realpath(__file__)), 'version'))
+
+
+with open(VERSIONPATH) as f:
+    version = f.read()
+
 PROTECTED = '__protected__autoprovision'
 PROTECTED_FIELDS = ['password', 'b64password', 'client_secret', 'secret-key',
                     'one-time-password']
@@ -1816,6 +1825,11 @@ def build_parsers(conf):
     main_parser = argparse.ArgumentParser()
     main_parser.add_argument('-f', '--force', action='store_true',
                              help='skip prompts')
+    main_parser.add_argument('-v', '--version', action='version',
+                             version=version,
+                             help='show the version of the CloudGuard '
+                             'Security Management Server add-on package')
+
     main_subparsers = main_parser.add_subparsers(
         help='available actions', dest='mode')
 
