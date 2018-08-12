@@ -28,7 +28,7 @@ AZURE_ENVIRONMENTS = [
     'AzureCloud', 'AzureChinaCloud', 'AzureGermanCloud', 'AzureUSGovernment'
 ]
 
-AVAILABLE_VERSIONS = ['R77.30', 'R80.10']
+AVAILABLE_VERSIONS = ['R77.30', 'R80.10', 'R80.20']
 
 AWS_REGIONS = [
     'us-east-2', 'us-east-1', 'us-west-1', 'us-west-2', 'ap-south-1',
@@ -48,23 +48,26 @@ Usage examples to be displayed in the help output and in the error message.
 USAGE_EXAMPLES = {
     'init_aws': [
         'init AWS -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp <SIC-KEY> '
-        '-ver {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -r '
-        'eu-west-1,us-east-1,eu-central-1 -fi <FILE-PATH>',
+        '-ver {' + ','.join(AVAILABLE_VERSIONS) + '} -po <POLICY-NAME> -cn '
+        '<CONTROLLER-NAME> -r eu-west-1,us-east-1,eu-central-1 -fi '
+        '<FILE-PATH>',
         'init AWS -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp <SIC-KEY> '
-        '-ver {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -r '
-        'eu-west-1,us-east-1,eu-central-1 -ak <ACCESS-KEY> -sk <SECRET-KEY> '
-        '-sr <STS-ROLE>',
+        '-ver {' + ','.join(AVAILABLE_VERSIONS) + '} -po <POLICY-NAME> -cn '
+        '<CONTROLLER-NAME> -r eu-west-1,us-east-1,eu-central-1 -ak '
+        '<ACCESS-KEY> -sk <SECRET-KEY> -sr <STS-ROLE>',
         'init AWS -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp <SIC-KEY> '
-        '-ver {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -r '
-        'eu-west-1,us-east-1,eu-central-1 -iam'
+        '-ver {' + ','.join(AVAILABLE_VERSIONS) + '} -po <POLICY-NAME> -cn '
+        '<CONTROLLER-NAME> -r eu-west-1,us-east-1,eu-central-1 -iam'
     ],
     'init_azure': [
-        'init Azure -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp <SIC-KEY> '
-        '-ver {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -sb '
-        '<SUBSCRIPTION> -at <TENANT> -aci <CLIENT-ID> -acs <CLIENT-SECRET>',
-        'init Azure -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp <SIC-KEY> '
-        '-ver {R77.30,R80.10} -po <POLICY-NAME> -cn <CONTROLLER-NAME> -sb '
-        '<SUBSCRIPTION> -au <USERNAME> -ap <PASSWORD>'
+        'init Azure -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp '
+        '<SIC-KEY> -ver {' + ','.join(AVAILABLE_VERSIONS) + '} -po '
+        '<POLICY-NAME> -cn <CONTROLLER-NAME> -sb <SUBSCRIPTION> -at '
+        '<TENANT> -aci <CLIENT-ID> -acs <CLIENT-SECRET>',
+        'init Azure -mn <MANAGEMENT-NAME> -tn <TEMPLATE-NAME> -otp '
+        '<SIC-KEY> -ver {' + ','.join(AVAILABLE_VERSIONS) + '} -po '
+        '<POLICY-NAME> -cn <CONTROLLER-NAME> -sb <SUBSCRIPTION> -au '
+        '<USERNAME> -ap <PASSWORD>'
     ],
     'init_GCP': [],
     'show': ['show all',
@@ -72,10 +75,11 @@ USAGE_EXAMPLES = {
              'show templates',
              'show controllers'],
     'add_template': [
-        'add template -tn <TEMPLATE-NAME> -otp <SIC-KEY> -ver {R77.30,R80.10} '
-        '-po <POLICY-NAME>',
-        'add template -tn <TEMPLATE-NAME> -otp <SIC-KEY> -ver {R77.30,R80.10} '
-        '-po <POLICY-NAME> [-hi] [-ia] [-appi]'
+        'add template -tn <TEMPLATE-NAME> -otp <SIC-KEY> -ver {' +
+        ','.join(AVAILABLE_VERSIONS) + '} -po <POLICY-NAME>',
+        'add template -tn <TEMPLATE-NAME> -otp <SIC-KEY> -ver {' +
+        ','.join(AVAILABLE_VERSIONS) + '} -po <POLICY-NAME> [-hi] [-ia] '
+        '[-appi]'
     ],
     'add_controller_AWS': [
         'add controller AWS -cn <NAME> -r eu-west-1,us-east-1,eu-central-1  '
@@ -103,7 +107,8 @@ USAGE_EXAMPLES = {
         '<CUSTOM-SCRIPT-PATH>]'
     ],
     'set_template': [
-        'set template -tn <NAME> [-otp <SIC-KEY>] [-ver {R77.30,R80.10}]',
+        'set template -tn <NAME> [-otp <SIC-KEY>] [-ver {' +
+        ','.join(AVAILABLE_VERSIONS) + '}]',
         '[-po <POLICY>]', 'set template -tn <NAME> [-hi] [-ia] [-appi]'
     ],
     'set_controller_AWS': [
