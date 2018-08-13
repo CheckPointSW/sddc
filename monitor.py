@@ -1781,6 +1781,10 @@ class Management(object):
         re.compile(r'.*This domain is in standby mode on this machine'),
         re.compile(r'.*Management server failed to execute command')]
 
+    GET_INTERFACES = [
+        ('get-interfaces-sync', 'v1.3'), ('get-interfaces', 'v1.1'),
+    ]
+
     IDA_API_MAIN_URI = 'https://0.0.0.0/_IA_API'
     IDA_API_MAIN_URI_R77_30 = 'https://0.0.0.0/_IA_MU_Agent'
 
@@ -1801,6 +1805,8 @@ class Management(object):
         self.last_action_time = 0
         self.local_host_uid = None
         self.targets = {}
+        self.get_interfaces_command_version = None
+
         if 'proxy' in options:
             os.environ['https_proxy'] = options['proxy']
 
@@ -1808,6 +1814,11 @@ class Management(object):
         no_proxy -= {''}
         no_proxy |= {'127.0.0.1', 'localhost'}
         os.environ['no_proxy'] = ','.join(no_proxy)
+
+        for (command, version) in self.GET_INTERFACES:
+            if self.command_available(command, version):
+                self.get_interfaces_command_version = (command, version)
+                break
 
     def __call__(self, command, body, aggregate=None,
                  silent=False, version='v1'):
@@ -3032,7 +3043,8 @@ class Management(object):
         log('\n%s' % out)
 
         log('\ngetting interfaces')
-        self('get-interfaces', {'target-name': gw_name}, version='v1.1')
+        self(self.get_interfaces_command_version[0], {'target-name': gw_name},
+             version=self.get_interfaces_command_version[1])
 
         log('\nadding interoperable device to community "%s"' % community)
         self(
@@ -3070,7 +3082,9 @@ class Management(object):
                     iod_name, cidr))
             log('\n%s' % out)
             log('\ngetting interfaces')
-            self('get-interfaces', {'target-name': gw_name}, version='v1.1')
+            self(self.get_interfaces_command_version[0],
+                 {'target-name': gw_name},
+                 version=self.get_interfaces_command_version[1])
             self.reinstall_policy(gw_name)
 
         log('\ndeleting interoperable device')
@@ -3450,6 +3464,7 @@ def test():
         domains.add(c.get('domain'))
         if c.get('sync', {}).get('vpn', False):
             need_get_interfaces = True
+
     if domains and None in domains and domains - {None} and (
             not config['management'].get('domain')):
         raise Exception('Some controllers do not have a "domain"')
@@ -3480,10 +3495,12 @@ def test():
                             management.domain)
                 raise Exception(msg + '\n')
             management.get_gateways()
-        if need_get_interfaces and not managements[None].command_available(
-                'get-interfaces'):
-            raise Exception(
-                'Your management version does not support "get-interfaces"')
+
+            if need_get_interfaces:
+                if not management.get_interfaces_command_version:
+                    raise Exception(
+                        'Your management version does not support '
+                        '"get-interfaces"')
 
     log('\nAll Tests passed successfully\n')
 
