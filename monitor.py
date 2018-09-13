@@ -3501,7 +3501,7 @@ def test():
             management.get_gateways()
 
             if need_get_interfaces:
-                if not management.get_interfaces_command_version:
+                if not management.get_interfaces_command_version[0]:
                     raise Exception(
                         'Your management version does not support '
                         '"get-interfaces"')
