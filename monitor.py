@@ -1815,11 +1815,6 @@ class Management(object):
         no_proxy |= {'127.0.0.1', 'localhost'}
         os.environ['no_proxy'] = ','.join(no_proxy)
 
-        for (command, version) in self.GET_INTERFACES:
-            if self.command_available(command, version):
-                self.get_interfaces_command_version = (command, version)
-                break
-
     def __call__(self, command, body, aggregate=None,
                  silent=False, version='v1'):
         redact_patterns = [(r'send: .*x-chkp-sid\s*:\s*([^\\]*)\\.*$', '***')]
@@ -1992,6 +1987,15 @@ class Management(object):
                     if not self.sid:
                         log('\nrestoring sid')
                         self.sid = resp['sid']
+
+            if self.get_interfaces_command_version is None:
+                self.get_interfaces_command_version = (None, None)
+                for (command, version) in self.GET_INTERFACES:
+                    if self.command_available(command, version):
+                        self.get_interfaces_command_version = (
+                            command, version)
+                        break
+
             return self
         except:
             self.__exit__(*sys.exc_info())
