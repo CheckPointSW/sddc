@@ -46,7 +46,9 @@ import azure
 import gcp
 
 TAG = 'managed-virtual-gateway'
-BLOCKED_PORTS = ['444', '8082', '8880']
+CIDRS_REGEX = (r'^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}'
+               r'([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])'
+               r'(\/([0-9]|[1-2][0-9]|3[0-2]))$')
 
 conf = collections.OrderedDict()
 log_buffer = [None]
@@ -268,9 +270,6 @@ class AWS(Controller):
             '0.0', '1.0', '2.0', '3.0', '4.0', '5.0', '169.252'}
     PORT_REGEX = (r'[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}'
                   r'|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]')
-    CIDRS_REGEX = (r'^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}'
-                   r'([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])'
-                   r'(\/([0-9]|[1-2][0-9]|3[0-2]))$')
 
     def __init__(self, **options):
         super(AWS, self).__init__(**options)
@@ -378,18 +377,21 @@ class AWS(Controller):
                 'the "@" annotation is deprecated in x-chkp-http-ports and '
                 'x-chkp-https-ports, and is used with ports %s, consider using'
                 ' x-chkp-forwarding instead' % bad_ports)
-        source_cidrs = tags.get('x-chkp-source-cidrs', [])
+        source_cidrs = tags.get('x-chkp-source-cidrs', '') or set()
         if source_cidrs:
             source_cidrs = set(source_cidrs.split())
             bad_cidrs = {s for s in source_cidrs if not re.compile(
-                self.CIDRS_REGEX).match(s)}
+                CIDRS_REGEX).match(s)}
             if '0.0.0.0/0' in source_cidrs:
                 source_cidrs = set()
             if bad_cidrs:
                 raise Exception(
                     'malformed CIDRs: %s in tag x-chkp-source-cidrs' %
                     ', '.join(bad_cidrs))
-        forwarding_rules = tags.get('x-chkp-forwarding', [])
+        source_object = tags.get('x-chkp-source-object', '') or set()
+        if source_object:
+            source_object = {source_object}
+        forwarding_rules = tags.get('x-chkp-forwarding', '') or set()
         if forwarding_rules:
             forwarding_rules = set(forwarding_rules.split())
             bad_rules = {r for r in forwarding_rules if not re.compile(
@@ -406,7 +408,7 @@ class AWS(Controller):
             protocol, port, translated = (pp.split('-') + [None])[:3]
             if port in ignore_ports:
                 continue
-            if port in BLOCKED_PORTS:
+            if port in ['444', '8082', '8880']:
                 raise Exception(
                     'Port %s cannot be used for internal LB listener'
                     % port)
@@ -421,7 +423,8 @@ class AWS(Controller):
                                                 translated or port))
         template = tags.get('x-chkp-template')
         by_template.setdefault(template, {})
-        by_template[template][lb['DNSName']] = (protocol_ports, source_cidrs)
+        by_template[template][lb['DNSName']] = (protocol_ports, source_cidrs
+                                                | source_object)
 
     def retrieve_all_elbs(self, region, sub_cred=None):
         elb_list = self.retrieve_all(
@@ -755,7 +758,7 @@ class AWS(Controller):
                 external_elbs = elbs['by-instance'].get(region, {}).get(
                     instance['instanceId'], {})
                 for dns_name in internal_elbs:
-                    protocol_ports, tag_cidrs = internal_elbs[dns_name]
+                    protocol_ports, tag_sources = internal_elbs[dns_name]
                     for protocol_port in protocol_ports:
                         cidrs_type = external_elbs.get(
                             protocol_port.split('-')[1], set())
@@ -763,19 +766,19 @@ class AWS(Controller):
                             [ct[0] for ct in cidrs_type if ct[1]], []))
                         non_transparent_cidrs = set(sum(
                             [ct[0] for ct in cidrs_type if not ct[1]], []))
-                        if tag_cidrs:
+                        if tag_sources:
                             if non_transparent_cidrs:
                                 raise Exception(
-                                    'external non NLB with cidr tag on the '
-                                    'internal LB')
-                            cidrs = set(tag_cidrs) | transparent_cidrs
+                                    '\nexternal non NLB with cidr or object '
+                                    'tag on the internal LB %s' % dns_name)
+                            sources = set(tag_sources) | transparent_cidrs
                         else:
                             if transparent_cidrs:
-                                cidrs = set()
+                                sources = set()
                             else:
-                                cidrs = non_transparent_cidrs
+                                sources = non_transparent_cidrs
                         load_balancers.setdefault(
-                            dns_name, {})[protocol_port] = list(cidrs)
+                            dns_name, {})[protocol_port] = list(sources)
                 instances.append(Instance(
                     instance_name, ip_address, interfaces, template,
                     load_balancers))
@@ -2547,22 +2550,28 @@ class Management(object):
                     version='v1.1')
             service_name = services[0]
             # add subnets
-            net_uids = []
-            for subnet in protocol_ports[protocol_port]:
-                net, slash, mask = subnet.partition('/')
-                net_name = '%s-%s_%s' % (net, mask, service_name)
-                log('\nadding %s' % net_name)
-                net_uids.append(self('add-network', {
+            sources = []
+            for source_item in protocol_ports[protocol_port]:
+                if re.compile(CIDRS_REGEX).match(source_item):
+                    net, slash, mask = source_item.partition('/')
+                    net_name = '%s-%s_%s' % (net, mask, service_name)
+                    log('\nadding %s' % net_name)
+                    sources.append(self('add-network', {
                     'ignore-warnings': True,  # re-use of subnet/mask
                     'name': net_name, 'subnet': net,
                     'mask-length': int(mask)})['uid'])
+                else:
+                    if not self.get_uid(source_item):
+                        raise Exception(
+                            'object %s was not found' % source_item)
+                    sources.append(source_item)
             source = 'Any'
             original_source = 'All_Internet'
-            if net_uids:
+            if sources:
                 group_name = 'net-group_%s' % service_name
                 log('\nadding %s' % group_name)
                 group_uid = self('add-group', {
-                    'name': group_name, 'members': net_uids})['uid']
+                    'name': group_name, 'members': sources})['uid']
                 source = group_uid
                 original_source = group_uid
             # add access rule
