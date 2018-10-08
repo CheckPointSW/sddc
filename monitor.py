@@ -560,6 +560,8 @@ class AWS(Controller):
                     'DescribeRulesResult', 'Rules')
                 for rule in rules:
                     for action in rule['Actions']:
+                        if 'TargetGroupArn' not in action:
+                            continue
                         target_group2dns_names.setdefault(
                             action['TargetGroupArn'], set()).add(dns_name)
             self.register_internal_lb(v2lb, by_template)
