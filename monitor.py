@@ -2559,9 +2559,9 @@ class Management(object):
                     net_name = '%s-%s_%s' % (net, mask, service_name)
                     log('\nadding %s' % net_name)
                     sources.append(self('add-network', {
-                    'ignore-warnings': True,  # re-use of subnet/mask
-                    'name': net_name, 'subnet': net,
-                    'mask-length': int(mask)})['uid'])
+                        'ignore-warnings': True,  # re-use of subnet/mask
+                        'name': net_name, 'subnet': net,
+                        'mask-length': int(mask)})['uid'])
                 else:
                     if not self.get_uid(source_item):
                         raise Exception(
