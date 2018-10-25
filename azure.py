@@ -265,7 +265,7 @@ Environment(
     core='core.chinacloudapi.cn', arm='management.chinacloudapi.cn',
     graph='graph.chinacloudapi.cn')
 Environment(
-    name='AzureUSGovernment', login='login-us.microsoftonline.com',
+    name='AzureUSGovernment', login='login.microsoftonline.us',
     core='core.usgovcloudapi.net', arm='management.usgovcloudapi.net',
     graph='graph.windows.net')
 Environment(
