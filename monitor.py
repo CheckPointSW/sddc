@@ -2839,6 +2839,19 @@ class Management(object):
         else:
             self.set_state(instance.name, 'UPDATING')
 
+        if gw['sic-state'] != 'communicating':
+            log('\nfailed to initialize SIC to %s (sic-state=%s)'
+                % (gw['name'], gw['sic-state']))
+            log('\ninitializing SIC')
+            gw = self('set-simple-gateway', {
+                'name': instance.name,
+                'one-time-password': otp
+            })
+            if gw['sic-state'] != 'communicating':
+                log('\nSIC still not communicating (sic-state=%s),'
+                    ' will try again later' % gw['sic-state'])
+                return
+
         if identity_awareness and gw.get('identityAwareBlade') is None:
             if gw['version'] == 'R77.30':
                 self.init_identity_awareness_r77_30(gw)
