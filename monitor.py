@@ -370,6 +370,9 @@ class AWS(Controller):
         https_ports = tags.get('x-chkp-https-ports', [])
         if https_ports:
             https_ports = set(https_ports.split(':'))
+        ssl_ports = tags.get('x-chkp-ssl-ports', [])
+        if ssl_ports:
+            ssl_ports = set(ssl_ports.split(':'))
         bad_ports = ', '.join({p[1:] for p in set(
             http_ports) | set(https_ports) if p.startswith('@')})
         if bad_ports:
@@ -377,6 +380,17 @@ class AWS(Controller):
                 'the "@" annotation is deprecated in x-chkp-http-ports and '
                 'x-chkp-https-ports, and is used with ports %s, consider using'
                 ' x-chkp-forwarding instead' % bad_ports)
+        if set(http_ports) & set(ssl_ports):
+            raise Exception(
+                'overlapping ports in x-chkp-http-ports and '
+                'x-chkp-ssl-ports with ports: %s'
+                % list(http_ports & ssl_ports))
+        if set(https_ports) & set(ssl_ports):
+            raise Exception(
+                'overlapping ports in x-chkp-https-ports and '
+                'x-chkp-ssl-ports with ports: %s'
+                % list(https_ports & ssl_ports))
+
         source_cidrs = tags.get('x-chkp-source-cidrs', '') or set()
         if source_cidrs:
             source_cidrs = set(source_cidrs.split())
@@ -395,7 +409,7 @@ class AWS(Controller):
         if forwarding_rules:
             forwarding_rules = set(forwarding_rules.split())
             bad_rules = {r for r in forwarding_rules if not re.compile(
-                r'(TCP|HTTP|HTTPS)(-(%s)){2}$' % self.PORT_REGEX).match(r)}
+                r'(TCP|HTTP|HTTPS|SSL)(-(%s)){2}$' % self.PORT_REGEX).match(r)}
             if bad_rules:
                 raise Exception(
                     'malformed forwarding rules: %s in tag x-chkp-forwarding' %
@@ -419,6 +433,8 @@ class AWS(Controller):
                 protocol = 'HTTP'
             if port in https_ports:
                 protocol = 'HTTPS'
+            if port in ssl_ports:
+                protocol = 'SSL'
             protocol_ports.append('%s-%s-%s' % (protocol, port,
                                                 translated or port))
         template = tags.get('x-chkp-template')
@@ -762,17 +778,19 @@ class AWS(Controller):
                 for dns_name in internal_elbs:
                     protocol_ports, tag_sources = internal_elbs[dns_name]
                     for protocol_port in protocol_ports:
+                        protocol, port, _ = protocol_port.split('-')
                         cidrs_type = external_elbs.get(
-                            protocol_port.split('-')[1], set())
+                            port, set())
                         transparent_cidrs = set(sum(
                             [ct[0] for ct in cidrs_type if ct[1]], []))
                         non_transparent_cidrs = set(sum(
                             [ct[0] for ct in cidrs_type if not ct[1]], []))
-                        if tag_sources:
+                        if tag_sources or 'SSL' in protocol:
                             if non_transparent_cidrs:
                                 raise Exception(
-                                    '\nexternal non NLB with cidr or object '
-                                    'tag on the internal LB %s' % dns_name)
+                                    '\nexternal non NLB with cidr,'
+                                    ' object or ssl tag on the internal'
+                                    ' LB %s' % dns_name)
                             sources = set(tag_sources) | transparent_cidrs
                         else:
                             if transparent_cidrs:
@@ -2543,8 +2561,8 @@ class Management(object):
                 services.append(service)
                 if self.get_uid(service, obj_type='service-tcp'):
                     continue
-                protocol = {'HTTP': 'HTTP', 'HTTPS': 'ENC-HTTP', 'TCP': None
-                            }[lb_protocol]
+                protocol = {'HTTP': 'HTTP', 'HTTPS': 'ENC-HTTP',
+                            'SSL': 'TLS12', 'TCP': None}[lb_protocol]
                 log('\nadding %s' % service)
                 self('add-service-tcp', {
                     'name': service, 'port': p, 'match-for-any': False,
