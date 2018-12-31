@@ -834,6 +834,8 @@ class AWS(Controller):
             for s in aws.listify(body, 'item')['vpnConnectionSet']:
                 if 'customerGatewayConfiguration' not in s:
                     continue
+                if 'vpnGatewayId' not in s:
+                    continue
                 vconns[region][s['vpnConnectionId']] = s
                 s['customerGatewayConfiguration'] = aws.parse_element(
                     aws.xml.dom.minidom.parseString(
