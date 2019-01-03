@@ -778,19 +778,17 @@ class AWS(Controller):
                 for dns_name in internal_elbs:
                     protocol_ports, tag_sources = internal_elbs[dns_name]
                     for protocol_port in protocol_ports:
-                        protocol, port, _ = protocol_port.split('-')
                         cidrs_type = external_elbs.get(
-                            port, set())
+                            protocol_port.split('-')[1], set())
                         transparent_cidrs = set(sum(
                             [ct[0] for ct in cidrs_type if ct[1]], []))
                         non_transparent_cidrs = set(sum(
                             [ct[0] for ct in cidrs_type if not ct[1]], []))
-                        if tag_sources or 'SSL' in protocol:
+                        if tag_sources:
                             if non_transparent_cidrs:
                                 raise Exception(
-                                    '\nexternal non NLB with cidr,'
-                                    ' object or ssl tag on the internal'
-                                    ' LB %s' % dns_name)
+                                    '\nexternal non NLB with cidr or object '
+                                    'tag on the internal LB %s' % dns_name)
                             sources = set(tag_sources) | transparent_cidrs
                         else:
                             if transparent_cidrs:
