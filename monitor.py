@@ -298,12 +298,6 @@ class AWS(Controller):
                 self.env_creds = {sub_cred: {
                     e: kwargs[a]
                     for a, e in self.ARG_TO_ENV.items() if kwargs[a]}}
-        self.callers = {}
-        for cred in [None] + self.sub_creds.keys():
-            self.callers[cred] = self.request(
-                'sts', self.regions[0], 'GET',
-                '/?Action=GetCallerIdentity&Version=2011-06-15',
-                '')[1]['GetCallerIdentityResult']
 
     def request(self, service, *args, **kwargs):
         aws_obj = self.aws
