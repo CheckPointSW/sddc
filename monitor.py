@@ -1277,6 +1277,11 @@ class AWS(Controller):
                         # TODO: review all access to dictionary
                         cgw_id = cgw_by_addr.get(gw_addr, {}).\
                             get('customerGatewayId', None)
+                        if cgw_id is None:
+                            log('\nNo customer gateway object exist. '
+                                'it might be that CloudFormation stack was '
+                                'deleted. gw_addr=%s' % gw_addr)
+                            continue
                         if cgw_id not in vconns_by_cgw_id.keys():
                             log('\ncreating vpn connection with transit gw. '
                                 'tgw_id=%s, cgw_id=%s' % (tgw_id, cgw_id))
@@ -3274,6 +3279,22 @@ class Management(object):
                     log('\nfailed to enable pdp api on the gateway')
             if not self.customize(instance.name, custom_parameters):
                 raise Exception('customization has failed')
+            post_customize = os.path.join(
+                os.path.dirname(__file__), 'post-customize')
+            if os.path.exists(post_customize):
+                env = {}
+                if self.domain:
+                    env['AUTOPROVISION_DOMAIN'] = self.domain
+                env['AUTOPROVISION_CLASS'] = (
+                    instance.controller.__class__.__name__)
+                env['AUTOPROVISION_VPN'] = json.dumps(
+                    not not vpn_community_star_as_center)
+                out, err, status = run_local([
+                    post_customize, 'add', instance.name], env=env)
+                log(err)
+                log(out)
+                if status:
+                    raise Exception('post-customize failed')
             self.set_object_tag_value(gw['uid'],
                                       self.GENERATION_PREFIX, generation)
             self.set_object_tag_value(gw['uid'],
@@ -3715,12 +3736,18 @@ def get_vpn_env(controller, management, communities, gateways):
                 vpn_tag = management.get_object_tag_value(
                     gateways[gw], management.VPN_PREFIX)
                 if not vpn_tag:
-                    vpn_tag = management.run_script(
-                        gateways[gw]['name'],
-                        'config-vpn show').strip()
-                    management.set_object_tag_value(
-                        gateways[gw]['uid'],
-                        management.VPN_PREFIX, vpn_tag)
+                    try:
+                        vpn_tag = management.run_script(
+                            gateways[gw]['name'], 'config-vpn show').strip()
+                        management.set_object_tag_value(
+                            gateways[gw]['uid'],
+                            management.VPN_PREFIX, vpn_tag)
+                    except Exception:
+                        # incomplete gateway.
+                        log('\nFailed to retrieve VPN IP and AS value '
+                            'from gateway. will try again next cycle..\n'
+                            '%s' % traceback.format_exc())
+                        continue
                 vpn_tag_list.append(vpn_tag)
                 gw_addr = vpn_tag.partition('@')[0]
                 tun_addrs[gw_addr] = ':'.join([
