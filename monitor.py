@@ -1411,16 +1411,16 @@ class AWS(Controller):
 
     def disassociate_tgw_route_table(self, region, attach_id, current_rtb_id):
         self.request('ec2', region, 'GET', '/?' + urllib.urlencode({
-            'Action': 'DisassociateTransitGatewayRouteTable'
-                      '&Version=2016-11-15',
+            'Action': 'DisassociateTransitGatewayRouteTable',
+            'Version': '2016-11-15',
             'TransitGatewayRouteTableId': current_rtb_id,
             'TransitGatewayAttachmentId': attach_id}), '')
 
     def associate_tgw_route_table(self, region, attach_id, target_rtb_id):
         self.request(
             'ec2', region, 'GET', '/?' + urllib.urlencode({
-                'Action': 'AssociateTransitGatewayRouteTable'
-                          '&Version=2016-11-15',
+                'Action': 'AssociateTransitGatewayRouteTable',
+                'Version': '2016-11-15',
                 'TransitGatewayRouteTableId': target_rtb_id,
                 'TransitGatewayAttachmentId': attach_id}), '')
 
@@ -1428,8 +1428,8 @@ class AWS(Controller):
     def set_propagation(self, region, action, attach_id, target_rtb_id):
         self.request(
             'ec2', region, 'GET', '/?' + urllib.urlencode({
-                'Action': action + 'TransitGatewayRouteTablePropagation'
-                                   '&Version=2016-11-15',
+                'Action': action + 'TransitGatewayRouteTablePropagation',
+                'Version': '2016-11-15',
                 'TransitGatewayRouteTableId': target_rtb_id,
                 'TransitGatewayAttachmentId': attach_id}), '')
 
