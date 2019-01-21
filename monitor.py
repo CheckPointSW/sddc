@@ -1235,7 +1235,7 @@ class AWS(Controller):
     def provision_for_tgw(self, tgws, vconns, cgw_by_cred_addr, region, prefix,
                           vpn_tags, tgw_stacks,
                           tgw_attachments, tgw_route_tables):
-        log('\nprovision for tgw(): prefix=%s' % prefix)
+        log('\nProvision for tgw(): prefix=%s' % prefix)
         # TODO: nirbo: there are no credentials here
         # TODO: review all access to dictionary
         cgw_by_addr = cgw_by_cred_addr.get(None, {})
@@ -1288,10 +1288,10 @@ class AWS(Controller):
                             self.request(
                                 'ec2', region, 'GET', '/?' + urllib.urlencode({
                                     'Action': 'CreateVpnConnection',
+                                    'Version': '2016-11-15',
                                     'CustomerGatewayId': cgw_id,
                                     'Type': 'ipsec.1',
                                     'TransitGatewayId': tgw_id}), '')
-
                         stack_names_to_keep.add(
                             tgw_stacks[gw_addr]['StackName'])
                 else:
@@ -1313,13 +1313,19 @@ class AWS(Controller):
                             'VpnConnectionId': vconns_by_cgw_id[cgw_id][
                                 'vpnConnectionId']}), '')
                 stack_name = stack['StackName']
-                log('\ndeleting stack... stackname=%s' % stack_name)
+                stack_prefix = self.get_parameter(stack, 'prefix')
+                if stack_prefix is None:
+                    log('\n%s has no prefix parameter' %
+                        stack['StackName'])
+                elif stack_prefix != prefix:
+                    continue
+                log('\ndeleting stack... stackname=%s' % stack['StackName'])
                 self.request(
                     'cloudformation', region, 'GET',
                     '/?Action=DeleteStack&StackName=' +
                     # TODO: sub creds. currently using only 'None'
                     # (primary account)
-                    stack_name, '')
+                    stack['StackName'], '')
 
     # TODO: BUG: no validation that parent tag matches children tags..
     def get_tgw_tags(self, hub_prefix, tgw_route_tables):
