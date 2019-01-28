@@ -2338,10 +2338,6 @@ class Management(object):
 
         self('set-generic-object', gw_obj)
 
-        gw_obj = self('show-generic-object', {'uid': uid})
-        clientVerificationSettingUid = gw_obj['identityAwareBlade'][
-            'idaApiSettings']['idaApiClientVerificationSettings'][0]['objId']
-
         with open('/dev/urandom') as f:
             psk = base64.b64encode(f.read(12))
 
@@ -2354,13 +2350,17 @@ class Management(object):
                     'ignore-warnings': True})
                 self.local_host_uid = host_body.get('uid')
 
+        debug('\nCreating new IDA owned object')
         client_obj = {
             'uid': uid,
             'identityAwareBlade': {
                 'idaApiSettings': {
                     'idaApiClientVerificationSettings': {
-                        'set': {
-                            'uid': clientVerificationSettingUid,
+                        'add': {
+                            'create':
+                                'com.checkpoint.objects.'
+                                'identity_awareness_classes.dummy.'
+                                'CpmiIdentityAwareClientVerificationEntry',
                             'owned-object': {
                                 'preSharedSecret': psk,
                                 'whiteListClient': self.local_host_uid
