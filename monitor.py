@@ -2295,7 +2295,7 @@ class Management(object):
                                         'authScheme': 'USER_PASS',
                                     }}}}}}}}}
 
-    def get_ida_portal(self, portal_name, main_uri_suffix):
+    def get_ida_portal(self, portal_name, main_uri):
         return {'portals': {
             'add': {
                 'create': self.CPMI_PORTAL_SETTINGS,
@@ -2303,7 +2303,7 @@ class Management(object):
                     'internalPort': 8886,
                     'portalName': portal_name,
                     'portalAccess': 'ALL_INTERFACES',
-                    'mainUrl': 'https://0.0.0.0/' + main_uri_suffix,
+                    'mainUrl': main_uri,
                     'ipAddress': '0.0.0.0'}}}}
 
     def set_identity_awareness(self, gw_uid, enable):
@@ -2338,10 +2338,6 @@ class Management(object):
 
         self('set-generic-object', gw_obj)
 
-        gw_obj = self('show-generic-object', {'uid': uid})
-        clientVerificationSettingUid = gw_obj['identityAwareBlade'][
-            'idaApiSettings']['idaApiClientVerificationSettings'][0]['objId']
-
         with open('/dev/urandom') as f:
             psk = base64.b64encode(f.read(12))
 
@@ -2354,13 +2350,17 @@ class Management(object):
                     'ignore-warnings': True})
                 self.local_host_uid = host_body.get('uid')
 
+        debug('\nCreating new IDA owned object')
         client_obj = {
             'uid': uid,
             'identityAwareBlade': {
                 'idaApiSettings': {
                     'idaApiClientVerificationSettings': {
-                        'set': {
-                            'uid': clientVerificationSettingUid,
+                        'add': {
+                            'create':
+                                'com.checkpoint.objects.'
+                                'identity_awareness_classes.dummy.'
+                                'CpmiIdentityAwareClientVerificationEntry',
                             'owned-object': {
                                 'preSharedSecret': psk,
                                 'whiteListClient': self.local_host_uid
