@@ -2303,7 +2303,7 @@ class Management(object):
                     'internalPort': 8886,
                     'portalName': portal_name,
                     'portalAccess': 'ALL_INTERFACES',
-                    'mainUrl': 'https://0.0.0.0/' + main_uri_suffix,
+                    'mainUrl': main_uri_suffix,
                     'ipAddress': '0.0.0.0'}}}}
 
     def set_identity_awareness(self, gw_uid, enable):
