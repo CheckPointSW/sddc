@@ -2295,7 +2295,7 @@ class Management(object):
                                         'authScheme': 'USER_PASS',
                                     }}}}}}}}}
 
-    def get_ida_portal(self, portal_name, main_uri_suffix):
+    def get_ida_portal(self, portal_name, main_uri):
         return {'portals': {
             'add': {
                 'create': self.CPMI_PORTAL_SETTINGS,
@@ -2303,7 +2303,7 @@ class Management(object):
                     'internalPort': 8886,
                     'portalName': portal_name,
                     'portalAccess': 'ALL_INTERFACES',
-                    'mainUrl': main_uri_suffix,
+                    'mainUrl': main_uri,
                     'ipAddress': '0.0.0.0'}}}}
 
     def set_identity_awareness(self, gw_uid, enable):
