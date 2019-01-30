@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# sddc_commit_id = 053d834549d8ea25659570cdbe0adf5910a24fe0
+
 #   Copyright 2015 Check Point Software Technologies LTD
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
@@ -905,7 +905,6 @@ class AWS(Controller):
                 match = re.match(r'stack/vpn-by-tag--(vpc-[0-9a-z]+)/.*$',
                                  stack['StackId'].split(':')[-1])
                 # TODO: nirbo: do i need another match for TGW
-                # TODO2: nirbo: do i must hide the IP inside stack name
                 if not match:
                     match = re.\
                         match(r'stack/vpn-by-tag--(tgw-[0-9a-z]+)--(.*)/.*$',
@@ -967,11 +966,15 @@ class AWS(Controller):
         octets = cidr.partition('/')[0].split('.')
         return '%s.%s' % (octets[2], int(octets[3]) // 4 * 4)
 
+    # TODO1: nirbo: does transit should count the cidrs?
+    # TODO2: nirbo: fix a bug here. why it is happening with transit
+    # TODO2: nirbo: it might be that customer gateway is not yet
+    # TODO2: nirbo: exist as the stack just now provisioned.
     def update_used_cgws_cidrs(self, vgws, cgws, vconns, stacks, used_cgws,
                                sub_cidrs_by_vpc_id, sub_cidrs_by_cgw_addr):
         for vconn_id, vconn in vconns.items():
             used_cgws.add(vconn['customerGatewayId'])
-            # TODO: does transit should count the cidrs?
+
             vgw_id = vconn.get('vpnGatewayId', None)
             if not vgw_id:
                 continue
@@ -997,12 +1000,8 @@ class AWS(Controller):
                 for j in xrange(2):
                     sub_cidr = self.get_sub_cidr(cidrs[2 * i + j])
                     sub_cidrs_by_vpc_id.setdefault(vpc_id, set()).add(sub_cidr)
-                    # TODO: fix a bug here. why it is happening with transit
-                    # TODO: it might be that customer gateway is not yet
-                    # TODO: exist as the stack just now provisioned.
                     sub_cidrs_by_cgw_addr.setdefault(
-                        cgws.get(cgw_id, {}).get(
-                            'ipAddress', None), set()).add(sub_cidr)
+                        cgws[cgw_id]['ipAddress'], set()).add(sub_cidr)
 
     def resolve_tag(self, prefix, vpn_tags, obj_id, obj_tag_set):
         tag = self.get_tags(obj_tag_set).get('x-chkp-vpn')
@@ -1096,9 +1095,7 @@ class AWS(Controller):
             obj['DependsOn'] = deps
         return obj
 
-    # TODO: code reuse?
     def provision_cgw_by_cft(self, region, prefix, tgw_id, asn, cgw_ip):
-        # TODO: do i need the tgw id in the name of the stack
         resources = {}
         deps = None
         resources['cgw'] = self.cf_resource(
@@ -1188,7 +1185,6 @@ class AWS(Controller):
             self.retrieve_tgws(tgws)
             self.retrieve_tgw_attachments(tgw_attachments)
             self.retrieve_tgw_route_tables(tgw_route_tables)
-        # TODO: nirbo: collect all cidrs
         sub_cidrs_by_vpc_id = {}
         used_cgws = {}
 
@@ -1198,7 +1194,6 @@ class AWS(Controller):
             for cgw in cgws[region].values():
                 cgw_by_cred_addr.setdefault(cgw[self.CREDENTIAL], {})[
                     cgw['ipAddress']] = cgw
-            # TODO: FLOW: for each VPC find the main route table
             for rtb in rtbs[region].values():
                 if rtb['vpcId'] not in vpcs[region]:
                     continue
@@ -1220,29 +1215,29 @@ class AWS(Controller):
                     tgws[region][tgw_id].\
                         setdefault('attachments', {})[atc_id] = attc
 
-            # TODO: nirbo: FLOW: resolve tag - and provision new stacks
             self.provision_for_vpc(vpn_env, vpcs, vgws, cgws, vconns,
                                    region, cgw_by_cred_addr,
                                    sub_cidrs_by_vpc_id, used_cgws,
                                    stacks['vpc'])
 
+            # TODO: nirbo: there are no credentials here
+            cgw_by_addr = cgw_by_cred_addr.get(None, {})
             self.provision_for_tgw(tgws[region], vconns[region],
-                                   cgw_by_cred_addr, region, prefix, vpn_tags,
+                                   cgw_by_addr, region, prefix, vpn_tags,
                                    stacks['tgw'][region],
                                    tgw_attachments[region],
                                    tgw_route_tables[region])
 
-    def provision_for_tgw(self, tgws, vconns, cgw_by_cred_addr, region, prefix,
+    def provision_for_tgw(self, tgws, vconns, cgw_by_addr, region, prefix,
                           vpn_tags, tgw_stacks,
                           tgw_attachments, tgw_route_tables):
         log('\nProvision for tgw(): prefix=%s' % prefix)
-        # TODO: nirbo: there are no credentials here
-        # TODO: review all access to dictionary
-        cgw_by_addr = cgw_by_cred_addr.get(None, {})
         stack_names_to_keep = set()
         vconns_by_cgw_id = {}
 
-        # TODO: optimize?
+        # TODO: nirbo: optimize?
+        # TODO: nirbo: bug, it might be that there is more than
+        # TODO: one vconn per CGW
         for vconn in vconns.values():
             vconns_by_cgw_id[vconn['customerGatewayId']] = vconn
 
@@ -1256,46 +1251,48 @@ class AWS(Controller):
             log('\nfound resolving for tag: tag=%s, orig_tag=%s' %
                 (tag, orig_tag))
             for val in tag.split():
+                log('\nvalue of tag is: tgw_id=%s, tag=%s' % (tgw_id, val))
                 match_addr = re.match(r'((\d{1,3}\.){3}\d{1,3})(@(\d+))?',
                                       val)
-                log('\nvalue of tag is: tgw_id=%s, tag=%s' % (tgw_id, val))
-                if match_addr:
-                    gw_addr = match_addr.group(1)
-                    asn = match_addr.group(4)
-
-                    if not asn:
-                        log('\ngateway asn is missing. will not provision '
-                            'customer gateway. gw_addr=%s' % gw_addr)
-                        continue
-                    if gw_addr not in tgw_stacks:
-                        log('\nno vpn connection for gateway.'
-                            'creating stack. cgw addr=%s' % gw_addr)
-                        self.provision_cgw_by_cft(region, prefix, tgw_id, asn,
-                                                  gw_addr)
-                        # TODO: id immediately but only at the next cycle
-                    else:
-                        # TODO: review all access to dictionary
-                        cgw_id = cgw_by_addr.get(gw_addr, {}).\
-                            get('customerGatewayId', None)
-                        if cgw_id is None:
-                            log('\nNo customer gateway object exist. '
-                                'it might be that CloudFormation stack was '
-                                'deleted. gw_addr=%s' % gw_addr)
-                            continue
-                        if cgw_id not in vconns_by_cgw_id.keys():
-                            log('\ncreating vpn connection with transit gw. '
-                                'tgw_id=%s, cgw_id=%s' % (tgw_id, cgw_id))
-                            self.request(
-                                'ec2', region, 'GET', '/?' + urllib.urlencode({
-                                    'Action': 'CreateVpnConnection',
-                                    'Version': '2016-11-15',
-                                    'CustomerGatewayId': cgw_id,
-                                    'Type': 'ipsec.1',
-                                    'TransitGatewayId': tgw_id}), '')
-                        stack_names_to_keep.add(
-                            tgw_stacks[gw_addr]['StackName'])
-                else:
+                if not match_addr:
                     log('\n couldn\'t find match for value. val=%s' % val)
+                    continue
+
+                gw_addr = match_addr.group(1)
+                asn = match_addr.group(4)
+
+                if not asn:
+                    log('\ngateway asn is missing. will not provision '
+                        'customer gateway. gw_addr=%s' % gw_addr)
+                    continue
+                if gw_addr not in tgw_stacks:
+                    log('\nno vpn connection for gateway.'
+                        'creating stack. cgw addr=%s' % gw_addr)
+                    self.provision_cgw_by_cft(region, prefix, tgw_id, asn,
+                                              gw_addr)
+                    # TODO: id immediately but only at the next cycle
+                else:
+                    # TODO: test scenario where stack exist but no CGW yet.
+                    # TODO; (race condition)
+                    if gw_addr not in cgw_by_addr:
+                        log('\nNo customer gateway object exist. '
+                            'it might be that CloudFormation stack was '
+                            'deleted. gw_addr=%s' % gw_addr)
+                        continue
+
+                    cgw_id = cgw_by_addr[gw_addr]['customerGatewayId']
+                    if cgw_id not in vconns_by_cgw_id.keys():
+                        log('\ncreating vpn connection with transit gw. '
+                            'tgw_id=%s, cgw_id=%s' % (tgw_id, cgw_id))
+                        self.request(
+                            'ec2', region, 'GET', '/?' + urllib.urlencode({
+                                'Action': 'CreateVpnConnection',
+                                'Version': '2016-11-15',
+                                'CustomerGatewayId': cgw_id,
+                                'Type': 'ipsec.1',
+                                'TransitGatewayId': tgw_id}), '')
+                    stack_names_to_keep.add(
+                        tgw_stacks[gw_addr]['StackName'])
 
             self.tgw_association_and_propagation(region, orig_tag, tgw_id,
                                                  tgw_attachments,
@@ -1303,23 +1300,23 @@ class AWS(Controller):
 
         for cgw_addr, stack in tgw_stacks.items():
             if not stack['StackName'] in stack_names_to_keep:
+                stack_prefix = self.get_parameter(stack, 'prefix')
+                if stack_prefix is None:
+                    log('\n%s has no prefix parameter' %
+                        stack['StackName'])
+                elif stack_prefix != prefix:  # different management
+                    continue
+                log('\nFound stack to remove. stack name=%s' %
+                    stack['StackName'])
                 cgw_id = cgw_by_addr.get(cgw_addr, {}).\
                     get('customerGatewayId', None)
                 if cgw_id in vconns_by_cgw_id.keys():
-                    log('\ndeleting vpn connection for stack...')
+                    log('\nDeleting vpn connection for stack...')
                     self.request(
                         'ec2', region, 'GET', '/?' + urllib.urlencode({
                             'Action': 'DeleteVpnConnection',
                             'VpnConnectionId': vconns_by_cgw_id[cgw_id][
                                 'vpnConnectionId']}), '')
-                stack_name = stack['StackName']
-                stack_prefix = self.get_parameter(stack, 'prefix')
-                if stack_prefix is None:
-                    log('\n%s has no prefix parameter' %
-                        stack['StackName'])
-                elif stack_prefix != prefix:
-                    continue
-                log('\ndeleting stack... stackname=%s' % stack['StackName'])
                 self.request(
                     'cloudformation', region, 'GET',
                     '/?Action=DeleteStack&StackName=' +
