@@ -3282,22 +3282,6 @@ class Management(object):
                     log('\nfailed to enable pdp api on the gateway')
             if not self.customize(instance.name, custom_parameters):
                 raise Exception('customization has failed')
-            post_customize = os.path.join(
-                os.path.dirname(__file__), 'post-customize')
-            if os.path.exists(post_customize):
-                env = {}
-                if self.domain:
-                    env['AUTOPROVISION_DOMAIN'] = self.domain
-                env['AUTOPROVISION_CLASS'] = (
-                    instance.controller.__class__.__name__)
-                env['AUTOPROVISION_VPN'] = json.dumps(
-                    not not vpn_community_star_as_center)
-                out, err, status = run_local([
-                    post_customize, 'add', instance.name], env=env)
-                log(err)
-                log(out)
-                if status:
-                    raise Exception('post-customize failed')
             self.set_object_tag_value(gw['uid'],
                                       self.GENERATION_PREFIX, generation)
             self.set_object_tag_value(gw['uid'],
