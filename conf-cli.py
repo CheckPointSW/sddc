@@ -149,7 +149,7 @@ for k, v in USAGE_EXAMPLES.iteritems():
 
 CONFPATH = os.environ.get(
     'AUTOPROVISION_CONFIG_FILE',
-    os.environ.get('MDS_FWDIR',
+    os.environ.get('MDSDIR',
                    os.environ['FWDIR']) + '/conf/autoprovision.json')
 
 VERSIONPATH = os.environ.get(
