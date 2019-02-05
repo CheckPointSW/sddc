@@ -3429,6 +3429,11 @@ class Management(object):
         self(self.get_interfaces_command_version[0], {'target-name': gw_name},
              version=self.get_interfaces_command_version[1])
 
+        log('\nupdating vpn interfaces...')
+        gw_uid = self.get_uid(gw_name, obj_type='simple-gateway')
+        gw_generic = self('show-generic-object', {'uid': gw_uid})
+        self.update_vti_antispoof_and_lead_to_inet(gw_generic['interfaces'],
+                                                   gw_uid)
         log('\nadding interoperable device to community "%s"' % community)
         self(
             'set-vpn-community-star',
@@ -3443,6 +3448,26 @@ class Management(object):
         self.reinstall_policy(gw_name)
 
         self.set_object_tag_value(uid, self.COMMUNITY_PREFIX, community)
+
+
+    # TODO: think how transit vpc will work with this?
+    def update_vti_antispoof_and_lead_to_inet(self, gw_interfaces, gw_uid):
+        for interface in gw_interfaces:
+            if interface['officialname'].startswith('vpnt'):
+                self.set_generic_update_vti_anti_spoofing(gw_uid, interface)
+
+    def set_generic_update_vti_anti_spoofing(self, gw_uid, interface):
+        int_obj = {'owned-object':
+                       {'security':
+                            {'antispoof': False,
+                             'netaccess':
+                                 {'performAntiSpoofing': False,
+                                  'leadsToInternet': True}},
+                        },
+                   'uid': interface['objId']}
+        self('set-generic-object',
+                  {'uid': gw_uid,
+                   'interfaces': {'set': int_obj}})
 
     def delete_vpn(self, iod):
         iod_name = iod['name']
@@ -3468,6 +3493,10 @@ class Management(object):
             self(self.get_interfaces_command_version[0],
                  {'target-name': gw_name},
                  version=self.get_interfaces_command_version[1])
+            log('\nupdating vpn interfaces...')
+            gw_generic = self('show-generic-object', {'uid': gw_uid})
+            self.update_vti_antispoof_and_lead_to_inet(
+                gw_generic['interfaces'], gw_uid)
             self.reinstall_policy(gw_name)
 
         log('\ndeleting interoperable device')
