@@ -1433,9 +1433,6 @@ class Azure(Controller):
 
             address_type = tags.get('x-chkp-ip-address', 'private')
             mgmt_nic = tags.get('x-chkp-management-interface')
-            if mgmt_nic != 'eth0' and address_type == 'public':
-                raise Exception('can\'t use %s to manage with public IP '
-                                'address. Adjust VMSS tags.' % mgmt_nic)
             anti_spoofing = {}
             for s in tags.get('x-chkp-anti-spoofing', '').split(','):
                 if not s:
