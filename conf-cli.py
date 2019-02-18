@@ -30,6 +30,8 @@ AZURE_ENVIRONMENTS = [
 
 AVAILABLE_VERSIONS = ['R77.30', 'R80.10', 'R80.20']
 
+DEPLOYMENT_TYPES = ['TGW']
+
 AWS_REGIONS = [
     'us-east-2', 'us-east-1', 'us-west-1', 'us-west-2', 'ap-south-1',
     'ap-northeast-2', 'ap-southeast-1', 'ap-southeast-2', 'ap-northeast-1',
@@ -302,7 +304,7 @@ def create_parser_dict(conf):
              'policy', CONTROLLER_NAME, 'regions'],
             ['AWS access key', 'AWS secret key', 'AWS IAM',
              'AWS credentials file path', 'STS role', 'STS external id',
-             'vpn', 'community name', 'vpn-domain'],
+             'deployment type', 'vpn', 'community name', 'vpn-domain'],
             'initialize autoprovision settings for AWS',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['init_aws']),
             {'delay': 30, 'class': 'AWS', 'host': 'localhost'}],
@@ -324,9 +326,10 @@ def create_parser_dict(conf):
                                                       'init_GCP']), None],
         'add_template': [
             TEMPLATE, [TEMPLATE_NAME],
-            ['one time password', 'version', 'policy', 'custom parameters',
-             'prototype', 'specific network', 'generation', 'proxy ports',
-             'HTTPS Inspection', 'Identity Awareness', 'Application Control',
+            ['one time password', 'version', 'deployment type', 'policy',
+             'custom parameters', 'prototype', 'specific network',
+             'generation', 'proxy ports', 'HTTPS Inspection',
+             'Identity Awareness', 'Application Control',
              'Intrusion Prevention', 'IPS Profile', 'URL Filtering',
              'Anti-Bot', 'Anti-Virus', 'restrictive policy',
              'vpn', 'community name', 'vpn-domain', 'section name',
@@ -393,7 +396,7 @@ def create_parser_dict(conf):
         'set_template': [
             TEMPLATE, [(TEMPLATE_NAME, {'choices': get_templates(conf),
                                         'dest': TEMPLATE_NAME})],
-            ['one time password', 'version', 'policy',
+            ['one time password', 'version', 'deployment type', 'policy',
              'custom parameters', 'prototype', 'specific network',
              'generation', 'proxy ports', 'HTTPS Inspection',
              'Identity Awareness', 'Application Control',
@@ -470,6 +473,7 @@ def create_parser_dict(conf):
             TEMPLATE, [(TEMPLATE_NAME, {'choices': get_templates(conf)})],
             [('one time password', {'action': 'store_true'}),
              ('version', {'action': 'store_true'}),
+             ('deployment type', {'action': 'store_true'}),
              ('policy', {'action': 'store_true'}),
              ('custom parameters', {'action': 'store_true'}),
              ('prototype', {'action': 'store_true'}),
@@ -741,6 +745,11 @@ ARGUMENTS = {
         '-ver', [TEMPLATES, TEMPLATE_NAME, 'version'],
         'the gateway version (e.g. R77.30)',
         {'choices': AVAILABLE_VERSIONS}
+    ],
+    'deployment type': [
+        '-dt', [TEMPLATES, TEMPLATE_NAME, 'deployment type'],
+        'the type of the deployment of the CloudGuard Security Gateways',
+        {'choices': DEPLOYMENT_TYPES}
     ],
     'policy': [
         '-po', [TEMPLATES, TEMPLATE_NAME, 'policy'],
