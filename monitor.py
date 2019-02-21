@@ -1250,21 +1250,11 @@ class AWS(Controller):
                 continue
             log('\nfound resolving for tag: tag=%s, orig_tag=%s' %
                 (tag, orig_tag))
-            for val in tag.split():
-                log('\nvalue of tag is: tgw_id=%s, tag=%s' % (tgw_id, val))
-                match_addr = re.match(r'((\d{1,3}\.){3}\d{1,3})(@(\d+))?',
-                                      val)
-                if not match_addr:
-                    log('\n couldn\'t find match for value. val=%s' % val)
-                    continue
-
-                gw_addr = match_addr.group(1)
-                asn = match_addr.group(4)
-
-                if not asn:
-                    log('\ngateway asn is missing. will not provision '
-                        'customer gateway. gw_addr=%s' % gw_addr)
-                    continue
+            log('\ngoing to extract addresses for tgw. tgw_id=%s' % tgw_id)
+            gw_address_asn_set = self.extract_gateway_addresses_from_tag(tag)
+            for gw_asn in gw_address_asn_set:
+                gw_addr = gw_asn[0]
+                asn = gw_asn[1]
                 if gw_addr not in tgw_stacks:
                     log('\nno vpn connection for gateway.'
                         'creating stack. cgw addr=%s' % gw_addr)
@@ -1294,9 +1284,12 @@ class AWS(Controller):
                     stack_names_to_keep.add(
                         tgw_stacks[gw_addr]['StackName'])
 
+            gw_addresses = [g[0] for g in gw_address_asn_set]
             self.tgw_association_and_propagation(region, orig_tag, tgw_id,
                                                  tgw_attachments,
-                                                 tgw_route_tables)
+                                                 tgw_route_tables,
+                                                 gw_addresses,
+                                                 vconns)
 
         for cgw_addr, stack in tgw_stacks.items():
             if not stack['StackName'] in stack_names_to_keep:
@@ -1311,18 +1304,41 @@ class AWS(Controller):
                 cgw_id = cgw_by_addr.get(cgw_addr, {}).\
                     get('customerGatewayId', None)
                 if cgw_id in vconns_by_cgw_id.keys():
-                    log('\nDeleting vpn connection for stack...')
+                    vpn_connection_id = vconns_by_cgw_id[cgw_id][
+                                'vpnConnectionId']
+                    log('\ndeleting vpn connection for stack. '
+                        'vpn connection id: %s' % vpn_connection_id)
                     self.request(
                         'ec2', region, 'GET', '/?' + urllib.urlencode({
                             'Action': 'DeleteVpnConnection',
-                            'VpnConnectionId': vconns_by_cgw_id[cgw_id][
-                                'vpnConnectionId']}), '')
+                            'VpnConnectionId': vpn_connection_id}), '')
                 self.request(
                     'cloudformation', region, 'GET',
                     '/?Action=DeleteStack&StackName=' +
                     # TODO: sub creds. currently using only 'None'
                     # (primary account)
                     stack['StackName'], '')
+
+    def extract_gateway_addresses_from_tag(self, tag):
+        gw_address_asn_set = set()
+        for val in tag.split():
+            log('\nvalue of tag is: tag=%s' % val)
+            match_addr = re.match(r'((\d{1,3}\.){3}\d{1,3})(@(\d+))?',
+                                  val)
+            if not match_addr:
+                log('\n couldn\'t find match for value. '
+                    'skipping this part. val=%s' % val)
+                continue
+
+            gw_addr = match_addr.group(1)
+            asn = match_addr.group(4)
+
+            if not asn:
+                log('\ngateway asn is missing. will not provision '
+                    'customer gateway for this gateway. gw_addr=%s' % gw_addr)
+                continue
+            gw_address_asn_set.add((gw_addr, asn))
+        return gw_address_asn_set
 
     # TODO: BUG: no validation that parent tag matches children tags..
     def get_tgw_tags(self, hub_prefix, tgw_route_tables):
@@ -1363,7 +1379,8 @@ class AWS(Controller):
         return association_rtb_id, propagation_rtbs
 
     def tgw_association_and_propagation(self, region, parent_tag, tgw_id,
-                                        tgw_attachments, tgw_route_tables):
+                                        tgw_attachments, tgw_route_tables,
+                                        gw_addresses, vconns):
         log('\ntgw_association_and_propagation(): tgw_tag=%s' % parent_tag)
         # TODO: bringing route tables all thew way here only for tags
         tagged_assoc, tagged_props = self.get_tgw_tags(parent_tag,
@@ -1376,10 +1393,14 @@ class AWS(Controller):
             if a['transitGatewayId'] != tgw_id:
                 continue
 
-            # TODO: BUG: also need to make
-            # sure that the vpn conns are mine and not manually
-            # configured
             if not a['resourceType'] == 'vpn':
+                continue
+
+            attachment_cgw_ip = self.get_customer_gateway_address(
+                a['resourceId'], vconns)
+            if attachment_cgw_ip not in gw_addresses:
+                debug('attachment is not part of community gateways. '
+                      'attachment cgw ip=%s' % attachment_cgw_ip)
                 continue
 
             a_rtb = a.get('association', {}).\
@@ -1403,14 +1424,19 @@ class AWS(Controller):
                                                    tagged_assoc)
             for rtb in tagged_props:
                 if rtb not in a_props:
-                    log('\nEnabling propagation for route table:'
-                        ' "%s", attachment: "%s"' % (rtb, attch_id))
+                    log('\nenabling propagation for route table:'
+                        ' attachment:"%s", route table:"%s"' % (attch_id, rtb))
                     self.set_propagation(region, 'Enable', attch_id, rtb)
 
             for rtb in (a_props - tagged_props):
-                log('\nRemoving propagation. routeTable=%s, attachment=%s' %
-                    (rtb, attch_id))
+                log('\ndisabling propagation for route table:'
+                    'attachment=%s, routeTable=%s' % (attch_id, rtb))
                 self.set_propagation(region, 'Disable', attch_id, rtb)
+
+    def get_customer_gateway_address(self, vpn_connection_id, vconns):
+        return vconns[vpn_connection_id]['customerGatewayConfiguration'][
+            'ipsec_tunnel'][0][
+            'customer_gateway']['tunnel_outside_address']['ip_address']
 
     def disassociate_tgw_route_table(self, region, attach_id, current_rtb_id):
         self.request('ec2', region, 'GET', '/?' + urllib.urlencode({
