@@ -2328,6 +2328,8 @@ class Management(object):
             'identityAwareBlade': {
                 'create': self.CPMI_IDENTITY_AWARE_BLADE,
                 'owned-object': {
+                    'idaApiSettings': {
+                        'idaApiClientVerificationSettings': []},
                     'enableIdaApi': True,
                     'idcSettings': [],
                     'isCollectingIdentities': False,
@@ -2358,8 +2360,8 @@ class Management(object):
             'uid': uid,
             'identityAwareBlade': {
                 'idaApiSettings': {
-                    'idaApiClientVerificationSettings': {
-                        'add': {
+                    'idaApiClientVerificationSettings': [
+                        {
                             'create':
                                 'com.checkpoint.objects.'
                                 'identity_awareness_classes.dummy.'
@@ -2369,7 +2371,7 @@ class Management(object):
                                 'whiteListClient': self.local_host_uid
                             }
                         }
-                    }
+                    ]
                 }
             }
         }
