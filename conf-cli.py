@@ -747,7 +747,7 @@ ARGUMENTS = {
         {'choices': AVAILABLE_VERSIONS}
     ],
     'deployment type': [
-        '-dt', [TEMPLATES, TEMPLATE_NAME, 'deployment type'],
+        '-dt', [TEMPLATES, TEMPLATE_NAME, 'deployment-type'],
         'the type of the deployment of the CloudGuard Security Gateways',
         {'choices': DEPLOYMENT_TYPES}
     ],
