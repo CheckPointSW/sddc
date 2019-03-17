@@ -5,7 +5,7 @@ import subprocess
 
 conf = __import__('conf-cli')
 
-AVAILABLE_VERSIONS = ['R80.220']#['R77.30', 'R80.10', 'R80.20']
+AVAILABLE_VERSIONS = ['R80.20']
 
 SOFTWARE_BLADES = [('-hi', 'HTTPS Inspection'), ('-ia', 'Identity Awareness'), ('-appi', 'Application Control'),
               ('-ips', 'IPS'), ('-uf', 'URL Filtering'), ('-ab', 'Anti-Bot'),
@@ -124,16 +124,27 @@ def configuration_output(access, controller, advanced_access, region, mgmt, temp
         conf_output += '\n  ' + inbound_template + ':\n    one time password (SIC): ******** \n    Policy name: ' \
                        + inbound_policy + '\n    Security Gateway version: ' + inbound_version
 
-    blades = inbound_blades.split()
-    conf_output += blades_output(blades, blades_dict)
+        blades = inbound_blades.split()
+        conf_output += blades_output(blades, blades_dict)
 
     sys.stdout.write(conf_output)
 
-def get_user_input(question, default_name):
-    #default_name = ' [' + default_name + ' ]'
-    name = raw_input(question + ' [' + default_name +' ]: ')
-    if not name:
-        name = default_name
+def get_user_input(question, default_name='', empty_msg=''):
+    if default_name:
+        default_output = ' [' + default_name + ']'
+    else:
+        default_output = ''
+    name = ''
+    while not name:
+        name = raw_input(question + default_output + ': ')
+        if not name:
+            if default_name:
+                name = default_name
+                break
+            else:
+                if not conf.prompt(empty_msg):
+                    name = ''
+                    break
     return name
 
 def get_password(passowrd_type):
@@ -194,13 +205,14 @@ def enable_blades():
     if conf.prompt('\nDo you want to enabled Software Blades on the Security Gateways?'):
         choice_range = ['1', '2', '3', '4', '5', '6', '7']  # list(range(1,8))
         while True:
-            blades_choice = raw_input(DISPLAY['blades'])
-
-            if not blades_choice:
-                if conf.prompt('\nMissing a choice. Are you sure you want to enable Software Blades on the Security Gateways?'):
-                    continue
-                else:
-                    return ''
+            blades_choice = get_user_input(DISPLAY['blades'],  empty_msg='\nMissing a choice. Are you sure you want to enable Software Blades on the Security Gateways?')
+       #while True:
+       #   blades_choice = raw_input(DISPLAY['blades'])
+       #   if not blades_choice:
+       #       if conf.prompt('\nMissing a choice. Are you sure you want to enable Software Blades on the Security Gateways?'):
+       #           continue
+       #       else:
+       #           return ''
 
             blades_choice = blades_choice.split(',')
             if not all(blade in choice_range for blade in blades_choice):
@@ -235,7 +247,6 @@ def init_conf(managment, template, otp, ver, policy, controller, regions, creden
 def access_keys(sub_account = False):
     while True:
         access_input = raw_input(DISPLAY['access_keys'])
-
         if access_input == '1' or not access_input:
             access_key = raw_input('\nAWS Access Key ID: ')
             if not access_key:
@@ -266,15 +277,19 @@ def advanced_access_cred():
     controller_access = ''
     if conf.prompt('\nDo you require Advanced AWS credentials? (e.g. Transit Gateway in different account)'):
         if conf.prompt('\nDo you require an Assume Role for the primary account?'):
-            while True:
-                assume_role = raw_input('\nSecurity Token Service (STS) role ARN: ')
-                if not assume_role:
-                    if not conf.prompt(
-                            '\nYou did not enter an STS role ARN. Is this configuration required in your environment?'):
-                        break
-                else:
-                    controller_access = ' -sr ' + assume_role
-                    break
+            assume_role = get_user_input('\nSecurity Token Service (STS) role ARN: '
+                           , '\nYou did not enter an STS role ARN. Is this configuration required in your environment?')
+            if assume_role:
+                controller_access = ' -sr ' + assume_role
+            #while True:
+            #    assume_role = raw_input('\nSecurity Token Service (STS) role ARN: ')
+            #    if not assume_role:
+            #        if not conf.prompt(
+            #                '\nYou did not enter an STS role ARN. Is this configuration required in your environment?'):
+            #            break
+            #    else:
+            #        controller_access = ' -sr ' + assume_role
+            #        break
 
         if conf.prompt('\nDo you require a sub-account?'):
             sub_account_name = get_user_input('\nUnique Sub-account name', 'tgw-sub-account')
@@ -300,7 +315,6 @@ def access_cred():
     # Account access
     while True:
         required_access = raw_input(DISPLAY['aws_cred'])
-
         if required_access == '1' or not required_access:
             access = ' -iam '
             break
@@ -345,11 +359,16 @@ def configure_tgw():
     domain_name = ''
     if mds:
         while True:
-            domain_name = raw_input('\nDomain name or UID: ')
+            domain_name = get_user_input('\nDomain name or UID',  empty_msg='You did not enter a Domain name or UID. Is this a Multi-Domain Security Management (MDS)?')
+            #while True:
+            #    domain_name = raw_input('\nDomain name or UID: ')
+            #    if not domain_name:
+            #        if not conf.prompt('You did not enter a Domain name or UID. Is this a Multi-Domain Security Management (MDS)?'):
+            #            mds = ''
+            #            break
             if not domain_name:
-                if not conf.prompt('You did not enter a Domain name or UID. Is this a Multi-Domain Security Management (MDS)?'):
-                    mds = ''
-                    break
+                mds = ''
+                break
             else:
                 domain_name = domain_name.translate(None, '\'\"')
                 domains = os.popen('mgmt_cli -r true  show domains').read()
@@ -424,8 +443,5 @@ def configure_tgw():
     tag = mgmt + '/' + domain_name + '/' + community if mds else mgmt + '/' + community
     sys.stdout.write('\n\nYour Transit Gateway configuration is ready!\n\nYour Transit Gateway tag is: ' + tag + '\n')
 
-def main():
-    configure_tgw()
-
 if __name__ == '__main__':
-    main()
+    configure_tgw()
