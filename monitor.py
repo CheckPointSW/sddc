@@ -186,7 +186,7 @@ class Instance(object):
 
 class VPNConn(object):
     def __init__(self, name, controller, short_name, tag, gateway,
-                 peer, local, remote, asn, pre_shared_key, cidr):
+                 peer, local, remote, asn, pre_shared_key, tgw_mode, cidr):
         self.name = name
         self.controller = controller
         self.short_name = short_name
@@ -197,6 +197,7 @@ class VPNConn(object):
         self.remote = remote
         self.asn = asn
         self.pre_shared_key = pre_shared_key
+        self.tgw_mode = tgw_mode
         self.cidr = cidr
 
     def __str__(self):
@@ -904,7 +905,6 @@ class AWS(Controller):
                     'DescribeStacksResult', 'Stacks', sub_cred=cred):
                 match = re.match(r'stack/vpn-by-tag--(vpc-[0-9a-z]+)/.*$',
                                  stack['StackId'].split(':')[-1])
-                # TODO: nirbo: do i need another match for TGW
                 if not match:
                     match = re.\
                         match(r'stack/vpn-by-tag--(tgw-[0-9a-z]+)--(.*)/.*$',
@@ -941,10 +941,7 @@ class AWS(Controller):
                         reason = resource.get('ResourceStatusReason')
                         if reason:
                             log(': %s' % reason)
-                finally:  # TODO: nirbo verify that transit stack is going
-                    #      through this flow.
-                    # TODO: in case stack failed. might need to
-                    #       remove VPN Connection?
+                finally:
                     if not test:
                         self.request(
                             'cloudformation', region, 'GET',
@@ -966,10 +963,6 @@ class AWS(Controller):
         octets = cidr.partition('/')[0].split('.')
         return '%s.%s' % (octets[2], int(octets[3]) // 4 * 4)
 
-    # TODO1: nirbo: does transit should count the cidrs?
-    # TODO2: nirbo: fix a bug here. why it is happening with transit
-    # TODO2: nirbo: it might be that customer gateway is not yet
-    # TODO2: nirbo: exist as the stack just now provisioned.
     def update_used_cgws_cidrs(self, vgws, cgws, vconns, stacks, used_cgws,
                                sub_cidrs_by_vpc_id, sub_cidrs_by_cgw_addr):
         for vconn_id, vconn in vconns.items():
@@ -1170,7 +1163,6 @@ class AWS(Controller):
     def vpn_by_tag(self, vpn_env, vpcs, vgws, vconns, test=False):
         if test and vpn_env is None:
             vpn_env = None, {}, {}
-        prefix, vpn_tags, gw_tun_addrs = vpn_env
         cgws = {}
         rtbs = {}
         stacks = {}
@@ -1190,59 +1182,42 @@ class AWS(Controller):
 
         for region in self.regions:
             log('\n%s' % region)
-            cgw_by_cred_addr = {}
-            for cgw in cgws[region].values():
-                cgw_by_cred_addr.setdefault(cgw[self.CREDENTIAL], {})[
-                    cgw['ipAddress']] = cgw
             for rtb in rtbs[region].values():
                 if rtb['vpcId'] not in vpcs[region]:
                     continue
                 if any(a['main'] == 'true' for a in rtb['associationSet']):
                     assert self.RTB not in vpcs[region][rtb['vpcId']]  # FIXME
                     vpcs[region][rtb['vpcId']][self.RTB] = rtb['routeTableId']
-            for rtb_id, rtb in tgw_route_tables[region].items():
-                tgw_id = rtb['transitGatewayId']
-                if tgw_id not in tgws[region]:
-                    continue
-                if rtb['state'] == 'available':
-                    tgws[region][tgw_id].setdefault('rtbs', {})[rtb_id] = rtb
 
-            for atc_id, attc in tgw_attachments[region].items():
-                tgw_id = attc['transitGatewayId']
-                if tgw_id not in tgws[region]:
-                    continue
-                if attc['state'] == 'available':
-                    tgws[region][tgw_id].\
-                        setdefault('attachments', {})[atc_id] = attc
+            cgw_by_cred_addr = {}
+            for cgw in cgws[region].values():
+                cgw_by_cred_addr.setdefault(cgw[self.CREDENTIAL], {})[
+                    cgw['ipAddress']] = cgw
 
             self.provision_for_vpc(vpn_env, vpcs, vgws, cgws, vconns,
                                    region, cgw_by_cred_addr,
                                    sub_cidrs_by_vpc_id, used_cgws,
                                    stacks['vpc'])
 
-            # TODO: nirbo: there are no credentials here
             cgw_by_addr = cgw_by_cred_addr.get(None, {})
-            self.provision_for_tgw(tgws[region], vconns[region],
-                                   cgw_by_addr, region, prefix, vpn_tags,
+            self.provision_for_tgw(vpn_env, tgws[region], vconns[region],
+                                   cgw_by_addr, region,
                                    stacks['tgw'][region],
                                    tgw_attachments[region],
                                    tgw_route_tables[region])
 
-    def provision_for_tgw(self, tgws, vconns, cgw_by_addr, region, prefix,
-                          vpn_tags, tgw_stacks,
-                          tgw_attachments, tgw_route_tables):
+    def provision_for_tgw(self, vpn_env, tgws, vconns, cgw_by_addr, region,
+                          tgw_stacks, tgw_attachments, tgw_route_tables):
+        prefix, vpn_tags, gw_tun_addrs = vpn_env
         log('\nProvision for tgw(): prefix=%s' % prefix)
         stack_names_to_keep = set()
         vconns_by_cgw_id = {}
 
-        # TODO: nirbo: optimize?
-        # TODO: nirbo: bug, it might be that there is more than
-        # TODO: one vconn per CGW
+        # FIXME: it might be that there is more than one vconn
         for vconn in vconns.values():
             vconns_by_cgw_id[vconn['customerGatewayId']] = vconn
 
         for tgw_id, tgw in tgws.items():
-            # TODO: it is not clear what we have in the tag
             tag, orig_tag = self.resolve_tag(prefix, vpn_tags,
                                              tgw_id,
                                              tgw.get('tagSet'))
@@ -1250,6 +1225,7 @@ class AWS(Controller):
                 continue
             log('\nfound resolving for tag: tag=%s, orig_tag=%s' %
                 (tag, orig_tag))
+
             log('\ngoing to extract addresses for tgw. tgw_id=%s' % tgw_id)
             gw_address_asn_set = self.extract_gateway_addresses_from_tag(tag)
             for gw_asn in gw_address_asn_set:
@@ -1260,14 +1236,11 @@ class AWS(Controller):
                         'creating stack. cgw addr=%s' % gw_addr)
                     self.provision_cgw_by_cft(region, prefix, tgw_id, asn,
                                               gw_addr)
-                    # TODO: id immediately but only at the next cycle
                 else:
-                    # TODO: test scenario where stack exist but no CGW yet.
-                    # TODO; (race condition)
                     if gw_addr not in cgw_by_addr:
-                        log('\nNo customer gateway object exist. '
+                        log('\nno customer gateway object exist. '
                             'it might be that CloudFormation stack was '
-                            'deleted. gw_addr=%s' % gw_addr)
+                            'deleted. Dgw_addr=%s' % gw_addr)
                         continue
 
                     cgw_id = cgw_by_addr[gw_addr]['customerGatewayId']
@@ -1299,7 +1272,8 @@ class AWS(Controller):
                         stack['StackName'])
                 elif stack_prefix != prefix:  # different management
                     continue
-                log('\nFound stack to remove. stack name=%s' %
+                log('\nno gateway exist for CF stack. '
+                    'stack should be removed. stack name=%s' %
                     stack['StackName'])
                 cgw_id = cgw_by_addr.get(cgw_addr, {}).\
                     get('customerGatewayId', None)
@@ -1315,8 +1289,6 @@ class AWS(Controller):
                 self.request(
                     'cloudformation', region, 'GET',
                     '/?Action=DeleteStack&StackName=' +
-                    # TODO: sub creds. currently using only 'None'
-                    # (primary account)
                     stack['StackName'], '')
 
     def extract_gateway_addresses_from_tag(self, tag):
@@ -1340,7 +1312,6 @@ class AWS(Controller):
             gw_address_asn_set.add((gw_addr, asn))
         return gw_address_asn_set
 
-    # TODO: BUG: no validation that parent tag matches children tags..
     def get_tgw_tags(self, hub_prefix, tgw_route_tables):
         association_rtb_id = None
         propagation_rtbs = set()
@@ -1382,18 +1353,22 @@ class AWS(Controller):
                                         tgw_attachments, tgw_route_tables,
                                         gw_addresses, vconns):
         log('\ntgw_association_and_propagation(): tgw_tag=%s' % parent_tag)
-        # TODO: bringing route tables all thew way here only for tags
+
         tagged_assoc, tagged_props = self.get_tgw_tags(parent_tag,
                                                        tgw_route_tables)
         for attch_id in tgw_attachments.keys():
             a = tgw_attachments[attch_id]
 
-            # TODO: think if we can make it more efficient and
-            # not iterating all attachment all over again.
             if a['transitGatewayId'] != tgw_id:
                 continue
 
             if not a['resourceType'] == 'vpn':
+                continue
+
+            if a['resourceId'] not in vconns:
+                log('vpn connection could not be found. '
+                    'will wait for next cycle to reload. '
+                    'vpn_connection_id=%s' % a['resourceId'])
                 continue
 
             attachment_cgw_ip = self.get_customer_gateway_address(
@@ -1418,8 +1393,6 @@ class AWS(Controller):
                     log('\nAssociating route table. '
                         'attachment:%s, target route table: %s' %
                         (attch_id, tagged_assoc))
-                    # TODO: should be atomic (also remove the
-                    # current association..)
                     self.associate_tgw_route_table(region, attch_id,
                                                    tagged_assoc)
             for rtb in tagged_props:
@@ -1453,7 +1426,6 @@ class AWS(Controller):
                 'TransitGatewayRouteTableId': target_rtb_id,
                 'TransitGatewayAttachmentId': attach_id}), '')
 
-    # TODO: handle transit error responses
     def set_propagation(self, region, action, attach_id, target_rtb_id):
         self.request(
             'ec2', region, 'GET', '/?' + urllib.urlencode({
@@ -1464,16 +1436,14 @@ class AWS(Controller):
 
     def provision_for_vpc(self, vpn_env, vpcs, vgws, cgws, vconns, region,
                           cgw_by_cred_addr, sub_cidrs_by_vpc_id,
-                          used_cgws, stacks):
+                          used_cgws, stacks, test=False):
         prefix, vpn_tags, gw_tun_addrs = vpn_env
-
         sub_cidrs_by_cgw_addr = {}
-        for region in self.regions:
-            self.update_used_cgws_cidrs(
-                vgws[region], cgws[region], vconns[region],
-                stacks[region],
-                used_cgws.setdefault(region, set()), sub_cidrs_by_vpc_id,
-                sub_cidrs_by_cgw_addr)
+        self.update_used_cgws_cidrs(
+            vgws[region], cgws[region], vconns[region],
+            stacks[region],
+            used_cgws.setdefault(region, set()), sub_cidrs_by_vpc_id,
+            sub_cidrs_by_cgw_addr)
 
         if test:
             log('\nUsed tunnel CIDRs by vpc ID and gateway address:')
@@ -1483,8 +1453,6 @@ class AWS(Controller):
                     for c in sorted(d[k]):
                         log('\n    169.254.%s/30' % c)
 
-        # TODO: nirbo: collect cidrs from the checkpoint gateway
-        # TODO: (it might be that there are manual VTIs defined.)
         for gw_addr, tun_addrs in gw_tun_addrs.items():
             if not tun_addrs:
                 continue
@@ -1502,8 +1470,7 @@ class AWS(Controller):
         updated_vpcs = set()
         for vpc_id in vpcs[region]:
             vpc = vpcs[region][vpc_id]
-            tag, orig_tag = self.resolve_tag(prefix, vpn_tags,
-                                             vpc_id,
+            tag, orig_tag = self.resolve_tag(prefix, vpn_tags, vpc_id,
                                              vpc.get('tagSet'))
             if not tag:
                 continue
@@ -1532,8 +1499,7 @@ class AWS(Controller):
 
             if not cgw_ids:
                 continue
-            # TODO: nirbo: #2: provision new stack with free
-            # TODO: cidrs (can be more than 2 cgw in multi hub..)
+
             cidrs = []
             for cgw_id in cgw_ids:
                 used_cgws[region].add(cgw_id)
@@ -1545,7 +1511,6 @@ class AWS(Controller):
             self.provision(
                 region, prefix, (tag, orig_tag), vpc, cgw_ids, cidrs)
 
-        # TODO: nirbo: #3 create stack / rermove stack
         for vpc_id in (set(stacks[region]) -
                        set(tagged_vpcs)) | updated_vpcs:
             stack = stacks[region][vpc_id]
@@ -1600,7 +1565,6 @@ class AWS(Controller):
                         vpc[self.VGW] = vgw_id
                         assert self.VPC not in vgw
                         vgw[self.VPC] = vpc['vpcId']
-
         self.vpn_by_tag(vpn_env, vpcs, vgws, vconns, test=test)
 
         vpn_conns = []
@@ -1611,16 +1575,17 @@ class AWS(Controller):
                     self.name, short_name, region])
                 tag = self.get_tags(vconn.get('tagSet')).get('x-chkp-vpn')
                 vpc_id = None
-                if 'vpnGatewayId' in vconn:  # transit vpn will point to none
+                tgw_mode = True
+                if 'vpnGatewayId' in vconn:  # transit gw vpn will point to none
+                    tgw_mode = False
                     vpc_id = vgws[region].get(
-                        vconn.get('vpnGatewayId'), {}).get(
-                        self.VPC, None)
+                        vconn.get('vpnGatewayId'), {}).get(self.VPC)
                     if not vpc_id:
                         log('\nskipping %s - no vpc' % short_name)
                         continue
                 cidr_set = set()
-                cidrs = '0.0.0.0/0'  # TODO: temporarily for transit GW
-                if vpc_id:
+
+                if not tgw_mode:
                     vpc = vpcs[region].get(vpc_id)
                     for assoc in vpc['cidrBlockAssociationSet']:
                         if assoc['cidrBlockState']['state'] != 'associated':
@@ -1628,6 +1593,8 @@ class AWS(Controller):
                         cidr_set.add(assoc['cidrBlock'])
                     cidr_set.discard(vpc['cidrBlock'])
                     cidrs = ','.join([vpc['cidrBlock']] + sorted(cidr_set))
+                else:
+                    cidrs = '0.0.0.0/0'
                 vconn_tunnels = vconn[
                     'customerGatewayConfiguration']['ipsec_tunnel']
                 if any('bgp' not in t['vpn_gateway'] for t in vconn_tunnels):
@@ -1648,7 +1615,7 @@ class AWS(Controller):
                     vpn_conns.append(
                         VPNConn(name, self.name, short_name, tag, gateway,
                                 peer, local, remote, asn, pre_shared_key,
-                                cidrs))
+                                tgw_mode, cidrs))
         return vpn_conns
 
     @staticmethod
@@ -2127,6 +2094,7 @@ class Management(object):
     GATEWAY_PREFIX = '__gateway__'
     VSEC_DUMMY_HOST = DUMMY_PREFIX + 'vsec_internal_host'
     CONTROLLER_PREFIX = '__controller__'
+    TVPC_PREFIX = '__tvpc__'
     CIDR_PREFIX = '__cidr__'
     VPN_PREFIX = '__vpn__'
     COMMUNITY_PREFIX = '__community__'
@@ -3193,6 +3161,8 @@ class Management(object):
         ips_profile = simple_gateway.pop('ips-profile', None)
         vpn_community_star_as_center = simple_gateway.pop(
             'vpn-community-star-as-center', None)
+        # currently removing deployment type attribute
+        tgw_mode = simple_gateway.pop('deployment-type', None)
         vpn_domain = simple_gateway.pop('vpn-domain', None)
         specific_network = simple_gateway.pop('specific-network', None)
         policy = simple_gateway.pop('policy')
@@ -3445,21 +3415,27 @@ class Management(object):
             tag_params.append(tags_dict[self.SPOKE_ROUTES])
             if self.EXPORT_ROUTES in tags_dict:
                 tag_params.extend(tags_dict[self.EXPORT_ROUTES].split(','))
-        out = self.run_script(gw_name, 'config-vpn add \'%s\'' % (
-            '\' \''.join([
-                str(index), vpn_conn.local, vpn_conn.asn, vpn_conn.remote,
-                iod_name, vpn_conn.cidr] + tag_params)))
+        if vpn_conn.tgw_mode:
+            out = self.run_script(gw_name, 'config-vpn add-tgw \'%s\'' % (
+                '\' \''.join([vpn_conn.local, vpn_conn.asn,
+                              vpn_conn.remote, iod_name, vpn_conn.cidr] +
+                             tag_params)))
+        else:
+            out = self.run_script(gw_name, 'config-vpn add \'%s\'' % (
+                '\' \''.join([str(index), vpn_conn.local, vpn_conn.asn,
+                              vpn_conn.remote, iod_name, vpn_conn.cidr] +
+                             tag_params)))
         log('\n%s' % out)
-
         log('\ngetting interfaces')
         self(self.get_interfaces_command_version[0], {'target-name': gw_name},
              version=self.get_interfaces_command_version[1])
 
-        log('\nupdating vpn interfaces...')
-        gw_uid = self.get_uid(gw_name, obj_type='simple-gateway')
-        gw_generic = self('show-generic-object', {'uid': gw_uid})
-        self.update_vti_antispoof_and_lead_to_inet(gw_generic['interfaces'],
-                                                   gw_uid)
+        if vpn_conn.tgw_mode:
+            log('\nupdating vpn interfaces...')
+            gw_uid = self.get_uid(gw_name, obj_type='simple-gateway')
+            gw_generic = self('show-generic-object', {'uid': gw_uid})
+            self.update_vti_antispoof_and_lead_to_inet(
+                gw_generic['interfaces'], gw_uid)
         log('\nadding interoperable device to community "%s"' % community)
         self(
             'set-vpn-community-star',
@@ -3475,8 +3451,6 @@ class Management(object):
 
         self.set_object_tag_value(uid, self.COMMUNITY_PREFIX, community)
 
-
-    # TODO: think how transit vpc will work with this?
     def update_vti_antispoof_and_lead_to_inet(self, gw_interfaces, gw_uid):
         for interface in gw_interfaces:
             if interface['officialname'].startswith('vpnt'):
@@ -3497,6 +3471,7 @@ class Management(object):
 
     def delete_vpn(self, iod):
         iod_name = iod['name']
+        tvpc_mode = self.get_object_tag_value(iod, self.TVPC_PREFIX)
         gw_name = self.get_object_tag_value(iod, self.GATEWAY_PREFIX)
         cidr = self.get_object_tag_value(iod, self.CIDR_PREFIX)
         log('\ndeleting vpn for: %s (%s %s)' % (iod_name, gw_name, cidr))
@@ -3511,18 +3486,22 @@ class Management(object):
         gw_uid = self.get_uid(gw_name, obj_type='simple-gateway')
         if gw_uid:
             log('\ngoing to deprovision "%s":' % gw_name)
-            out = self.run_script(
-                gw_name, 'config-vpn delete \'%s\' \'%s\'' % (
-                    iod_name, cidr))
+            operation = 'delete'
+            if not tvpc_mode:
+                operation = 'delete-tgw'
+
+            out = self.run_script(gw_name, 'config-vpn %s \'%s\' \'%s\'' % (
+                    operation, iod_name, cidr))
             log('\n%s' % out)
             log('\ngetting interfaces')
             self(self.get_interfaces_command_version[0],
                  {'target-name': gw_name},
                  version=self.get_interfaces_command_version[1])
-            log('\nupdating vpn interfaces...')
-            gw_generic = self('show-generic-object', {'uid': gw_uid})
-            self.update_vti_antispoof_and_lead_to_inet(
-                gw_generic['interfaces'], gw_uid)
+            if not tvpc_mode:
+                log('\nupdating vpn interfaces...')
+                gw_generic = self('show-generic-object', {'uid': gw_uid})
+                self.update_vti_antispoof_and_lead_to_inet(
+                    gw_generic['interfaces'], gw_uid)
             self.reinstall_policy(gw_name)
 
         log('\ndeleting interoperable device')
@@ -3585,6 +3564,8 @@ class Management(object):
         self.put_object_tag_value(obj, self.CIDR_PREFIX, vpn_conn.cidr)
         self.put_object_tag_value(obj, self.CONTROLLER_PREFIX,
                                   vpn_conn.controller)
+        if not vpn_conn.tgw_mode:
+            self.put_object_tag_value(obj, self.TVPC_PREFIX, str(True))
         self.put_object_tag_value(obj, self.VPN_PREFIX, vpn_conn.name)
 
         obj = self('add-generic-object', obj)
@@ -3723,7 +3704,6 @@ def sync_vpn(controller, management):
             management.set_state(name, 'COMPLETE')
         except Exception:
             log('\n%s' % traceback.format_exc())
-
 
 def sync(controller, management, gateways):
     log('\n%s: gateway sync' % controller.name)
