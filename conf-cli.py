@@ -23,6 +23,7 @@ import re
 import subprocess
 import shutil
 import sys
+from collections import OrderedDict
 
 AZURE_ENVIRONMENTS = [
     'AzureCloud', 'AzureChinaCloud', 'AzureGermanCloud', 'AzureUSGovernment'
@@ -32,12 +33,27 @@ AVAILABLE_VERSIONS = ['R77.30', 'R80.10', 'R80.20']
 
 DEPLOYMENT_TYPES = ['TGW']
 
-AWS_REGIONS = [
-    'us-east-2', 'us-east-1', 'us-west-1', 'us-west-2', 'ap-south-1',
-    'ap-northeast-2', 'ap-southeast-1', 'ap-southeast-2', 'ap-northeast-1',
-    'ca-central-1', 'eu-central-1', 'eu-west-1', 'eu-west-2', 'eu-west-3',
-    'sa-east-1', 'cn-north-1', 'us-gov-west-1'
-]
+AWS_REGIONS = OrderedDict([
+    ('US East (N. Virginia)', 'us-east-1'),
+    ('US East (Ohio)', 'us-east-2'),
+    ('US West (N. California)', 'us-west-1'),
+    ('US West (Oregon)', 'us-west-2'),
+    ('Asia Pacific (Mumbai)', 'ap-south-1'),
+    ('Asia Pacific (Seoul)', 'ap-northeast-2'),
+    ('Asia Pacific (Singapore)', 'ap-southeast-1'),
+    ('Asia Pacific (Sydney)', 'ap-southeast-2'),
+    ('Asia Pacific (Tokyo)', 'ap-northeast-1'),
+    ('Canada (Central)', 'ca-central-1'),
+    ('EU (Frankfurt)', 'eu-central-1'),
+    ('EU (Ireland)', 'eu-west-1'),
+    ('EU (London)', 'eu-west-2'),
+    ('EU (Paris)', 'eu-west-3'),
+    ('EU (Stockholm)', 'eu-north-1'),
+    ('South America (Sao Paulo)', 'sa-east-1'),
+    ('China (Beijing)', 'cn-north-1'),
+    ('AWS GovCloud (US)', 'us-gov-west-1')])
+
+#[ ('Osaka-Local', 'ap-northeast-3'),('US-East', 'us-gov-east-1')]
 
 MIN_SIC_LENGTH = 8
 
@@ -1413,12 +1429,16 @@ def validate_regions(args, input):
     """
 
     regions = validate_comma_seperated_list(input)
+    region_names = AWS_REGIONS.keys()
+    region_val = AWS_REGIONS.values()
     for region in regions:
-        if region not in AWS_REGIONS:
+        if region not in region_names and region not in region_val:
             if not (args.force or prompt(
                     'the region %s is not in the regions list %s. '
-                    'Are you sure?' % (region, AWS_REGIONS))):
+                    'Are you sure?' % (region, region_val))):
                 sys.exit(0)
+        elif region in region_names:
+            regions[regions.index(region)] = region_val[region_names.index(region)]
     return regions
 
 
