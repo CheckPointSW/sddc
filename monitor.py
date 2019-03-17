@@ -1279,7 +1279,7 @@ class AWS(Controller):
                     get('customerGatewayId', None)
                 if cgw_id in vconns_by_cgw_id.keys():
                     vpn_connection_id = vconns_by_cgw_id[cgw_id][
-                                'vpnConnectionId']
+                        'vpnConnectionId']
                     log('\ndeleting vpn connection for stack. '
                         'vpn connection id: %s' % vpn_connection_id)
                     self.request(
@@ -1576,7 +1576,7 @@ class AWS(Controller):
                 tag = self.get_tags(vconn.get('tagSet')).get('x-chkp-vpn')
                 vpc_id = None
                 tgw_mode = True
-                if 'vpnGatewayId' in vconn:  # transit gw vpn will point to none
+                if 'vpnGatewayId' in vconn:  # transit gw vpn will be 'None'
                     tgw_mode = False
                     vpc_id = vgws[region].get(
                         vconn.get('vpnGatewayId'), {}).get(self.VPC)
@@ -3162,7 +3162,7 @@ class Management(object):
         vpn_community_star_as_center = simple_gateway.pop(
             'vpn-community-star-as-center', None)
         # currently removing deployment type attribute
-        tgw_mode = simple_gateway.pop('deployment-type', None)
+        simple_gateway.pop('deployment-type', None)
         vpn_domain = simple_gateway.pop('vpn-domain', None)
         specific_network = simple_gateway.pop('specific-network', None)
         policy = simple_gateway.pop('policy')
@@ -3457,17 +3457,15 @@ class Management(object):
                 self.set_generic_update_vti_anti_spoofing(gw_uid, interface)
 
     def set_generic_update_vti_anti_spoofing(self, gw_uid, interface):
-        int_obj = {'owned-object':
-                       {'security':
-                            {'antispoof': False,
-                             'netaccess':
-                                 {'performAntiSpoofing': False,
-                                  'leadsToInternet': True}},
-                        },
+        int_obj = {'owned-object': {
+            'security': {
+                'antispoof': False,
+                'netaccess': {
+                    'performAntiSpoofing': False,
+                    'leadsToInternet': True}}},
                    'uid': interface['objId']}
-        self('set-generic-object',
-                  {'uid': gw_uid,
-                   'interfaces': {'set': int_obj}})
+        self('set-generic-object', {
+            'uid': gw_uid, 'interfaces': {'set': int_obj}})
 
     def delete_vpn(self, iod):
         iod_name = iod['name']
@@ -3491,7 +3489,7 @@ class Management(object):
                 operation = 'delete-tgw'
 
             out = self.run_script(gw_name, 'config-vpn %s \'%s\' \'%s\'' % (
-                    operation, iod_name, cidr))
+                operation, iod_name, cidr))
             log('\n%s' % out)
             log('\ngetting interfaces')
             self(self.get_interfaces_command_version[0],
@@ -3704,6 +3702,7 @@ def sync_vpn(controller, management):
             management.set_state(name, 'COMPLETE')
         except Exception:
             log('\n%s' % traceback.format_exc())
+
 
 def sync(controller, management, gateways):
     log('\n%s: gateway sync' % controller.name)
