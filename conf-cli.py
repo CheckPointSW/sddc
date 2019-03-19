@@ -23,7 +23,6 @@ import re
 import subprocess
 import shutil
 import sys
-from collections import OrderedDict
 
 AZURE_ENVIRONMENTS = [
     'AzureCloud', 'AzureChinaCloud', 'AzureGermanCloud', 'AzureUSGovernment'
@@ -33,7 +32,7 @@ AVAILABLE_VERSIONS = ['R77.30', 'R80.10', 'R80.20']
 
 DEPLOYMENT_TYPES = ['TGW']
 
-AWS_REGIONS = OrderedDict([
+AWS_REGIONS = collections.OrderedDict([
     ('US East (N. Virginia)', 'us-east-1'),
     ('US East (Ohio)', 'us-east-2'),
     ('US West (N. California)', 'us-west-1'),
@@ -52,8 +51,6 @@ AWS_REGIONS = OrderedDict([
     ('South America (Sao Paulo)', 'sa-east-1'),
     ('China (Beijing)', 'cn-north-1'),
     ('AWS GovCloud (US)', 'us-gov-west-1')])
-
-#[ ('Osaka-Local', 'ap-northeast-3'),('US-East', 'us-gov-east-1')]
 
 MIN_SIC_LENGTH = 8
 
@@ -1438,7 +1435,8 @@ def validate_regions(args, input):
                     'Are you sure?' % (region, region_val))):
                 sys.exit(0)
         elif region in region_names:
-            regions[regions.index(region)] = region_val[region_names.index(region)]
+            regions[regions.index(region)] \
+                = region_val[region_names.index(region)]
     return regions
 
 
