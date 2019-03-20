@@ -444,7 +444,7 @@ def configure_tgw():
                 domain_name = domain_name.translate(None, '\'\"')
                 domains = run_mgmt_command(
                     'mgmt_cli -r true  show domains',
-                    '\nError connecting to Management Server: \n\n')
+                    '\nError connecting to the Management Server: \n\n')
                 if '\n- uid: "' + domain_name not in domains and '\n  name: "'\
                         + domain_name not in domains:
                     sys.stdout.write(
