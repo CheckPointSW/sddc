@@ -18,7 +18,7 @@ SOFTWARE_BLADES = OrderedDict([('-hi', 'HTTPS Inspection'),
 
 DISPLAY = {'warning': '\nThis program is a CloudGuard Auto Scaling Transit '
                       'Gateway first-time wizard.\n'
-                      'All existing configration will be lost.\n'
+                      'All existing configuration will be lost.\n'
                       'Are you sure you want to continue?',
            'headline': '\nWelcome to the Transit Gateway first-time wizard. '
                        'The wizard will configure the following:\n----------'
@@ -54,7 +54,19 @@ DISPLAY = {'warning': '\nThis program is a CloudGuard Auto Scaling Transit '
            }
 
 
-def run_command(command):
+def run_mgmt_command(command, err_msg):
+    proc = subprocess.Popen(
+        command, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE)
+    out, err = proc.communicate()
+    rc = proc.wait()
+    if 'failed' in err.lower() or rc:
+        sys.stderr.write(err_msg + err)
+        exit(2)
+    return out
+
+
+def run_conf_command(command):
     result = os.popen(command).read()
     if 'autoprovision' not in result:
         sys.stdout.write('\nFailed to initialize configuration.\n')
@@ -277,14 +289,14 @@ def add_template(action, template, otp='', ver='', policy='', transit='',
                  blades=''):
     command = 'autoprov-cfg -f ' + action + ' template -tn ' + template \
               + otp + ver + policy + transit + blades
-    run_command(command)
+    run_conf_command(command)
 
 
 def add_controller(
         controller, mds='', community='', controller_access='', lb=''):
     command = 'autoprov-cfg -f set controller AWS -cn ' + controller + mds \
               + ' -sg -sv -com ' + community + controller_access + lb
-    run_command(command)
+    run_conf_command(command)
 
 
 def init_conf(managment, template, otp, ver, policy, controller, regions,
@@ -293,7 +305,7 @@ def init_conf(managment, template, otp, ver, policy, controller, regions,
               + template + ' -cn ' + controller + ' -po ' \
               + policy + ' -otp ' + otp + ' -r ' + regions \
               + ' -ver ' + ver + credentials + ' -dt ' + deployment
-    run_command(command)
+    run_conf_command(command)
 
 
 def access_keys(sub_account=False):
@@ -430,7 +442,9 @@ def configure_tgw():
                 break
             else:
                 domain_name = domain_name.translate(None, '\'\"')
-                domains = os.popen('mgmt_cli -r true  show domains').read()
+                domains = run_mgmt_command(
+                    'mgmt_cli -r true  show domains',
+                    '\nError connecting to Management Server: \n\n')
                 if '\n- uid: "' + domain_name not in domains and '\n  name: "'\
                         + domain_name not in domains:
                     sys.stdout.write(
@@ -505,18 +519,10 @@ def configure_tgw():
 
     command = '/etc/fw/scripts/autoprovision/config-community.sh ' \
               + community + ' ' + domain_name
-    proc = subprocess.Popen(
-        command, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE)
-    out, err = proc.communicate()
-    rc = proc.wait()
-    if 'failed' in err or rc:
-        if not rc:
-            rc = ''
-        sys.stderr.write(
-            '\nFailed to create Check Point VPN community.'
-            '\n\nError message: \n\n' + str(rc) + '\n' + err)
-        exit(2)
+
+    run_mgmt_command(
+        command, '\nFailed to create Check Point VPN community.'
+        '\n\nError message: \n\n')
 
     init_conf(
         mgmt, template, sic, version, policy,
