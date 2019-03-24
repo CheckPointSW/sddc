@@ -185,7 +185,7 @@ def get_password(passowrd_type):
             if not password:
                 raise Exception('\nYou need to enter your ' + passowrd_type)
             validate_password = getpass.getpass('Re-enter'
-                                                ' AWS Secret Access Key: ')
+                                                + passowrd_type + ': ')
             if password != validate_password:
                 raise Exception(passowrd_type + ' doesn\'t match')
             return password
