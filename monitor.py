@@ -1225,15 +1225,7 @@ class AWS(Controller):
         vconns_by_cgw_id = {}
 
         for vconn in vconns.values():
-            # TODO: fixme !!! throwing exception no matter what !!
-            # TODO: there might be cases where CGW linked to two VPNs
-            # if vconn['customerGatewayId'] in vconns_by_cgw_id:
-            #     raise Exception(
-            #         'more than one VPN Connection to the same Customer '
-            #         'Gateway is not valid. cgw_id=%s, vpn_id=%s' % (
-            #             vconn['customerGatewayId'],
-            #             vconn['vpnConnectionId']))
-
+            # FIXME: assumption there is only single CG for VPN
             vconns_by_cgw_id[vconn['customerGatewayId']] = vconn
 
         for tgw_id, tgw in tgws.items():
@@ -3649,6 +3641,7 @@ def sync_vpn(controller, management):
     gateways = management.get_gateways(filtered=False, version='v1.1')
     communities = management.get_star_communities()
     addr_to_gw_comm = {}
+    # FIXME: TGW will not provision in case one gw is not communicating..
     for community, centers, _ in communities:
         if controller.communities and (
                 community not in controller.communities):
