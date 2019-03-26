@@ -344,7 +344,7 @@ def advanced_access_cred():
             '\nWould you like to configure advanced AWS account credentials, '
             'such as STS roles and/or additional account?'):
         if conf.prompt(
-                '\nWould you like to assume a different IAM identity using'
+                '\nWould you like to assume a different IAM identity using\n'
                 'AWS Security Token Service (STS) in your primary account?'):
             assume_role = get_user_input(
                 '\nSecurity Token Service (STS) role ARN',
