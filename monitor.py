@@ -1774,8 +1774,8 @@ class Azure(Controller):
 
         vmsss = self.azure.arm(
             'GET',
-            '%s/providers/Microsoft.Compute/virtualMachineScaleSets' %
-            self.sub)[1]['value']
+            '%s/providers/Microsoft.Compute/virtualMachineScaleSets'
+            '?api-version=2018-06-01' % self.sub)[1]['value']
         for vmss in vmsss:
             tags = vmss.get('tags', {})
             if tags.get('x-chkp-management') != self.management:
