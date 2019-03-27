@@ -30,12 +30,27 @@ AZURE_ENVIRONMENTS = [
 
 AVAILABLE_VERSIONS = ['R77.30', 'R80.10', 'R80.20']
 
-AWS_REGIONS = [
-    'us-east-2', 'us-east-1', 'us-west-1', 'us-west-2', 'ap-south-1',
-    'ap-northeast-2', 'ap-southeast-1', 'ap-southeast-2', 'ap-northeast-1',
-    'ca-central-1', 'eu-central-1', 'eu-west-1', 'eu-west-2', 'eu-west-3',
-    'sa-east-1', 'cn-north-1', 'us-gov-west-1'
-]
+DEPLOYMENT_TYPES = ['TGW']
+
+AWS_REGIONS = collections.OrderedDict([
+    ('US East (N. Virginia)', 'us-east-1'),
+    ('US East (Ohio)', 'us-east-2'),
+    ('US West (N. California)', 'us-west-1'),
+    ('US West (Oregon)', 'us-west-2'),
+    ('Asia Pacific (Mumbai)', 'ap-south-1'),
+    ('Asia Pacific (Seoul)', 'ap-northeast-2'),
+    ('Asia Pacific (Singapore)', 'ap-southeast-1'),
+    ('Asia Pacific (Sydney)', 'ap-southeast-2'),
+    ('Asia Pacific (Tokyo)', 'ap-northeast-1'),
+    ('Canada (Central)', 'ca-central-1'),
+    ('EU (Frankfurt)', 'eu-central-1'),
+    ('EU (Ireland)', 'eu-west-1'),
+    ('EU (London)', 'eu-west-2'),
+    ('EU (Paris)', 'eu-west-3'),
+    ('EU (Stockholm)', 'eu-north-1'),
+    ('South America (Sao Paulo)', 'sa-east-1'),
+    ('China (Beijing)', 'cn-north-1'),
+    ('AWS GovCloud (US)', 'us-gov-west-1')])
 
 MIN_SIC_LENGTH = 8
 
@@ -302,7 +317,7 @@ def create_parser_dict(conf):
              'policy', CONTROLLER_NAME, 'regions'],
             ['AWS access key', 'AWS secret key', 'AWS IAM',
              'AWS credentials file path', 'STS role', 'STS external id',
-             'vpn', 'community name', 'vpn-domain'],
+             'deployment type', 'vpn', 'community name', 'vpn-domain'],
             'initialize autoprovision settings for AWS',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['init_aws']),
             {'delay': 30, 'class': 'AWS', 'host': 'localhost'}],
@@ -324,9 +339,10 @@ def create_parser_dict(conf):
                                                       'init_GCP']), None],
         'add_template': [
             TEMPLATE, [TEMPLATE_NAME],
-            ['one time password', 'version', 'policy', 'custom parameters',
-             'prototype', 'specific network', 'generation', 'proxy ports',
-             'HTTPS Inspection', 'Identity Awareness', 'Application Control',
+            ['one time password', 'version', 'deployment type', 'policy',
+             'custom parameters', 'prototype', 'specific network',
+             'generation', 'proxy ports', 'HTTPS Inspection',
+             'Identity Awareness', 'Application Control',
              'Intrusion Prevention', 'IPS Profile', 'URL Filtering',
              'Anti-Bot', 'Anti-Virus', 'restrictive policy',
              'vpn', 'community name', 'vpn-domain', 'section name',
@@ -393,7 +409,7 @@ def create_parser_dict(conf):
         'set_template': [
             TEMPLATE, [(TEMPLATE_NAME, {'choices': get_templates(conf),
                                         'dest': TEMPLATE_NAME})],
-            ['one time password', 'version', 'policy',
+            ['one time password', 'version', 'deployment type', 'policy',
              'custom parameters', 'prototype', 'specific network',
              'generation', 'proxy ports', 'HTTPS Inspection',
              'Identity Awareness', 'Application Control',
@@ -470,6 +486,7 @@ def create_parser_dict(conf):
             TEMPLATE, [(TEMPLATE_NAME, {'choices': get_templates(conf)})],
             [('one time password', {'action': 'store_true'}),
              ('version', {'action': 'store_true'}),
+             ('deployment type', {'action': 'store_true'}),
              ('policy', {'action': 'store_true'}),
              ('custom parameters', {'action': 'store_true'}),
              ('prototype', {'action': 'store_true'}),
@@ -741,6 +758,11 @@ ARGUMENTS = {
         '-ver', [TEMPLATES, TEMPLATE_NAME, 'version'],
         'the gateway version (e.g. R77.30)',
         {'choices': AVAILABLE_VERSIONS}
+    ],
+    'deployment type': [
+        '-dt', [TEMPLATES, TEMPLATE_NAME, 'deployment-type'],
+        'the type of the deployment of the CloudGuard Security Gateways',
+        {'choices': DEPLOYMENT_TYPES}
     ],
     'policy': [
         '-po', [TEMPLATES, TEMPLATE_NAME, 'policy'],
@@ -1404,12 +1426,17 @@ def validate_regions(args, input):
     """
 
     regions = validate_comma_seperated_list(input)
+    region_names = AWS_REGIONS.keys()
+    region_val = AWS_REGIONS.values()
     for region in regions:
-        if region not in AWS_REGIONS:
+        if region not in region_names and region not in region_val:
             if not (args.force or prompt(
                     'the region %s is not in the regions list %s. '
-                    'Are you sure?' % (region, AWS_REGIONS))):
+                    'Are you sure?' % (region, region_val))):
                 sys.exit(0)
+        elif region in region_names:
+            regions[regions.index(region)] \
+                = region_val[region_names.index(region)]
     return regions
 
 

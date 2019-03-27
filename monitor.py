@@ -186,7 +186,7 @@ class Instance(object):
 
 class VPNConn(object):
     def __init__(self, name, controller, short_name, tag, gateway,
-                 peer, local, remote, asn, pre_shared_key, cidr):
+                 peer, local, remote, asn, pre_shared_key, tgw_id, cidr):
         self.name = name
         self.controller = controller
         self.short_name = short_name
@@ -197,6 +197,7 @@ class VPNConn(object):
         self.remote = remote
         self.asn = asn
         self.pre_shared_key = pre_shared_key
+        self.tgw_id = str(tgw_id or '')
         self.cidr = cidr
 
     def __str__(self):
@@ -205,7 +206,7 @@ class VPNConn(object):
             name = '%s(%s)' % (name, self.tag)
         gw = self.gateway
         return ' '.join([name, gw, self.peer, self.local, self.remote,
-                         self.asn, self.cidr])
+                         self.asn, self.cidr, self.tgw_id])
 
 
 class Controller(object):
@@ -820,13 +821,12 @@ class AWS(Controller):
     def retrieve_vconns(self, vconns, sub_cred):
         for region in self.regions:
             headers, body = self.request(
-                'ec2', region, 'GET', '/?Action=DescribeVpnConnections', '',
+                'ec2', region, 'GET',
+                '/?Action=DescribeVpnConnections&Version=2016-11-15', '',
                 sub_cred=sub_cred)
             vconns.setdefault(region, {})
             for s in aws.listify(body, 'item')['vpnConnectionSet']:
                 if 'customerGatewayConfiguration' not in s:
-                    continue
-                if 'vpnGatewayId' not in s:
                     continue
                 vconns[region][s['vpnConnectionId']] = s
                 s['customerGatewayConfiguration'] = aws.parse_element(
@@ -854,18 +854,81 @@ class AWS(Controller):
             for rtb in aws.listify(body, 'item')['routeTableSet']:
                 rtbs[region][rtb['routeTableId']] = rtb
 
+    def retrieve_tgw_route_tables(self, tgw_rtbs, sub_cred):
+        for region in self.regions:
+            headers, body = self.request(
+                'ec2', region, 'GET',
+                '/?Action=' +
+                'DescribeTransitGatewayRouteTables&Version=2016-11-15',
+                '', sub_cred=sub_cred)
+            tgw_rtbs.setdefault(region, {})
+            for a in aws.listify(body, 'item')['transitGatewayRouteTables']:
+                a[self.CREDENTIAL] = sub_cred
+                tgw_rtbs[region][a['transitGatewayRouteTableId']] = a
+
+    def retrieve_tgw_attachment_propagations(self, region, attach_id,
+                                             sub_cred):
+        propagations = set()
+        headers, body = self.request(
+            'ec2', region, 'GET', '/?Action=' +
+            'GetTransitGatewayAttachmentPropagations' +
+            '&Version=2016-11-15&TransitGatewayAttachmentId=' +
+                                  attach_id, '', sub_cred=sub_cred)
+        for p in aws.listify(
+                body, 'item')['transitGatewayAttachmentPropagations']:
+            if p['state'] != 'enabled':
+                continue
+            propagations.add(p['transitGatewayRouteTableId'])
+        return propagations
+
+    def retrieve_tgw_attachments(self, tgw_attachments, sub_cred):
+        for region in self.regions:
+            headers, body = self.request(
+                'ec2', region, 'GET',
+                '/?Action=' +
+                'DescribeTransitGatewayAttachments&Version=2016-11-15',
+                '',
+                sub_cred=sub_cred)
+            tgw_attachments.setdefault(region, {})
+            for a in aws.listify(body, 'item')['transitGatewayAttachments']:
+                if a['state'] != 'available':
+                    continue
+                a[self.CREDENTIAL] = sub_cred
+                tgw_attachments[region][a['transitGatewayAttachmentId']] = a
+
+    def retrieve_tgws(self, tgws, sub_cred):
+        for region in self.regions:
+            tgws.setdefault(region, {})
+            headers, body = self.request(
+                'ec2', region, 'GET',
+                '/?Version=2016-11-15&Action=DescribeTransitGateways', '',
+                sub_cred=sub_cred)
+            for t in aws.listify(body, 'item')['transitGatewaySet']:
+                t[self.CREDENTIAL] = sub_cred
+                tgws[region][t['transitGatewayId']] = t
+
     def retrieve_stacks(self, stacks, cred, test=False):
         for region in self.regions:
-            stacks.setdefault(region, {})
+            stacks.setdefault('vpc', {}).setdefault(region, {})
+            stacks.setdefault('tgw', {}).setdefault(region, {})
             for stack in self.retrieve_all(
                     'cloudformation', region, '/?Action=DescribeStacks',
                     'DescribeStacksResult', 'Stacks', sub_cred=cred):
                 match = re.match(r'stack/vpn-by-tag--(vpc-[0-9a-z]+)/.*$',
                                  stack['StackId'].split(':')[-1])
                 if not match:
-                    continue
-                vpc_id = match.group(1)
-                stacks[region][vpc_id] = stack
+                    match = re.match(
+                        r'stack/vpn-by-tag--(tgw-[0-9a-z]+)--(.*)/.*$',
+                        stack['StackId'].split(':')[-1])
+                    if not match:
+                        continue
+                    else:
+                        cgw_ip = match.group(2).replace('-', '.')
+                        stacks['tgw'][region][cgw_ip] = stack
+                else:
+                    vpc_id = match.group(1)
+                    stacks['vpc'][region][vpc_id] = stack
+
                 log('\n%s: %s' % (stack['StackName'], stack['StackStatus']))
                 if '_FAILED' not in stack['StackStatus']:
                     stack[self.CREDENTIAL] = cred
@@ -915,7 +978,10 @@ class AWS(Controller):
                                sub_cidrs_by_vpc_id, sub_cidrs_by_cgw_addr):
         for vconn_id, vconn in vconns.items():
             used_cgws.add(vconn['customerGatewayId'])
-            vgw_id = vconn['vpnGatewayId']
+
+            vgw_id = vconn.get('vpnGatewayId', None)
+            if not vgw_id:
+                continue
             vpc_id = vgws[vgw_id].get(self.VPC)
             vconn_tunnels = vconn[
                 'customerGatewayConfiguration']['ipsec_tunnel']
@@ -941,11 +1007,11 @@ class AWS(Controller):
                     sub_cidrs_by_cgw_addr.setdefault(
                         cgws[cgw_id]['ipAddress'], set()).add(sub_cidr)
 
-    def resolve_tag(self, prefix, vpn_tags, vpc):
-        tag = self.get_tags(vpc.get('tagSet')).get('x-chkp-vpn')
+    def resolve_tag(self, prefix, vpn_tags, obj_id, obj_tag_set):
+        tag = self.get_tags(obj_tag_set).get('x-chkp-vpn')
         if not tag:
             return None, None
-        log('\n%s: "%s"' % (vpc['vpcId'], tag))
+        log('\n%s: "%s"' % (obj_id, tag))
         if ':' not in tag and '/' not in tag:
             return tag, tag
         if prefix is None:  # test
@@ -967,8 +1033,7 @@ class AWS(Controller):
         log(' -> (%s)' % '):('.join(hub_tags))
         return ' '.join(hub_tags), tag
 
-    def get_cgw_ids(self, region, tag, orig_tag, vpc, cgws, cgw_by_cred_addr):
-        cred = vpc[self.CREDENTIAL]
+    def get_cgw_ids(self, region, tag, orig_tag, cred, cgws, cgw_by_cred_addr):
         cgw_by_addr = cgw_by_cred_addr.get(cred, {})
         cgw_ids = []
         for val in tag.split():
@@ -1002,8 +1067,6 @@ class AWS(Controller):
                     cgw_ids[-1] = cgw_id
                     cgw[self.CREDENTIAL] = cred
                     cgws[region][cgw_id] = cgw
-                    cgw_by_addr[cgw['ipAddress']] = cgw
-                    cgw_by_cred_addr[cred] = cgw_by_addr
                 else:
                     log('\nmissing asn for customer gateway for "%s"' % addr)
                 continue
@@ -1030,34 +1093,56 @@ class AWS(Controller):
         sub_cidrs_by_cgw_addr[addr].add(sub_cidr)
         return '169.254.%s/30' % sub_cidr
 
-    def provision(self, region, prefix, tag, vpc, cgw_ids, cidrs):
-        def cf_resource(typ, props, deps=None):
-            obj = {'Type': typ, 'Properties': props}
-            if deps:
-                obj['DependsOn'] = deps
-            return obj
+    def cf_resource(self, typ, props, deps=None):
+        obj = {'Type': typ, 'Properties': props}
+        if deps:
+            obj['DependsOn'] = deps
+        return obj
 
+    def provision_cgw_by_cft(self, region, prefix, tgw_id, asn, cgw_ip,
+                             sub_cred):
+        resources = {}
+        deps = None
+        resources['cgw'] = self.cf_resource(
+            'AWS::EC2::CustomerGateway', {
+                'BgpAsn': asn,
+                'IpAddress': cgw_ip,
+                'Type': 'ipsec.1'
+            }, deps=deps)
+
+        self.request('cloudformation', region, 'GET', '/?' + urllib.urlencode({
+            'Action': 'CreateStack',
+            'StackName': 'vpn-by-tag' + '--' + tgw_id + '--' +
+                         cgw_ip.replace('.', '-'),
+            'Parameters.member.1.ParameterKey': 'prefix',
+            'Parameters.member.1.ParameterValue': prefix,
+            'TemplateBody': json.dumps({
+                'Parameters': {'prefix': {'Type': 'String'}},
+                'Resources': resources}, separators=(',', ':')),
+            'OnFailure': 'DO_NOTHING'}), '', sub_cred=sub_cred)
+
+    def provision(self, region, prefix, tag, vpc, cgw_ids, cidrs):
         resources = {}
         vpc_id = vpc['vpcId']
         vgw_ref = vpc.get(self.VGW)
         vgw_id = vgw_ref
         deps = None
         if not vgw_ref:
-            resources['vgw'] = cf_resource(
+            resources['vgw'] = self.cf_resource(
                 'AWS::EC2::VPNGateway', {'Type': 'ipsec.1'})
             vgw_ref = {'Ref': 'vgw'}
-            resources['attachment'] = cf_resource(
+            resources['attachment'] = self.cf_resource(
                 'AWS::EC2::VPCGatewayAttachment', {
                     'VpcId': vpc_id, 'VpnGatewayId': vgw_ref})
             deps = ['attachment']
-            resources['propagation'] = cf_resource(
+            resources['propagation'] = self.cf_resource(
                 'AWS::EC2::VPNGatewayRoutePropagation', {
                     'RouteTableIds': [vpc[self.RTB]],
                     'VpnGatewayId': vgw_ref},
                 deps=deps)
 
         for i, cgw_id in enumerate(cgw_ids):
-            resources['conn%d' % i] = cf_resource(
+            resources['conn%d' % i] = self.cf_resource(
                 'AWS::EC2::VPNConnection', {
                     'Type': 'ipsec.1',
                     'CustomerGatewayId': cgw_id,
@@ -1090,23 +1175,296 @@ class AWS(Controller):
     def vpn_by_tag(self, vpn_env, vpcs, vgws, vconns, test=False):
         if test and vpn_env is None:
             vpn_env = None, {}, {}
-        prefix, vpn_tags, gw_tun_addrs = vpn_env
         cgws = {}
         rtbs = {}
         stacks = {}
+        tgws = {}
+        tgw_attachments = {}
+        tgw_route_tables = {}
+
         for cred in [None] + self.sub_creds.keys():
             self.retrieve_cgws(cgws, cred)
             self.retrieve_rtbs(rtbs, cred)
             self.retrieve_stacks(stacks, cred, test)
-
+            self.retrieve_tgws(tgws, cred)
+            self.retrieve_tgw_attachments(tgw_attachments, cred)
+            self.retrieve_tgw_route_tables(tgw_route_tables, cred)
         sub_cidrs_by_vpc_id = {}
-        sub_cidrs_by_cgw_addr = {}
         used_cgws = {}
+
         for region in self.regions:
-            self.update_used_cgws_cidrs(
-                vgws[region], cgws[region], vconns[region], stacks[region],
-                used_cgws.setdefault(region, set()), sub_cidrs_by_vpc_id,
-                sub_cidrs_by_cgw_addr)
+            log('\n%s' % region)
+            for rtb in rtbs[region].values():
+                if rtb['vpcId'] not in vpcs[region]:
+                    continue
+                if any(a['main'] == 'true' for a in rtb['associationSet']):
+                    assert self.RTB not in vpcs[region][rtb['vpcId']]  # FIXME
+                    vpcs[region][rtb['vpcId']][self.RTB] = rtb['routeTableId']
+
+            cgw_by_cred_addr = {}
+            for cgw in cgws[region].values():
+                cgw_by_cred_addr.setdefault(cgw[self.CREDENTIAL], {})[
+                    cgw['ipAddress']] = cgw
+
+            self.provision_for_vpc(vpn_env, vpcs, vgws, cgws, vconns,
+                                   region, cgw_by_cred_addr,
+                                   sub_cidrs_by_vpc_id, used_cgws,
+                                   stacks['vpc'])
+
+            self.provision_for_tgw(vpn_env, tgws[region], vconns[region],
+                                   cgw_by_cred_addr, region,
+                                   stacks['tgw'][region],
+                                   tgw_attachments[region],
+                                   tgw_route_tables[region])
+
+    def provision_for_tgw(self, vpn_env, tgws, vconns, cgw_by_addr, region,
+                          tgw_stacks, tgw_attachments, tgw_route_tables):
+        prefix, vpn_tags, gw_tun_addrs = vpn_env
+        log('\nProvision for tgw(): prefix=%s' % prefix)
+        stack_names_to_keep = set()
+        vconns_by_cgw_id = {}
+
+        for vconn in vconns.values():
+            # FIXME: assumption there is only single CG for VPN
+            vconns_by_cgw_id[vconn['customerGatewayId']] = vconn
+
+        for tgw_id, tgw in tgws.items():
+            tag, orig_tag = self.resolve_tag(prefix, vpn_tags,
+                                             tgw_id,
+                                             tgw.get('tagSet'))
+            if not tag:
+                continue
+            log('\nfound resolving for tag: tag=%s, orig_tag=%s' %
+                (tag, orig_tag))
+
+            log('\ngoing to extract addresses for tgw. tgw_id=%s' % tgw_id)
+            gw_address_asn_set = self.extract_gateway_addresses_from_tag(tag)
+            for gw_asn in gw_address_asn_set:
+                gw_addr = gw_asn[0]
+                asn = gw_asn[1]
+                if gw_addr not in tgw_stacks:
+                    log('\nno vpn connection for gateway.'
+                        'creating stack. cgw addr=%s' % gw_addr)
+                    self.provision_cgw_by_cft(region, prefix, tgw_id, asn,
+                                              gw_addr, tgw[self.CREDENTIAL])
+                else:
+                    stack_names_to_keep.add(tgw_stacks[gw_addr]['StackName'])
+                    if gw_addr not in cgw_by_addr[tgw[self.CREDENTIAL]]:
+                        log('\nno customer gateway object exist. '
+                            'it might be that CloudFormation stack was '
+                            'deleted. gw_addr=%s' % gw_addr)
+                        continue
+
+                    cgw_id = cgw_by_addr[
+                        tgw[self.CREDENTIAL]][gw_addr]['customerGatewayId']
+                    if cgw_id not in vconns_by_cgw_id:
+                        log('\ncreating vpn connection with transit gw. '
+                            'tgw_id=%s, cgw_id=%s' % (tgw_id, cgw_id))
+                        self.request(
+                            'ec2', region, 'GET', '/?' + urllib.urlencode({
+                                'Action': 'CreateVpnConnection',
+                                'Version': '2016-11-15',
+                                'CustomerGatewayId': cgw_id,
+                                'Type': 'ipsec.1',
+                                'TransitGatewayId': tgw_id}), '',
+                            sub_cred=tgw[self.CREDENTIAL])
+            gw_addresses = [g[0] for g in gw_address_asn_set]
+            self.tgw_association_and_propagation(region, orig_tag, tgw_id,
+                                                 tgw_attachments,
+                                                 tgw_route_tables,
+                                                 gw_addresses,
+                                                 vconns)
+
+        for cgw_addr, stack in tgw_stacks.items():
+            if not stack['StackName'] in stack_names_to_keep:
+                stack_prefix = self.get_parameter(stack, 'prefix')
+                if stack_prefix is None:
+                    log('\n%s has no prefix parameter' %
+                        stack['StackName'])
+                elif stack_prefix != prefix:  # different management
+                    continue
+                log('\nno gateway exist for CF stack. '
+                    'stack should be removed. stack name=%s' %
+                    stack['StackName'])
+                cgw_id = cgw_by_addr[
+                    tgw[self.CREDENTIAL]].get(cgw_addr, {}).get(
+                    'customerGatewayId', None)
+                if cgw_id in vconns_by_cgw_id:
+                    vpn_connection_id = vconns_by_cgw_id[cgw_id][
+                        'vpnConnectionId']
+                    log('\ndeleting vpn connection for stack. '
+                        'vpn connection id: %s' % vpn_connection_id)
+                    self.request(
+                        'ec2', region, 'GET', '/?' + urllib.urlencode({
+                            'Action': 'DeleteVpnConnection',
+                            'VpnConnectionId': vpn_connection_id}), '',
+                        sub_cred=tgw[self.CREDENTIAL])
+                self.request(
+                    'cloudformation', region, 'GET',
+                    '/?Action=DeleteStack&StackName=' +
+                    stack['StackName'], '', sub_cred=tgw[self.CREDENTIAL])
+
+    def extract_gateway_addresses_from_tag(self, tag):
+        gw_address_asn_set = set()
+        for val in tag.split():
+            log('\nvalue of tag is: tag=%s' % val)
+            match_addr = re.match(r'((\d{1,3}\.){3}\d{1,3})(@(\d+))?',
+                                  val)
+            if not match_addr:
+                log('\n couldn\'t find match for value. '
+                    'skipping this part. val=%s' % val)
+                continue
+
+            gw_addr = match_addr.group(1)
+            asn = match_addr.group(4)
+
+            if not asn:
+                log('\ngateway asn is missing. will not provision '
+                    'customer gateway for this gateway. gw_addr=%s' % gw_addr)
+                continue
+            gw_address_asn_set.add((gw_addr, asn))
+        return gw_address_asn_set
+
+    def get_tgw_tags(self, hub_prefix, tgw_route_tables):
+        association_rtb_id = None
+        propagation_rtbs = set()
+        for rtb in tgw_route_tables.values():
+            tag = self.get_tags(rtb.get('tagSet')).get('x-chkp-vpn')
+            if not tag:
+                continue
+            if not tag.startswith(hub_prefix + '/'):
+                log('\nCheckpoint tag must start with hub tag. ' +
+                    'found: %s, expected to start with: %s'
+                    % (tag, hub_prefix))
+                continue
+
+            if not tag[len(hub_prefix)] == '/':
+                log('\nCheckpoint tag must end with "/" '
+                    'followed by keywords associate or propagate. tag='
+                    % tag)
+                continue
+
+            action_keyword = tag[len(hub_prefix + '/'):]
+            if action_keyword == 'associate':
+                if association_rtb_id:
+                    raise Exception('Found more than one association tag.' +
+                                    'please reconfigure tags. '
+                                    'rtb=%s, tag=%s' % (association_rtb_id,
+                                                        tag))
+                association_rtb_id = rtb['transitGatewayRouteTableId']
+            elif action_keyword == 'propagate':
+                propagation_rtbs.add(rtb['transitGatewayRouteTableId'])
+            else:
+                log('\nnot supported action for route table tag. '
+                    'value=%s' % action_keyword)
+        log('\nget_tgw_tags()~: '
+            'association=%s, propagations=%s'
+            % (association_rtb_id, propagation_rtbs))
+        return association_rtb_id, propagation_rtbs
+
+    def tgw_association_and_propagation(self, region, parent_tag, tgw_id,
+                                        tgw_attachments, tgw_route_tables,
+                                        gw_addresses, vconns):
+        log('\ntgw_association_and_propagation(): tgw_tag=%s' % parent_tag)
+        tagged_assoc, tagged_props = self.get_tgw_tags(parent_tag,
+                                                       tgw_route_tables)
+        for attch_id in tgw_attachments:
+            a = tgw_attachments[attch_id]
+
+            if a['transitGatewayId'] != tgw_id:
+                continue
+
+            if not a['resourceType'] == 'vpn':
+                continue
+
+            if a['resourceId'] not in vconns:
+                log('\nvpn connection could not be found. '
+                    'will wait for next cycle to reload. '
+                    'vpn_connection_id=%s' % a['resourceId'])
+                continue
+
+            attachment_cgw_ip = self.get_customer_gateway_address(
+                a['resourceId'], vconns)
+            if attachment_cgw_ip not in gw_addresses:
+                debug('\nattachment is not part of community gateways. '
+                      'attachment cgw ip=%s' % attachment_cgw_ip)
+                continue
+
+            a_rtb = a.get('association', {}).get(
+                'transitGatewayRouteTableId', None)
+
+            a_props = self.retrieve_tgw_attachment_propagations(
+                region, attch_id, a[self.CREDENTIAL])
+
+            if a_rtb != tagged_assoc:
+                if a_rtb:
+                    log('\ndisassociating transit route table.' +
+                        ' tgw attachment:%s, tgw rtb:%s' % (attch_id, a_rtb))
+                    self.disassociate_tgw_route_table(region, attch_id, a_rtb,
+                                                      a[self.CREDENTIAL])
+                else:
+                    log('\nassociating route table. '
+                        'attachment:%s, target route table: %s' %
+                        (attch_id, tagged_assoc))
+                    self.associate_tgw_route_table(region, attch_id,
+                                                   tagged_assoc,
+                                                   a[self.CREDENTIAL])
+            for rtb in tagged_props:
+                if rtb not in a_props:
+                    log('\nenabling propagation for route table:'
+                        ' attachment:"%s", route table:"%s"' % (attch_id, rtb))
+                    self.set_propagation(region, 'Enable', attch_id, rtb,
+                                         a[self.CREDENTIAL])
+
+            for rtb in (a_props - tagged_props):
+                log('\ndisabling propagation for route table:'
+                    'attachment=%s, routeTable=%s' % (attch_id, rtb))
+                self.set_propagation(region, 'Disable', attch_id, rtb,
+                                     a[self.CREDENTIAL])
+
+    def get_customer_gateway_address(self, vpn_connection_id, vconns):
+        return vconns[vpn_connection_id]['customerGatewayConfiguration'][
+            'ipsec_tunnel'][0][
+            'customer_gateway']['tunnel_outside_address']['ip_address']
+
+    def disassociate_tgw_route_table(self, region, attach_id, current_rtb_id,
+                                     sub_cred):
+        self.request('ec2', region, 'GET', '/?' + urllib.urlencode({
+            'Action': 'DisassociateTransitGatewayRouteTable',
+            'Version': '2016-11-15',
+            'TransitGatewayRouteTableId': current_rtb_id,
+            'TransitGatewayAttachmentId': attach_id}), '', sub_cred=sub_cred)
+
+    def associate_tgw_route_table(self, region, attach_id, target_rtb_id,
+                                  sub_cred):
+        self.request(
+            'ec2', region, 'GET', '/?' + urllib.urlencode({
+                'Action': 'AssociateTransitGatewayRouteTable',
+                'Version': '2016-11-15',
+                'TransitGatewayRouteTableId': target_rtb_id,
+                'TransitGatewayAttachmentId': attach_id}), '',
+            sub_cred=sub_cred)
+
+    def set_propagation(self, region, action, attach_id, target_rtb_id,
+                        sub_cred):
+        self.request(
+            'ec2', region, 'GET', '/?' + urllib.urlencode({
+                'Action': action + 'TransitGatewayRouteTablePropagation',
+                'Version': '2016-11-15',
+                'TransitGatewayRouteTableId': target_rtb_id,
+                'TransitGatewayAttachmentId': attach_id}), '',
+            sub_cred=sub_cred)
+
+    def provision_for_vpc(self, vpn_env, vpcs, vgws, cgws, vconns, region,
+                          cgw_by_cred_addr, sub_cidrs_by_vpc_id,
+                          used_cgws, stacks, test=False):
+        prefix, vpn_tags, gw_tun_addrs = vpn_env
+        sub_cidrs_by_cgw_addr = {}
+        self.update_used_cgws_cidrs(
+            vgws[region], cgws[region], vconns[region],
+            stacks[region],
+            used_cgws.setdefault(region, set()), sub_cidrs_by_vpc_id,
+            sub_cidrs_by_cgw_addr)
 
         if test:
             log('\nUsed tunnel CIDRs by vpc ID and gateway address:')
@@ -1129,95 +1487,84 @@ class AWS(Controller):
                         gw_addr, sub_cidr))
                     sub_cidrs.add(sub_cidr)
 
-        for region in self.regions:
-            log('\n%s' % region)
-            cgw_by_cred_addr = {}
-            for cgw in cgws[region].values():
-                cgw_by_cred_addr.setdefault(cgw[self.CREDENTIAL], {})[
-                    cgw['ipAddress']] = cgw
-            for rtb in rtbs[region].values():
-                if rtb['vpcId'] not in vpcs[region]:
-                    continue
-                if any(a['main'] == 'true' for a in rtb['associationSet']):
-                    assert self.RTB not in vpcs[region][rtb['vpcId']]  # FIXME
-                    vpcs[region][rtb['vpcId']][self.RTB] = rtb['routeTableId']
-            tagged_vpcs = set()
-            updated_vpcs = set()
-            for vpc_id in vpcs[region]:
-                vpc = vpcs[region][vpc_id]
-                tag, orig_tag = self.resolve_tag(prefix, vpn_tags, vpc)
-                if not tag:
-                    continue
-                tagged_vpcs.add(vpc_id)
-                if test:
-                    log('\nwould synchronize: %s' % vpc_id)
-                    continue
-                cgw_ids = self.get_cgw_ids(
-                    region, tag, orig_tag, vpc, cgws, cgw_by_cred_addr)
-                if None in cgw_ids:
-                    log('\nskipping: %s "%s" (%s)' % (vpc_id, tag, orig_tag))
-                    continue
+        tagged_vpcs = set()
+        updated_vpcs = set()
+        for vpc_id in vpcs[region]:
+            vpc = vpcs[region][vpc_id]
+            tag, orig_tag = self.resolve_tag(prefix, vpn_tags, vpc_id,
+                                             vpc.get('tagSet'))
+            if not tag:
+                continue
+            tagged_vpcs.add(vpc_id)
+            if test:
+                log('\nwould synchronize: %s' % vpc_id)
+                continue
+            cgw_ids = self.get_cgw_ids(
+                region, tag, orig_tag, vpc[self.CREDENTIAL], cgws,
+                cgw_by_cred_addr)
+            if None in cgw_ids:
+                log('\nskipping: %s "%s" (%s)' % (vpc_id, tag, orig_tag))
+                continue
 
-                stack = stacks[region].get(vpc_id)
-                if stack:
-                    old_cgws = set(self.get_parameter(stack, 'cgws', ','))
-                    new_cgws = set(cgw_ids)
-                    if old_cgws != new_cgws:
-                        log('\nneed to reprovision: %s "%s" (%s) (%s->%s)' % (
-                            vpc_id, tag, orig_tag,
-                            sorted([str(c) for c in old_cgws]),
-                            sorted([str(c) for c in new_cgws])))
-                        updated_vpcs.add(vpc_id)
-                    continue
+            stack = stacks[region].get(vpc_id)
+            if stack:
+                old_cgws = set(self.get_parameter(stack, 'cgws', ','))
+                new_cgws = set(cgw_ids)
+                if old_cgws != new_cgws:
+                    log('\nneed to reprovision: %s "%s" (%s) (%s->%s)' % (
+                        vpc_id, tag, orig_tag,
+                        sorted([str(c) for c in old_cgws]),
+                        sorted([str(c) for c in new_cgws])))
+                    updated_vpcs.add(vpc_id)
+                continue
 
-                if not cgw_ids:
-                    continue
+            if not cgw_ids:
+                continue
 
-                cidrs = []
-                for cgw_id in cgw_ids:
-                    used_cgws[region].add(cgw_id)
-                    addr = cgws[region][cgw_id]['ipAddress']
-                    for _ in xrange(2):
-                        cidrs.append(self.get_free_cidr(
-                            vpc_id, addr,
-                            sub_cidrs_by_vpc_id, sub_cidrs_by_cgw_addr))
-                self.provision(
-                    region, prefix, (tag, orig_tag), vpc, cgw_ids, cidrs)
+            cidrs = []
+            for cgw_id in cgw_ids:
+                used_cgws[region].add(cgw_id)
+                addr = cgws[region][cgw_id]['ipAddress']
+                for _ in xrange(2):
+                    cidrs.append(self.get_free_cidr(
+                        vpc_id, addr,
+                        sub_cidrs_by_vpc_id, sub_cidrs_by_cgw_addr))
+            self.provision(
+                region, prefix, (tag, orig_tag), vpc, cgw_ids, cidrs)
 
-            for vpc_id in (
-                    set(stacks[region]) - set(tagged_vpcs)) | updated_vpcs:
-                stack = stacks[region][vpc_id]
-                stack_prefix = self.get_parameter(stack, 'prefix')
-                if stack_prefix is None:
-                    log('\n%s has no prefix parameter' %
-                        stack['StackName'])
-                elif stack_prefix != prefix:
-                    continue
-                if stack['StackStatus'] == 'DELETE_IN_PROGRESS':
-                    continue
-                if test:
-                    log('\nwould deprovision: %s' % stack['StackName'])
-                    continue
-                log('\ndeprovisioning: %s' % stack['StackName'])
-                self.request(
-                    'cloudformation', region, 'GET',
-                    '/?Action=DeleteStack&StackName=' + stack['StackName'], '',
-                    sub_cred=stack[self.CREDENTIAL])
+        for vpc_id in (set(stacks[region]) -
+                       set(tagged_vpcs)) | updated_vpcs:
+            stack = stacks[region][vpc_id]
+            stack_prefix = self.get_parameter(stack, 'prefix')
+            if stack_prefix is None:
+                log('\n%s has no prefix parameter' %
+                    stack['StackName'])
+            elif stack_prefix != prefix:
+                continue
+            if stack['StackStatus'] == 'DELETE_IN_PROGRESS':
+                continue
+            if test:
+                log('\nwould deprovision: %s' % stack['StackName'])
+                continue
+            log('\ndeprovisioning: %s' % stack['StackName'])
+            self.request(
+                'cloudformation', region, 'GET',
+                '/?Action=DeleteStack&StackName=' + stack['StackName'], '',
+                sub_cred=stack[self.CREDENTIAL])
 
-            for cgw_id in set(cgws[region]) - used_cgws[region]:
-                cgw = cgws[region][cgw_id]
-                if cgw.get('tagSet', []):
-                    continue
-                if test:
-                    log('\nwould delete: %s' % cgw_id)
-                    continue
-                log('\ndeleting customer gateway %s (%s %s)' % (
-                    cgw_id, cgw['ipAddress'], cgw['bgpAsn']))
-                self.request(
-                    'ec2', region, 'GET',
-                    '/?Action=DeleteCustomerGateway&CustomerGatewayId=' +
-                    cgw_id, '', sub_cred=cgw[self.CREDENTIAL])
-        log('\n')
+        for cgw_id in set(cgws[region]) - used_cgws[region]:
+            cgw = cgws[region][cgw_id]
+            if cgw.get('tagSet', []):
+                continue
+            if test:
+                log('\nwould delete: %s' % cgw_id)
+                continue
+            log('\ndeleting customer gateway %s (%s %s)' % (
+                cgw_id, cgw['ipAddress'], cgw['bgpAsn']))
+            self.request(
+                'ec2', region, 'GET',
+                '/?Action=DeleteCustomerGateway&CustomerGatewayId=' +
+                cgw_id, '', sub_cred=cgw[self.CREDENTIAL])
 
     def get_vpn_conns(self, vpn_env=None, test=False):
         vpcs = {}
@@ -1239,7 +1586,6 @@ class AWS(Controller):
                         vpc[self.VGW] = vgw_id
                         assert self.VPC not in vgw
                         vgw[self.VPC] = vpc['vpcId']
-
         self.vpn_by_tag(vpn_env, vpcs, vgws, vconns, test=test)
 
         vpn_conns = []
@@ -1249,21 +1595,25 @@ class AWS(Controller):
                 base_name = self.SEPARATOR.join([
                     self.name, short_name, region])
                 tag = self.get_tags(vconn.get('tagSet')).get('x-chkp-vpn')
-                vpc_id = vgws[region].get(vconn['vpnGatewayId'], {}).get(
-                    self.VPC)
-                vpc = None
-                if vpc_id:
-                    vpc = vpcs[region].get(vpc_id)
-                if not vpc:
-                    log('\nskipping %s - no vpc' % short_name)
-                    continue
+                vpc_id = None
+                tgw_id = None
                 cidr_set = set()
-                for assoc in vpc['cidrBlockAssociationSet']:
-                    if assoc['cidrBlockState']['state'] != 'associated':
+                if 'vpnGatewayId' in vconn:  # transit gw vpn will be 'None'
+                    vpc_id = vgws[region].get(
+                        vconn.get('vpnGatewayId'), {}).get(self.VPC)
+                    if not vpc_id:
+                        log('\nskipping %s - no vpc' % short_name)
                         continue
-                    cidr_set.add(assoc['cidrBlock'])
-                cidr_set.discard(vpc['cidrBlock'])
-                cidrs = ','.join([vpc['cidrBlock']] + sorted(cidr_set))
+                    vpc = vpcs[region].get(vpc_id)
+                    for assoc in vpc['cidrBlockAssociationSet']:
+                        if assoc['cidrBlockState']['state'] != 'associated':
+                            continue
+                        cidr_set.add(assoc['cidrBlock'])
+                    cidr_set.discard(vpc['cidrBlock'])
+                    cidrs = ','.join([vpc['cidrBlock']] + sorted(cidr_set))
+                else:
+                    tgw_id = vconn['transitGatewayId']
+                    cidrs = '0.0.0.0/0'
                 vconn_tunnels = vconn[
                     'customerGatewayConfiguration']['ipsec_tunnel']
                 if any('bgp' not in t['vpn_gateway'] for t in vconn_tunnels):
@@ -1284,7 +1634,7 @@ class AWS(Controller):
                     vpn_conns.append(
                         VPNConn(name, self.name, short_name, tag, gateway,
                                 peer, local, remote, asn, pre_shared_key,
-                                cidrs))
+                                tgw_id, cidrs))
         return vpn_conns
 
     @staticmethod
@@ -1763,6 +2113,7 @@ class Management(object):
     GATEWAY_PREFIX = '__gateway__'
     VSEC_DUMMY_HOST = DUMMY_PREFIX + 'vsec_internal_host'
     CONTROLLER_PREFIX = '__controller__'
+    TVPC_PREFIX = '__tvpc__'
     CIDR_PREFIX = '__cidr__'
     VPN_PREFIX = '__vpn__'
     COMMUNITY_PREFIX = '__community__'
@@ -2829,6 +3180,8 @@ class Management(object):
         ips_profile = simple_gateway.pop('ips-profile', None)
         vpn_community_star_as_center = simple_gateway.pop(
             'vpn-community-star-as-center', None)
+        # currently removing deployment type attribute
+        simple_gateway.pop('deployment-type', None)
         vpn_domain = simple_gateway.pop('vpn-domain', None)
         specific_network = simple_gateway.pop('specific-network', None)
         policy = simple_gateway.pop('policy')
@@ -3081,16 +3434,27 @@ class Management(object):
             tag_params.append(tags_dict[self.SPOKE_ROUTES])
             if self.EXPORT_ROUTES in tags_dict:
                 tag_params.extend(tags_dict[self.EXPORT_ROUTES].split(','))
-        out = self.run_script(gw_name, 'config-vpn add \'%s\'' % (
-            '\' \''.join([
-                str(index), vpn_conn.local, vpn_conn.asn, vpn_conn.remote,
-                iod_name, vpn_conn.cidr] + tag_params)))
+        if vpn_conn.tgw_id:
+            out = self.run_script(gw_name, 'config-vpn add-tgw \'%s\'' % (
+                '\' \''.join([vpn_conn.local, vpn_conn.asn,
+                              vpn_conn.remote, iod_name, vpn_conn.cidr] +
+                             tag_params)))
+        else:
+            out = self.run_script(gw_name, 'config-vpn add \'%s\'' % (
+                '\' \''.join([str(index), vpn_conn.local, vpn_conn.asn,
+                              vpn_conn.remote, iod_name, vpn_conn.cidr] +
+                             tag_params)))
         log('\n%s' % out)
-
         log('\ngetting interfaces')
         self(self.get_interfaces_command_version[0], {'target-name': gw_name},
              version=self.get_interfaces_command_version[1])
 
+        if vpn_conn.tgw_id:
+            log('\nupdating vpn interfaces...')
+            gw_uid = self.get_uid(gw_name, obj_type='simple-gateway')
+            gw_generic = self('show-generic-object', {'uid': gw_uid})
+            self.update_vti_antispoof_and_lead_to_inet(
+                gw_generic['interfaces'], gw_uid)
         log('\nadding interoperable device to community "%s"' % community)
         self(
             'set-vpn-community-star',
@@ -3106,8 +3470,25 @@ class Management(object):
 
         self.set_object_tag_value(uid, self.COMMUNITY_PREFIX, community)
 
+    def update_vti_antispoof_and_lead_to_inet(self, gw_interfaces, gw_uid):
+        for interface in gw_interfaces:
+            if interface['officialname'].startswith('vpnt'):
+                self.set_generic_update_vti_anti_spoofing(gw_uid, interface)
+
+    def set_generic_update_vti_anti_spoofing(self, gw_uid, interface):
+        int_obj = {'owned-object': {
+            'security': {
+                'antispoof': False,
+                'netaccess': {
+                    'performAntiSpoofing': False,
+                    'leadsToInternet': True}}},
+                   'uid': interface['objId']}
+        self('set-generic-object', {
+            'uid': gw_uid, 'interfaces': {'set': int_obj}})
+
     def delete_vpn(self, iod):
         iod_name = iod['name']
+        tvpc_mode = self.get_object_tag_value(iod, self.TVPC_PREFIX)
         gw_name = self.get_object_tag_value(iod, self.GATEWAY_PREFIX)
         cidr = self.get_object_tag_value(iod, self.CIDR_PREFIX)
         log('\ndeleting vpn for: %s (%s %s)' % (iod_name, gw_name, cidr))
@@ -3122,14 +3503,22 @@ class Management(object):
         gw_uid = self.get_uid(gw_name, obj_type='simple-gateway')
         if gw_uid:
             log('\ngoing to deprovision "%s":' % gw_name)
-            out = self.run_script(
-                gw_name, 'config-vpn delete \'%s\' \'%s\'' % (
-                    iod_name, cidr))
+            operation = 'delete'
+            if not tvpc_mode:
+                operation = 'delete-tgw'
+
+            out = self.run_script(gw_name, 'config-vpn %s \'%s\' \'%s\'' % (
+                operation, iod_name, cidr))
             log('\n%s' % out)
             log('\ngetting interfaces')
             self(self.get_interfaces_command_version[0],
                  {'target-name': gw_name},
                  version=self.get_interfaces_command_version[1])
+            if not tvpc_mode:
+                log('\nupdating vpn interfaces...')
+                gw_generic = self('show-generic-object', {'uid': gw_uid})
+                self.update_vti_antispoof_and_lead_to_inet(
+                    gw_generic['interfaces'], gw_uid)
             self.reinstall_policy(gw_name)
 
         log('\ndeleting interoperable device')
@@ -3192,6 +3581,8 @@ class Management(object):
         self.put_object_tag_value(obj, self.CIDR_PREFIX, vpn_conn.cidr)
         self.put_object_tag_value(obj, self.CONTROLLER_PREFIX,
                                   vpn_conn.controller)
+        if not vpn_conn.tgw_id:
+            self.put_object_tag_value(obj, self.TVPC_PREFIX, str(True))
         self.put_object_tag_value(obj, self.VPN_PREFIX, vpn_conn.name)
 
         obj = self('add-generic-object', obj)
@@ -3249,9 +3640,8 @@ def sync_vpn(controller, management):
         log('\n')
     gateways = management.get_gateways(filtered=False, version='v1.1')
     communities = management.get_star_communities()
-    vpn_conns = controller.get_vpn_conns(
-        get_vpn_env(controller, management, communities, gateways))
     addr_to_gw_comm = {}
+    # FIXME: TGW will not provision in case one gw is not communicating..
     for community, centers, _ in communities:
         if controller.communities and (
                 community not in controller.communities):
@@ -3267,6 +3657,10 @@ def sync_vpn(controller, management):
                 addr = gateways[gw_name]['ipv4-address']
             name_index_comm = (gw_name, centers[gw_name], community)
             addr_to_gw_comm.setdefault(addr, []).append(name_index_comm)
+
+    vpn_conns = controller.get_vpn_conns(
+        get_vpn_env(controller, management, communities, gateways))
+
     vpn_conn_to_gw_comm = {}
     filtered_vpn_conns = {}
     for vconn in vpn_conns:
