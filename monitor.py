@@ -497,18 +497,29 @@ class AWS(Controller):
         i2lb_names = {}
         lb_name2cidrs = {}
         for elb in elb_list:
-            cidrs = [subnets[s]['cidrBlock'] for s in elb['Subnets']]
-            back_ports = []
-            for listener in elb['ListenerDescriptions']:
-                back_ports.append('%s' % listener['Listener']['InstancePort'])
-            self.register_internal_lb(elb, by_template)
-            lb_name = elb['LoadBalancerName']
-            for i in elb['Instances']:
-                i2lb_names.setdefault(i['InstanceId'], set()).add(
-                    elb['LoadBalancerName'])
-            lb_name2cidrs.setdefault(lb_name, {})
-            for port in back_ports:
-                lb_name2cidrs[lb_name][port] = cidrs
+            try:
+                cidrs = []
+                for s in elb['Subnets']:
+                    try:
+                        cidrs.append(subnets[s]['cidrBlock'])
+                    except Exception:
+                        raise Exception('\nWARNING: subnet "%s" not exist, '
+                                        'skipping elb "%s"'
+                                        % (s, elb['LoadBalancerName']))
+                back_ports = []
+                for listener in elb['ListenerDescriptions']:
+                    back_ports.append(
+                        '%s' % listener['Listener']['InstancePort'])
+                self.register_internal_lb(elb, by_template)
+                lb_name = elb['LoadBalancerName']
+                for i in elb['Instances']:
+                    i2lb_names.setdefault(i['InstanceId'], set()).add(
+                        elb['LoadBalancerName'])
+                lb_name2cidrs.setdefault(lb_name, {})
+                for port in back_ports:
+                    lb_name2cidrs[lb_name][port] = cidrs
+            except Exception:
+                log('\n%s' % traceback.format_exc())
 
         for group in auto_scaling_groups:
             for i in group['Instances']:
