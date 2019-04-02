@@ -3701,7 +3701,8 @@ def sync_vpn(controller, management):
             gw_name, gw_index, comm_name = vpn_conn_to_gw_comm[name]
             log('\nsynchronizing: %s %s %s %s' % (
                 filtered_vpn_conns[name].name, gw_name, gw_index, comm_name))
-            if not management.get_object_tag_value(
+            if TAG in management.get_object_tags(
+                    gateways[gw_name]) and not management.get_object_tag_value(
                     gateways[gw_name], management.TEMPLATE_PREFIX):
                 log('\nskipping incompletely configured gateway: %s' % gw_name)
                 continue
