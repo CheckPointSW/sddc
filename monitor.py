@@ -1023,7 +1023,8 @@ class AWS(Controller):
         hub_tags = []
         for hub_tag in tag.split(':'):
             if not hub_tag.startswith(prefix):
-                log(': "%s" must start with "%s"' % (hub_tag, prefix))
+                log(
+                ' for provisioning, the tag must start with "%s"' % (prefix))
                 return None, None
             new_tag = vpn_tags.get(hub_tag)
             if new_tag is None:
@@ -1217,12 +1218,23 @@ class AWS(Controller):
                                    tgw_attachments[region],
                                    tgw_route_tables[region])
 
+    def filter_by_tgw_id(self, tgw_resource):
+        resource_by_tgw_id = {}
+        for k, v in tgw_resource.items():
+            tgw_id = v.get('transitGatewayId')
+            if tgw_id:
+                resource_by_tgw_id.setdefault(tgw_id, {}).update({k: v})
+        return resource_by_tgw_id
+
     def provision_for_tgw(self, vpn_env, tgws, vconns, cgw_by_addr, region,
                           tgw_stacks, tgw_attachments, tgw_route_tables):
         prefix, vpn_tags, gw_tun_addrs = vpn_env
         log('\nProvision for tgw(): prefix=%s' % prefix)
         stack_names_to_keep = set()
         vconns_by_cgw_id = {}
+
+        tgw_attachments_by_id = self.filter_by_tgw_id(tgw_attachments)
+        tgw_rtb_by_id = self.filter_by_tgw_id(tgw_route_tables)
 
         for vconn in vconns.values():
             # FIXME: assumption there is only single CG for VPN
@@ -1269,9 +1281,9 @@ class AWS(Controller):
                                 'TransitGatewayId': tgw_id}), '',
                             sub_cred=tgw[self.CREDENTIAL])
             gw_addresses = [g[0] for g in gw_address_asn_set]
-            self.tgw_association_and_propagation(region, orig_tag, tgw_id,
-                                                 tgw_attachments,
-                                                 tgw_route_tables,
+            self.tgw_association_and_propagation(region, orig_tag,
+                                                 tgw_attachments_by_id[tgw_id],
+                                                 tgw_rtb_by_id[tgw_id],
                                                  gw_addresses,
                                                  vconns)
 
@@ -1347,7 +1359,7 @@ class AWS(Controller):
             action_keyword = tag[len(hub_prefix + '/'):]
             if action_keyword == 'associate':
                 if association_rtb_id:
-                    raise Exception('Found more than one association tag.' +
+                    raise Exception('found more than one association tag.' +
                                     'please reconfigure tags. '
                                     'rtb=%s, tag=%s' % (association_rtb_id,
                                                         tag))
@@ -1362,7 +1374,7 @@ class AWS(Controller):
             % (association_rtb_id, propagation_rtbs))
         return association_rtb_id, propagation_rtbs
 
-    def tgw_association_and_propagation(self, region, parent_tag, tgw_id,
+    def tgw_association_and_propagation(self, region, parent_tag,
                                         tgw_attachments, tgw_route_tables,
                                         gw_addresses, vconns):
         log('\ntgw_association_and_propagation(): tgw_tag=%s' % parent_tag)
@@ -1371,13 +1383,10 @@ class AWS(Controller):
         for attch_id in tgw_attachments:
             a = tgw_attachments[attch_id]
 
-            if a['transitGatewayId'] != tgw_id:
+            if a.get('resourceType') != 'vpn':
                 continue
 
-            if not a['resourceType'] == 'vpn':
-                continue
-
-            if a['resourceId'] not in vconns:
+            if a.get('resourceId') not in vconns:
                 log('\nvpn connection could not be found. '
                     'will wait for next cycle to reload. '
                     'vpn_connection_id=%s' % a['resourceId'])
