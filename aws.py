@@ -420,6 +420,7 @@ AWS_SESSION_TOKEN - (optional)
             finally:
                 delattr(self, 'for_sts')
             if h['_code'] != '200':
+                log('\nFailed to assume role: {}\n'.format(self.creds['sts_role']))
                 msg = '%s %s' % (h.get('_code'), h.get('_reason'))
                 if h.get('_parsed') and 'Error' in b:
                     msg = '%s: %s: %s' % (
