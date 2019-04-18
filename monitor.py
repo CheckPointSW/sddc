@@ -1352,7 +1352,7 @@ class AWS(Controller):
         return gw_address_asn_set
 
     def get_tgw_tags(self, hub_prefix, tgw_route_tables, test=False):
-        association_rtb_id = ""
+        association_rtb_id = None
         propagation_rtbs = set()
         for rtb in tgw_route_tables.values():
             tag = self.get_tags(rtb.get('tagSet')).get('x-chkp-vpn')
@@ -1388,7 +1388,7 @@ class AWS(Controller):
                         'value=%s' % action_keyword)
         log('\n    expected TGW route tables:\n      associated route table: '
             '%s\n      propagated route tables: %s'
-            % (association_rtb_id, ', '.join(propagation_rtbs)))
+            % (association_rtb_id or "", ', '.join(propagation_rtbs)))
         return association_rtb_id, propagation_rtbs
 
     def tgw_association_and_propagation(self, region, parent_tag, tgw_id,
