@@ -258,7 +258,7 @@ AWS_SUBACCOUNT_ARGS = (SUBCREDENTIALS_NAME,
                        'AWS sub-credentials STS external id')
 
 LIST_PARAMETERS = ('regions', 'custom parameters', 'proxy ports',
-                   'community name', 'controller templates', 'communities')
+                   'controller templates', 'communities')
 
 
 def get_templates(conf):
@@ -869,9 +869,8 @@ ARGUMENTS = {
     ],
     'community name': [
         '-con', [TEMPLATES, TEMPLATE_NAME, 'vpn-community-star-as-center'],
-        'a comma-separated list of star communities in which to place the VPN '
-        'gateway (with "vpn": true) as center (optional)',
-        {'type': validate_comma_seperated_list}
+        'a star community in which to place the VPN gateway '
+        '(with "vpn": true) as center (optional)', None
     ],
     'vpn-domain': [
         '-vd', [TEMPLATES, TEMPLATE_NAME, 'vpn-domain'],
