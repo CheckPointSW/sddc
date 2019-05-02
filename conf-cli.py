@@ -94,7 +94,7 @@ USAGE_EXAMPLES = {
         ','.join(AVAILABLE_VERSIONS) + '} -po <POLICY-NAME>',
         'add template -tn <TEMPLATE-NAME> -otp <SIC-KEY> -ver {' +
         ','.join(AVAILABLE_VERSIONS) + '} -po <POLICY-NAME> [-hi] [-ia] '
-        '[-appi]'
+        '[-appi] [-dth]'
     ],
     'add_controller_AWS': [
         'add controller AWS -cn <NAME> -r eu-west-1,us-east-1,eu-central-1  '
@@ -116,6 +116,7 @@ USAGE_EXAMPLES = {
         'add controller GCP -cn <NAME> -proj <PROJECT> -cr <FILE-PATH>'
     ],
     'set_delay': ['set delay 60'],
+    'set_deletion_tolerance': ['set deletion-tolerance 4'],
     'set_management': [
         'set management [-mn <NEW-NAME>] [-mh <NEW-HOST> [-d <DOMAIN>] [-fp '
         '<FINGERPRINT>] [-u <USER>] [-pass <PASSWORD>] [-pr <PROXY>] [-cs '
@@ -124,7 +125,7 @@ USAGE_EXAMPLES = {
     'set_template': [
         'set template -tn <NAME> [-otp <SIC-KEY>] [-ver {' +
         ','.join(AVAILABLE_VERSIONS) + '}]',
-        '[-po <POLICY>]', 'set template -tn <NAME> [-hi] [-ia] [-appi]'
+        '[-po <POLICY>]', 'set template -tn <NAME> [-hi] [-ia] [-appi] [-dth]'
     ],
     'set_controller_AWS': [
         'set controller AWS -cn <NAME> '
@@ -320,7 +321,8 @@ def create_parser_dict(conf):
              'deployment type', 'vpn', 'community name', 'vpn-domain'],
             'initialize autoprovision settings for AWS',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['init_aws']),
-            {'delay': 30, 'class': 'AWS', 'host': 'localhost'}],
+            {'delay': 30, 'class': 'AWS', 'host': 'localhost',
+             'deletion-tolerance': 4}],
         'init_azure': [
             AZURE, ['Management name', TEMPLATE_NAME, 'one time password',
                     'version', 'policy', CONTROLLER_NAME, 'subscription'],
@@ -330,8 +332,8 @@ def create_parser_dict(conf):
              'Azure password'],
             'initialize autoprovision settings for Azure',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['init_azure']),
-            {'delay': 30, 'class': 'Azure', 'host':
-                'localhost'}
+            {'delay': 30, 'class': 'Azure', 'host': 'localhost',
+             'deletion-tolerance': 4}
         ],
         'init_gcp': [GCP, [], [],
                      'support for GCP will be added in the future',
@@ -394,6 +396,11 @@ def create_parser_dict(conf):
                 USAGE_EXAMPLES['add_controller_GCP']),
             {'class': 'GCP'}
         ],
+        'set_deletion_tolerance': [
+            'deletion-tolerance', [], ['deletion-tolerance'],
+            'set deletion-tolerance', 'usage examples: \n' + '\n'.join(
+                USAGE_EXAMPLES['set_deletion_tolerance']), None
+        ],
         'set_delay': [
             DELAY, [], [DELAY], 'set delay',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['set_delay']), None
@@ -402,7 +409,8 @@ def create_parser_dict(conf):
             MANAGEMENT, [],
             ['Management name', 'host', 'domain', 'fingerprint', 'user',
              'Management password', 'Management password 64bit', 'proxy',
-             'custom script'], 'set management arguments',
+             'custom script', 'deletion-tolerance'],
+            'set management arguments',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['set_management']),
             None
         ],
@@ -476,7 +484,8 @@ def create_parser_dict(conf):
              ('Management password', {'action': 'store_true'}),
              ('Management password 64bit', {'action': 'store_true'}),
              ('proxy', {'action': 'store_true'}),
-             ('custom script', {'action': 'store_true'})],
+             ('custom script', {'action': 'store_true'}),
+             ('deletion-tolerance', {'action': 'store_true'})],
             'delete management arguments',
             'usage examples: \n' + '\n'.join(
                 USAGE_EXAMPLES['delete_management']),
@@ -744,6 +753,11 @@ ARGUMENTS = {
         'or a template/generation change), '
         'the custom script will be run with "delete" '
         'and later again with "add" and the custom parameters', None
+    ],
+    'deletion-tolerance': [
+        'deletion-tolerance', [MANAGEMENT, 'deletion-tolerance'],
+        'number of cycles until GW object in SmartConsole is deleted',
+        {'type': int}
     ],
     TEMPLATE_NAME: [
         '-tn', [TEMPLATES],
@@ -1889,6 +1903,7 @@ def build_parsers(conf):
 
     set_subparsers = set_subparser.add_subparsers(dest='branch')
     add_parser(conf, set_subparsers, 'set_delay')
+    add_parser(conf, set_subparsers, 'set_deletion_tolerance')
     add_parser(conf, set_subparsers, 'set_management')
     add_parser(conf, set_subparsers, 'set_template')
     set_controller_subparser = add_parser(conf, set_subparsers,

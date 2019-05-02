@@ -50,6 +50,7 @@ CIDRS_REGEX = (r'^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}'
                r'([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])'
                r'(\/([0-9]|[1-2][0-9]|3[0-2]))$')
 
+pending_delete_gws = collections.OrderedDict()
 conf = collections.OrderedDict()
 log_buffer = [None]
 
@@ -2177,6 +2178,7 @@ class Management(object):
         self.local_host_uid = None
         self.targets = {}
         self.get_interfaces_command_version = None
+        self.deletion_tolerance = int(options.get('deletion-tolerance', '4'))
 
         if 'proxy' in options:
             os.environ['https_proxy'] = options['proxy']
@@ -3740,8 +3742,23 @@ def sync(controller, management, gateways):
                                 controller.name + controller.SEPARATOR))
     for name in filtered_gateways - set(instances):
         try:
-            management.set_state(name, 'DELETING')
-            management.reset_gateway(name, delete_gw=True)
+            if name not in pending_delete_gws:
+                pending_delete_gws[name] = management.deletion_tolerance
+                log('\ngateway %s found only in Smart Console. '
+                    '(delete in %s cycles)'
+                    % (name, management.deletion_tolerance - 1))
+            else:
+                current_count = pending_delete_gws.get(name) - 1
+                if current_count <= 1:
+                    log('\ngateway %s found only in Smart Console. '
+                        'deleting' % name)
+                    management.set_state(name, 'DELETING')
+                    management.reset_gateway(name, delete_gw=True)
+                else:
+                    pending_delete_gws[name] = current_count
+                log('\ngateway %s found only in Smart Console. '
+                    '(delete in %s cycles)'
+                    % (name, current_count - 1))
         except Exception:
             log('\n%s' % traceback.format_exc())
         finally:
@@ -3754,6 +3771,8 @@ def sync(controller, management, gateways):
             if not is_SIC_open(instances[name]):
                 management.set_state(name, 'INITIALIZING')
                 continue
+        elif name in pending_delete_gws:
+            pending_delete_gws.pop(name)
         try:
             management.set_gateway(instances[name], gw)
             management.set_state(name, 'COMPLETE')
