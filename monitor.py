@@ -498,28 +498,22 @@ class AWS(Controller):
         lb_name2cidrs = {}
         for elb in elb_list:
             try:
-                cidrs = []
-                for s in elb['Subnets']:
-                    try:
-                        cidrs.append(subnets[s]['cidrBlock'])
-                    except Exception:
-                        raise Exception('\nWARNING: subnet "%s" not exist, '
-                                        'skipping elb "%s"'
-                                        % (s, elb['LoadBalancerName']))
-                back_ports = []
-                for listener in elb['ListenerDescriptions']:
-                    back_ports.append(
-                        '%s' % listener['Listener']['InstancePort'])
-                self.register_internal_lb(elb, by_template)
-                lb_name = elb['LoadBalancerName']
-                for i in elb['Instances']:
-                    i2lb_names.setdefault(i['InstanceId'], set()).add(
-                        elb['LoadBalancerName'])
-                lb_name2cidrs.setdefault(lb_name, {})
-                for port in back_ports:
-                    lb_name2cidrs[lb_name][port] = cidrs
+                cidrs = [subnets[s]['cidrBlock'] for s in elb['Subnets']]
             except Exception:
                 log('\n%s' % traceback.format_exc())
+                continue
+            back_ports = []
+            for listener in elb['ListenerDescriptions']:
+                back_ports.append(
+                    '%s' % listener['Listener']['InstancePort'])
+            self.register_internal_lb(elb, by_template)
+            lb_name = elb['LoadBalancerName']
+            for i in elb['Instances']:
+                i2lb_names.setdefault(i['InstanceId'], set()).add(
+                    elb['LoadBalancerName'])
+            lb_name2cidrs.setdefault(lb_name, {})
+            for port in back_ports:
+                lb_name2cidrs[lb_name][port] = cidrs
 
         for group in auto_scaling_groups:
             for i in group['Instances']:
@@ -570,9 +564,13 @@ class AWS(Controller):
         target_group2dns_names = {}
         for v2lb in v2lb_dict.values():
             dns_name = v2lb['DNSName']
-            cidrs = [
-                subnets[az['SubnetId']]['cidrBlock']
-                for az in v2lb['AvailabilityZones']]
+            try:
+                cidrs = [
+                    subnets[az['SubnetId']]['cidrBlock']
+                    for az in v2lb['AvailabilityZones']]
+            except Exception:
+                log('\n%s' % traceback.format_exc())
+                continue
             dns_name2cidrs.setdefault(dns_name, []).extend(cidrs)
             for listener in v2lb['Listeners']:
                 rules = self.retrieve_all(
