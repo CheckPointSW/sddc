@@ -497,10 +497,15 @@ class AWS(Controller):
         i2lb_names = {}
         lb_name2cidrs = {}
         for elb in elb_list:
-            cidrs = [subnets[s]['cidrBlock'] for s in elb['Subnets']]
+            try:
+                cidrs = [subnets[s]['cidrBlock'] for s in elb['Subnets']]
+            except Exception:
+                log('\n%s' % traceback.format_exc())
+                continue
             back_ports = []
             for listener in elb['ListenerDescriptions']:
-                back_ports.append('%s' % listener['Listener']['InstancePort'])
+                back_ports.append(
+                    '%s' % listener['Listener']['InstancePort'])
             self.register_internal_lb(elb, by_template)
             lb_name = elb['LoadBalancerName']
             for i in elb['Instances']:
@@ -559,9 +564,13 @@ class AWS(Controller):
         target_group2dns_names = {}
         for v2lb in v2lb_dict.values():
             dns_name = v2lb['DNSName']
-            cidrs = [
-                subnets[az['SubnetId']]['cidrBlock']
-                for az in v2lb['AvailabilityZones']]
+            try:
+                cidrs = [
+                    subnets[az['SubnetId']]['cidrBlock']
+                    for az in v2lb['AvailabilityZones']]
+            except Exception:
+                log('\n%s' % traceback.format_exc())
+                continue
             dns_name2cidrs.setdefault(dns_name, []).extend(cidrs)
             for listener in v2lb['Listeners']:
                 rules = self.retrieve_all(
