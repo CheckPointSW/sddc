@@ -168,6 +168,10 @@ class Template(object):
                     result[k] = v
         return result
 
+    @staticmethod
+    def get_templates():
+        return Template.templates
+
 
 class Instance(object):
     def __init__(
@@ -301,6 +305,14 @@ class AWS(Controller):
                 self.env_creds = {sub_cred: {
                     e: kwargs[a]
                     for a, e in self.ARG_TO_ENV.items() if kwargs[a]}}
+        self.sync_tgw = False
+        templates = (self.templates if self.templates else
+                     Template.get_templates())
+        for template in templates:
+            if template:
+                if Template.get_dict(template).get('deployment-type') == 'TGW':
+                    self.sync_tgw = True
+                    break
 
     def request(self, service, *args, **kwargs):
         aws_obj = self.aws
@@ -1193,17 +1205,12 @@ class AWS(Controller):
         cgws = {}
         rtbs = {}
         stacks = {}
-        tgws = {}
-        tgw_attachments = {}
-        tgw_route_tables = {}
 
         for cred in [None] + self.sub_creds.keys():
             self.retrieve_cgws(cgws, cred)
             self.retrieve_rtbs(rtbs, cred)
             self.retrieve_stacks(stacks, cred, test)
-            self.retrieve_tgws(tgws, cred)
-            self.retrieve_tgw_attachments(tgw_attachments, cred)
-            self.retrieve_tgw_route_tables(tgw_route_tables, cred)
+
         sub_cidrs_by_vpc_id = {}
         used_cgws = {}
 
@@ -1225,7 +1232,13 @@ class AWS(Controller):
                                    region, cgw_by_cred_addr,
                                    sub_cidrs_by_vpc_id, used_cgws,
                                    stacks['vpc'], test)
-
+            if self.sync_tgw:
+                tgws = {}
+                tgw_attachments = {}
+                tgw_route_tables = {}
+                self.retrieve_tgws(tgws, cred)
+                self.retrieve_tgw_attachments(tgw_attachments, cred)
+                self.retrieve_tgw_route_tables(tgw_route_tables, cred)
             self.provision_for_tgw(vpn_env, tgws[region], vconns[region],
                                    cgw_by_cred_addr, region,
                                    stacks['tgw'][region],
