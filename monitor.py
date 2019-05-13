@@ -887,7 +887,8 @@ class AWS(Controller):
             headers, body = self.request(
                 'ec2', region, 'GET',
                 '/?Action=' +
-                'DescribeTransitGatewayRouteTables&Version=2016-11-15',
+                'DescribeTransitGatewayRouteTables&Version=2016-11-15'
+                '&Filter.1.Name=state&Filter.1.Value.1=available',
                 '', sub_cred=sub_cred)
             tgw_rtbs.setdefault(region, {})
             for a in aws.listify(body, 'item')['transitGatewayRouteTables']:
@@ -914,7 +915,8 @@ class AWS(Controller):
             headers, body = self.request(
                 'ec2', region, 'GET',
                 '/?Action=' +
-                'DescribeTransitGatewayAttachments&Version=2016-11-15',
+                'DescribeTransitGatewayAttachments&Version=2016-11-15'
+                '&Filter.1.Name=state&Filter.1.Value.1=available',
                 '',
                 sub_cred=sub_cred)
             tgw_attachments.setdefault(region, {})
@@ -929,7 +931,8 @@ class AWS(Controller):
             tgws.setdefault(region, {})
             headers, body = self.request(
                 'ec2', region, 'GET',
-                '/?Version=2016-11-15&Action=DescribeTransitGateways', '',
+                '/?Version=2016-11-15&Action=DescribeTransitGateways'
+                '&Filter.1.Name=state&Filter.1.Value.1=available', '',
                 sub_cred=sub_cred)
             for t in aws.listify(body, 'item')['transitGatewaySet']:
                 t[self.CREDENTIAL] = sub_cred
@@ -1244,11 +1247,11 @@ class AWS(Controller):
                 self.retrieve_tgws(tgws, cred)
                 self.retrieve_tgw_attachments(tgw_attachments, cred)
                 self.retrieve_tgw_route_tables(tgw_route_tables, cred)
-            self.provision_for_tgw(vpn_env, tgws[region], vconns[region],
-                                   cgw_by_cred_addr, region,
-                                   stacks['tgw'][region],
-                                   tgw_attachments[region],
-                                   tgw_route_tables[region], test)
+                self.provision_for_tgw(vpn_env, tgws[region], vconns[region],
+                                       cgw_by_cred_addr, region,
+                                       stacks['tgw'][region],
+                                       tgw_attachments[region],
+                                       tgw_route_tables[region], test)
 
     def filter_by_tgw_id(self, tgw_resource):
         resource_by_tgw_id = {}
@@ -1321,8 +1324,9 @@ class AWS(Controller):
                                 sub_cred=tgw[self.CREDENTIAL])
             gw_addresses = [g[0] for g in gw_address_asn_set]
             self.tgw_association_and_propagation(region, orig_tag, tgw_id,
-                                                 tgw_attachments_by_id[tgw_id],
-                                                 tgw_rtb_by_id[tgw_id],
+                                                 tgw_attachments_by_id
+                                                 .get(tgw_id, {}),
+                                                 tgw_rtb_by_id.get(tgw_id, {}),
                                                  gw_addresses,
                                                  vconns, test)
 
