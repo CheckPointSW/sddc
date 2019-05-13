@@ -168,6 +168,10 @@ class Template(object):
                     result[k] = v
         return result
 
+    @staticmethod
+    def get_templates():
+        return Template.templates
+
 
 class Instance(object):
     def __init__(
@@ -186,7 +190,8 @@ class Instance(object):
 
 class VPNConn(object):
     def __init__(self, name, controller, short_name, tag, gateway,
-                 peer, local, remote, asn, pre_shared_key, tgw_id, cidr):
+                 peer, local, remote, asn, pre_shared_key, tgw_id, cidr,
+                 ready):
         self.name = name
         self.controller = controller
         self.short_name = short_name
@@ -199,6 +204,7 @@ class VPNConn(object):
         self.pre_shared_key = pre_shared_key
         self.tgw_id = str(tgw_id or '')
         self.cidr = cidr
+        self.ready = ready
 
     def __str__(self):
         name = self.name
@@ -301,6 +307,14 @@ class AWS(Controller):
                 self.env_creds = {sub_cred: {
                     e: kwargs[a]
                     for a, e in self.ARG_TO_ENV.items() if kwargs[a]}}
+        self.sync_tgw = False
+        templates = (self.templates if self.templates else
+                     Template.get_templates())
+        for template in templates:
+            if template:
+                if Template.get_dict(template).get('deployment-type') == 'TGW':
+                    self.sync_tgw = True
+                    break
 
     def request(self, service, *args, **kwargs):
         aws_obj = self.aws
@@ -843,6 +857,9 @@ class AWS(Controller):
                 s['customerGatewayConfiguration'] = aws.parse_element(
                     aws.xml.dom.minidom.parseString(
                         s['customerGatewayConfiguration']))['vpn_connection']
+                if vconns[region][s['vpnConnectionId']].get(
+                        'transitGatewayId'):
+                    vconns[region][s['vpnConnectionId']]['ready'] = False
 
     def retrieve_cgws(self, cgws, sub_cred):
         for region in self.regions:
@@ -870,7 +887,8 @@ class AWS(Controller):
             headers, body = self.request(
                 'ec2', region, 'GET',
                 '/?Action=' +
-                'DescribeTransitGatewayRouteTables&Version=2016-11-15',
+                'DescribeTransitGatewayRouteTables&Version=2016-11-15'
+                '&Filter.1.Name=state&Filter.1.Value.1=available',
                 '', sub_cred=sub_cred)
             tgw_rtbs.setdefault(region, {})
             for a in aws.listify(body, 'item')['transitGatewayRouteTables']:
@@ -897,7 +915,8 @@ class AWS(Controller):
             headers, body = self.request(
                 'ec2', region, 'GET',
                 '/?Action=' +
-                'DescribeTransitGatewayAttachments&Version=2016-11-15',
+                'DescribeTransitGatewayAttachments&Version=2016-11-15'
+                '&Filter.1.Name=state&Filter.1.Value.1=available',
                 '',
                 sub_cred=sub_cred)
             tgw_attachments.setdefault(region, {})
@@ -912,7 +931,8 @@ class AWS(Controller):
             tgws.setdefault(region, {})
             headers, body = self.request(
                 'ec2', region, 'GET',
-                '/?Version=2016-11-15&Action=DescribeTransitGateways', '',
+                '/?Version=2016-11-15&Action=DescribeTransitGateways'
+                '&Filter.1.Name=state&Filter.1.Value.1=available', '',
                 sub_cred=sub_cred)
             for t in aws.listify(body, 'item')['transitGatewaySet']:
                 t[self.CREDENTIAL] = sub_cred
@@ -1193,17 +1213,12 @@ class AWS(Controller):
         cgws = {}
         rtbs = {}
         stacks = {}
-        tgws = {}
-        tgw_attachments = {}
-        tgw_route_tables = {}
 
         for cred in [None] + self.sub_creds.keys():
             self.retrieve_cgws(cgws, cred)
             self.retrieve_rtbs(rtbs, cred)
             self.retrieve_stacks(stacks, cred, test)
-            self.retrieve_tgws(tgws, cred)
-            self.retrieve_tgw_attachments(tgw_attachments, cred)
-            self.retrieve_tgw_route_tables(tgw_route_tables, cred)
+
         sub_cidrs_by_vpc_id = {}
         used_cgws = {}
 
@@ -1225,12 +1240,18 @@ class AWS(Controller):
                                    region, cgw_by_cred_addr,
                                    sub_cidrs_by_vpc_id, used_cgws,
                                    stacks['vpc'], test)
-
-            self.provision_for_tgw(vpn_env, tgws[region], vconns[region],
-                                   cgw_by_cred_addr, region,
-                                   stacks['tgw'][region],
-                                   tgw_attachments[region],
-                                   tgw_route_tables[region], test)
+            if self.sync_tgw:
+                tgws = {}
+                tgw_attachments = {}
+                tgw_route_tables = {}
+                self.retrieve_tgws(tgws, cred)
+                self.retrieve_tgw_attachments(tgw_attachments, cred)
+                self.retrieve_tgw_route_tables(tgw_route_tables, cred)
+                self.provision_for_tgw(vpn_env, tgws[region], vconns[region],
+                                       cgw_by_cred_addr, region,
+                                       stacks['tgw'][region],
+                                       tgw_attachments[region],
+                                       tgw_route_tables[region], test)
 
     def filter_by_tgw_id(self, tgw_resource):
         resource_by_tgw_id = {}
@@ -1302,11 +1323,10 @@ class AWS(Controller):
                                     'TransitGatewayId': tgw_id}), '',
                                 sub_cred=tgw[self.CREDENTIAL])
             gw_addresses = [g[0] for g in gw_address_asn_set]
-            self.tgw_association_and_propagation(region, orig_tag, tgw_id,
-                                                 tgw_attachments_by_id[tgw_id],
-                                                 tgw_rtb_by_id[tgw_id],
-                                                 gw_addresses,
-                                                 vconns, test)
+            self.tgw_association_and_propagation(
+                region, orig_tag, tgw_id, tgw_attachments_by_id.get(
+                    tgw_id, {}), tgw_rtb_by_id.get(tgw_id, {}), gw_addresses,
+                vconns, test)
 
         for cgw_addr, stack in tgw_stacks.items():
             if not stack['StackName'] in stack_names_to_keep:
@@ -1412,17 +1432,19 @@ class AWS(Controller):
         for attch_id in tgw_attachments:
             a = tgw_attachments[attch_id]
 
+            a_id = a['resourceId']
+
             if a.get('resourceType') != 'vpn':
                 continue
 
-            if a.get('resourceId') not in vconns:
+            if a_id not in vconns:
                 log('\nvpn connection could not be found. '
                     'will wait for next cycle to reload. '
-                    'vpn_connection_id=%s' % a['resourceId'])
+                    'vpn_connection_id=%s' % a_id)
                 continue
 
             attachment_cgw_ip = self.get_customer_gateway_address(
-                a['resourceId'], vconns)
+                a_id, vconns)
             if attachment_cgw_ip not in gw_addresses:
                 debug('\nattachment is not part of community gateways. '
                       'attachment cgw ip=%s' % attachment_cgw_ip)
@@ -1434,6 +1456,7 @@ class AWS(Controller):
             a_props = self.retrieve_tgw_attachment_propagations(
                 region, attch_id, a[self.CREDENTIAL])
 
+            associated = propagated = False
             if a_rtb != tagged_assoc:
                 if a_rtb:
                     log('\ndisassociating transit route table.' +
@@ -1447,18 +1470,27 @@ class AWS(Controller):
                     self.associate_tgw_route_table(region, attch_id,
                                                    tagged_assoc,
                                                    a[self.CREDENTIAL])
+            else:
+                associated = True
+
             for rtb in tagged_props:
                 if rtb not in a_props:
                     log('\nenabling propagation for route table:'
                         ' attachment:"%s", route table:"%s"' % (attch_id, rtb))
                     self.set_propagation(region, 'Enable', attch_id, rtb,
                                          a[self.CREDENTIAL])
+            propagated_wrong = (a_props - tagged_props)
+            if propagated_wrong:
+                for rtb in propagated_wrong:
+                    log('\ndisabling propagation for route table:'
+                        'attachment=%s, routeTable=%s' % (attch_id, rtb))
+                    self.set_propagation(region, 'Disable', attch_id, rtb,
+                                         a[self.CREDENTIAL])
+            else:
+                propagated = True
 
-            for rtb in (a_props - tagged_props):
-                log('\ndisabling propagation for route table:'
-                    'attachment=%s, routeTable=%s' % (attch_id, rtb))
-                self.set_propagation(region, 'Disable', attch_id, rtb,
-                                     a[self.CREDENTIAL])
+            if associated and propagated:
+                vconns[a_id]['ready'] = True
 
     def get_customer_gateway_address(self, vpn_connection_id, vconns):
         return vconns[vpn_connection_id]['customerGatewayConfiguration'][
@@ -1630,6 +1662,7 @@ class AWS(Controller):
         vpn_conns = []
         for region in self.regions:
             for vconn in vconns.get(region, {}).values():
+                ready = vconn.get('ready', True)
                 short_name = vconn['vpnConnectionId']
                 base_name = self.SEPARATOR.join([
                     self.name, short_name, region])
@@ -1673,7 +1706,7 @@ class AWS(Controller):
                     vpn_conns.append(
                         VPNConn(name, self.name, short_name, tag, gateway,
                                 peer, local, remote, asn, pre_shared_key,
-                                tgw_id, cidrs))
+                                tgw_id, cidrs, ready))
         return vpn_conns
 
     @staticmethod
@@ -3735,6 +3768,10 @@ def sync_vpn(controller, management):
         finally:
             management.set_state(name, None)
     for name in set(filtered_vpn_conns):
+        if not filtered_vpn_conns[name].ready:
+            log('\n%s is not ready\n' % str(name))
+            continue
+        log('\n%s is ready\n' % str(name))
         iod = filtered_iods.get(name)
         try:
             gw_name, gw_index, comm_name = vpn_conn_to_gw_comm[name]
