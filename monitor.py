@@ -857,8 +857,8 @@ class AWS(Controller):
                 s['customerGatewayConfiguration'] = aws.parse_element(
                     aws.xml.dom.minidom.parseString(
                         s['customerGatewayConfiguration']))['vpn_connection']
-                if vconns[region][s['vpnConnectionId']]\
-                        .get('transitGatewayId'):
+                if vconns[region][s['vpnConnectionId']].get(
+                        'transitGatewayId'):
                     vconns[region][s['vpnConnectionId']]['ready'] = False
 
     def retrieve_cgws(self, cgws, sub_cred):
@@ -1323,12 +1323,10 @@ class AWS(Controller):
                                     'TransitGatewayId': tgw_id}), '',
                                 sub_cred=tgw[self.CREDENTIAL])
             gw_addresses = [g[0] for g in gw_address_asn_set]
-            self.tgw_association_and_propagation(region, orig_tag, tgw_id,
-                                                 tgw_attachments_by_id
-                                                 .get(tgw_id, {}),
-                                                 tgw_rtb_by_id.get(tgw_id, {}),
-                                                 gw_addresses,
-                                                 vconns, test)
+            self.tgw_association_and_propagation(
+                region, orig_tag, tgw_id, tgw_attachments_by_id.get(
+                    tgw_id, {}), tgw_rtb_by_id.get(tgw_id, {}), gw_addresses,
+                vconns, test)
 
         for cgw_addr, stack in tgw_stacks.items():
             if not stack['StackName'] in stack_names_to_keep:
@@ -1434,7 +1432,7 @@ class AWS(Controller):
         for attch_id in tgw_attachments:
             a = tgw_attachments[attch_id]
 
-            a_id = a.get('resourceId')
+            a_id = a['resourceId']
 
             if a.get('resourceType') != 'vpn':
                 continue
@@ -1486,8 +1484,8 @@ class AWS(Controller):
                 for rtb in propagated_wrong:
                     log('\ndisabling propagation for route table:'
                         'attachment=%s, routeTable=%s' % (attch_id, rtb))
-                self.set_propagation(region, 'Disable', attch_id, rtb,
-                                     a[self.CREDENTIAL])
+                    self.set_propagation(region, 'Disable', attch_id, rtb,
+                                         a[self.CREDENTIAL])
             else:
                 propagated = True
 
