@@ -328,6 +328,8 @@ class AWS(Controller):
             retry = (headers.get('_code', ' ')[0] == '5' or
                      code.lower() == 'throttling')
             if not delays or not retry:
+                if sub_cred is not None:
+                    log('\nrequest failed for sub account: %s' % sub_cred)
                 raise Exception(msg)
             log('\n%s request failed: %s [%s]' % (service, msg, len(delays)))
             time.sleep(delays.pop(0))
@@ -1001,6 +1003,8 @@ class AWS(Controller):
             cgw_ids = self.get_parameter(stack, 'cgws', ',')
             cidrs = self.get_parameter(stack, 'cidrs', ',')
             for i, cgw_id in enumerate(cgw_ids):
+                if cgw_id not in cgws:
+                    continue
                 used_cgws.add(cgw_id)
                 for j in xrange(2):
                     sub_cidr = self.get_sub_cidr(cidrs[2 * i + j])
