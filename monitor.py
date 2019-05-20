@@ -341,7 +341,7 @@ class AWS(Controller):
             else:
                 msg = '%s: %s' % (code, error.get('Message', '-'))
             retry = (headers.get('_code', ' ')[0] == '5' or
-                     code.lower() == 'throttling')
+                     code and code.lower() == 'throttling')
             if not delays or not retry:
                 raise Exception(msg)
             log('\n%s request failed: %s [%s]' % (service, msg, len(delays)))
