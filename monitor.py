@@ -3510,7 +3510,19 @@ class Management(object):
         if gw_uid:
             log('\ngoing to deprovision "%s":' % gw_name)
             operation = 'delete'
-            if not tvpc_mode:
+            if tvpc_mode is None:
+                gw_generic = self('show-generic-object', {'uid': gw_uid})
+                eth_num = sum(interface['officialname'].startswith('eth')
+                                for interface in gw_generic['interfaces'])
+                log('\nnum of eth interfaces: %s' % eth_num)
+                if eth_num == 2:
+                    tvpc_mode = 'True'
+                else:
+                    tvpc_mode = 'False'
+                log('\nThere is no tag on the interoperable device')
+                log('\nAccording to the number of interfaces tvpc mode is: %s'
+                    % tvpc_mode)
+            if tvpc_mode == 'False':
                 operation = 'delete-tgw'
 
             out = self.run_script(gw_name, 'config-vpn %s \'%s\' \'%s\'' % (
@@ -3520,7 +3532,7 @@ class Management(object):
             self(self.get_interfaces_command_version[0],
                  {'target-name': gw_name},
                  version=self.get_interfaces_command_version[1])
-            if not tvpc_mode:
+            if tvpc_mode == 'False':
                 log('\nupdating vpn interfaces...')
                 gw_generic = self('show-generic-object', {'uid': gw_uid})
                 self.update_vti_antispoof_and_lead_to_inet(
@@ -3589,6 +3601,8 @@ class Management(object):
                                   vpn_conn.controller)
         if not vpn_conn.tgw_id:
             self.put_object_tag_value(obj, self.TVPC_PREFIX, str(True))
+        else:
+            self.put_object_tag_value(obj, self.TVPC_PREFIX, str(False))
         self.put_object_tag_value(obj, self.VPN_PREFIX, vpn_conn.name)
 
         obj = self('add-generic-object', obj)
