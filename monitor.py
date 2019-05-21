@@ -2118,12 +2118,15 @@ class Management(object):
     GATEWAY_PREFIX = '__gateway__'
     VSEC_DUMMY_HOST = DUMMY_PREFIX + 'vsec_internal_host'
     CONTROLLER_PREFIX = '__controller__'
-    TVPC_PREFIX = '__tvpc__'
+    DEPLOYMENT_PREFIX = '__deployment__'
     CIDR_PREFIX = '__cidr__'
     VPN_PREFIX = '__vpn__'
     COMMUNITY_PREFIX = '__community__'
     SPOKE_ROUTES = 'spoke-routes'
     EXPORT_ROUTES = 'export-routes'
+    DEPLOYMENT_TVPC = 'tvpc'
+    DEPLOYMENT_TGW = 'tgw'
+
 
     CPMI_IDENTITY_AWARE_BLADE = (
         'com.checkpoint.objects.classes.dummy.CpmiIdentityAwareBlade')
@@ -2182,7 +2185,7 @@ class Management(object):
         self.local_host_uid = None
         self.targets = {}
         self.get_interfaces_command_version = None
-        self.deletion_tolerance = int(options.get('deletion-tolerance', '4'))
+        self.deletion_tolerance = int(options.get('deletion-tolerance', '3'))
 
         if 'proxy' in options:
             os.environ['https_proxy'] = options['proxy']
@@ -3494,7 +3497,8 @@ class Management(object):
 
     def delete_vpn(self, iod):
         iod_name = iod['name']
-        tvpc_mode = self.get_object_tag_value(iod, self.TVPC_PREFIX)
+        deployment_mode = self.get_object_tag_value(
+            iod, self.DEPLOYMENT_PREFIX)
         gw_name = self.get_object_tag_value(iod, self.GATEWAY_PREFIX)
         cidr = self.get_object_tag_value(iod, self.CIDR_PREFIX)
         log('\ndeleting vpn for: %s (%s %s)' % (iod_name, gw_name, cidr))
@@ -3510,19 +3514,19 @@ class Management(object):
         if gw_uid:
             log('\ngoing to deprovision "%s":' % gw_name)
             operation = 'delete'
-            if tvpc_mode is None:
+            if deployment_mode is None:
                 gw_generic = self('show-generic-object', {'uid': gw_uid})
                 eth_num = sum(interface['officialname'].startswith('eth')
                                 for interface in gw_generic['interfaces'])
                 log('\nnum of eth interfaces: %s' % eth_num)
                 if eth_num == 2:
-                    tvpc_mode = 'True'
+                    deployment_mode = self.DEPLOYMENT_TVPC
                 else:
-                    tvpc_mode = 'False'
+                    deployment_mode = self.DEPLOYMENT_TGW
                 log('\nThere is no tag on the interoperable device')
                 log('\nAccording to the number of interfaces tvpc mode is: %s'
-                    % tvpc_mode)
-            if tvpc_mode == 'False':
+                    % deployment_mode)
+            if deployment_mode == self.DEPLOYMENT_TGW:
                 operation = 'delete-tgw'
 
             out = self.run_script(gw_name, 'config-vpn %s \'%s\' \'%s\'' % (
@@ -3532,7 +3536,7 @@ class Management(object):
             self(self.get_interfaces_command_version[0],
                  {'target-name': gw_name},
                  version=self.get_interfaces_command_version[1])
-            if tvpc_mode == 'False':
+            if deployment_mode == self.DEPLOYMENT_TGW:
                 log('\nupdating vpn interfaces...')
                 gw_generic = self('show-generic-object', {'uid': gw_uid})
                 self.update_vti_antispoof_and_lead_to_inet(
@@ -3600,9 +3604,11 @@ class Management(object):
         self.put_object_tag_value(obj, self.CONTROLLER_PREFIX,
                                   vpn_conn.controller)
         if not vpn_conn.tgw_id:
-            self.put_object_tag_value(obj, self.TVPC_PREFIX, str(True))
+            self.put_object_tag_value(obj, self.DEPLOYMENT_PREFIX,
+                                      self.DEPLOYMENT_TVPC)
         else:
-            self.put_object_tag_value(obj, self.TVPC_PREFIX, str(False))
+            self.put_object_tag_value(obj, self.DEPLOYMENT_PREFIX,
+                                      self.DEPLOYMENT_TGW)
         self.put_object_tag_value(obj, self.VPN_PREFIX, vpn_conn.name)
 
         obj = self('add-generic-object', obj)

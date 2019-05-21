@@ -116,7 +116,7 @@ USAGE_EXAMPLES = {
         'add controller GCP -cn <NAME> -proj <PROJECT> -cr <FILE-PATH>'
     ],
     'set_delay': ['set delay 60'],
-    'set_deletion_tolerance': ['set deletion-tolerance 4'],
+    'set_deletion_tolerance': ['set deletion-tolerance 3'],
     'set_management': [
         'set management [-mn <NEW-NAME>] [-mh <NEW-HOST> [-d <DOMAIN>] [-fp '
         '<FINGERPRINT>] [-u <USER>] [-pass <PASSWORD>] [-pr <PROXY>] [-cs '
@@ -322,7 +322,7 @@ def create_parser_dict(conf):
             'initialize autoprovision settings for AWS',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['init_aws']),
             {'delay': 30, 'class': 'AWS', 'host': 'localhost',
-             'deletion-tolerance': 4}],
+             'deletion-tolerance': 3}],
         'init_azure': [
             AZURE, ['Management name', TEMPLATE_NAME, 'one time password',
                     'version', 'policy', CONTROLLER_NAME, 'subscription'],
@@ -333,7 +333,7 @@ def create_parser_dict(conf):
             'initialize autoprovision settings for Azure',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['init_azure']),
             {'delay': 30, 'class': 'Azure', 'host': 'localhost',
-             'deletion-tolerance': 4}
+             'deletion-tolerance': 3}
         ],
         'init_gcp': [GCP, [], [],
                      'support for GCP will be added in the future',
