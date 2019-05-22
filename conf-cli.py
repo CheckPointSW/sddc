@@ -257,8 +257,8 @@ AWS_SUBACCOUNT_ARGS = (SUBCREDENTIALS_NAME,
                        'AWS sub-credentials STS role',
                        'AWS sub-credentials STS external id')
 
-LIST_PARAMETERS = ('regions', 'custom parameters', 'proxy ports',
-                   'controller templates', 'communities')
+LIST_PARAMETERS = ('regions', 'proxy ports', 'controller templates',
+                   'communities')
 
 
 def get_templates(conf):
@@ -340,7 +340,8 @@ def create_parser_dict(conf):
         'add_template': [
             TEMPLATE, [TEMPLATE_NAME],
             ['one time password', 'version', 'deployment type', 'policy',
-             'custom parameters', 'prototype', 'specific network',
+             'custom parameters', 'custom gateway script',
+             'prototype', 'specific network',
              'generation', 'proxy ports', 'HTTPS Inspection',
              'Identity Awareness', 'Application Control',
              'Intrusion Prevention', 'IPS Profile', 'URL Filtering',
@@ -410,9 +411,9 @@ def create_parser_dict(conf):
             TEMPLATE, [(TEMPLATE_NAME, {'choices': get_templates(conf),
                                         'dest': TEMPLATE_NAME})],
             ['one time password', 'version', 'deployment type', 'policy',
-             'custom parameters', 'prototype', 'specific network',
-             'generation', 'proxy ports', 'HTTPS Inspection',
-             'Identity Awareness', 'Application Control',
+             'custom parameters', 'custom gateway script', 'prototype',
+             'specific network', 'generation', 'proxy ports',
+             'HTTPS Inspection', 'Identity Awareness', 'Application Control',
              'Intrusion Prevention', 'IPS Profile', 'URL Filtering',
              'Anti-Bot', 'Anti-Virus', 'restrictive policy',
              'vpn', 'community name', 'vpn-domain', 'section name',
@@ -489,6 +490,7 @@ def create_parser_dict(conf):
              ('deployment type', {'action': 'store_true'}),
              ('policy', {'action': 'store_true'}),
              ('custom parameters', {'action': 'store_true'}),
+             ('custom gateway script', {'action': 'store_true'}),
              ('prototype', {'action': 'store_true'}),
              ('specific network', {'action': 'store_true'}),
              ('generation', {'action': 'store_true'}),
@@ -730,9 +732,9 @@ ARGUMENTS = {
     'custom script': [
         '-cs', [MANAGEMENT, 'custom-script'],
         '"PATH-TO-CUSTOMIZATION-SCRIPT" - '
-        'an optional script to run just after the policy is installed '
-        'when a gateway is provisioned, and at the beginning '
-        'of the deprovisioning process. '
+        'an optional script to run on the management server just after the '
+        'policy is installed when a gateway is provisioned, and at the '
+        'beginning of the deprovisioning process. '
         'When a gateway is added the script will be run with '
         'the keyword "add", '
         'with the gateway name and the custom-parameters '
@@ -771,9 +773,16 @@ ARGUMENTS = {
     ],
     'custom parameters': [
         '-cp', [TEMPLATES, TEMPLATE_NAME, 'custom-parameters'],
-        'an optional string with space separated parameters or '
-        'a list of string parameters to specify when a gateway is added '
-        'and a custom script is specified in the management section', None
+        'an optional string with space separated parameters to specify when a '
+        'gateway is added and a custom script is specified in the management '
+        'section', None
+    ],
+    'custom gateway script': [
+        '-cg', [TEMPLATES, TEMPLATE_NAME, 'custom-gateway-script'],
+        'an optional string with a path on the management server to a script '
+        'to run on the gateways, prior to policy installation with its '
+        'parameters, separated by space, '
+        'e.g. "PATH-TO-SCRIPT param1 param2 ..."', None
     ],
     'prototype': ['-pr', [TEMPLATES, TEMPLATE_NAME, 'proto'],
                   'a prototype for this template', None
