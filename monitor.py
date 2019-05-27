@@ -3768,26 +3768,20 @@ def sync(controller, management, gateways):
                                 controller.name + controller.SEPARATOR))
     for name in filtered_gateways - set(instances):
         try:
-            if controller.deletion_tolerance <= 0:
+            if name not in pending_delete_gws:
+                pending_delete_gws[name] = controller.deletion_tolerance
+            if controller.deletion_tolerance > 0:
+                log('\ngateway %s found only in Smart Console. '
+                    '(delete in %s cycles)'
+                    % (name, controller.deletion_tolerance))
+            current_count = pending_delete_gws.get(name)
+            if current_count <= 0:
+                log('\ngateway %s found only in Smart Console. '
+                    'deleting' % name)
                 management.set_state(name, 'DELETING')
                 management.reset_gateway(name, delete_gw=True)
-            elif name not in pending_delete_gws:
-                pending_delete_gws[name] = controller.deletion_tolerance
-                log('\ngateway %s found only in Smart Console. '
-                    '(delete in %s cycles)'
-                    % (name, controller.deletion_tolerance - 1))
             else:
-                current_count = pending_delete_gws.get(name) - 1
-                if current_count <= 1:
-                    log('\ngateway %s found only in Smart Console. '
-                        'deleting' % name)
-                    management.set_state(name, 'DELETING')
-                    management.reset_gateway(name, delete_gw=True)
-                else:
-                    pending_delete_gws[name] = current_count
-                log('\ngateway %s found only in Smart Console. '
-                    '(delete in %s cycles)'
-                    % (name, current_count - 1))
+                pending_delete_gws[name] = current_count - 1
         except Exception:
             log('\n%s' % traceback.format_exc())
         finally:
