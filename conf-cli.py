@@ -438,7 +438,7 @@ def create_parser_dict(conf):
              SUBCREDENTIALS_NAME, 'AWS sub-credentials access key',
              'AWS sub-credentials secret key',
              'AWS sub-credentials file path', 'AWS sub-credentials IAM',
-             'AWS sub-credentials STS role',  
+             'AWS sub-credentials STS role',
              'AWS sub-credentials STS external id', 'communities',
              'sync gateway', 'sync vpn', 'sync load balancers'],
             'set AWS controller values',
