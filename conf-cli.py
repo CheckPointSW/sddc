@@ -330,8 +330,7 @@ def create_parser_dict(conf):
              'Azure password'],
             'initialize autoprovision settings for Azure',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['init_azure']),
-            {'delay': 30, 'class': 'Azure', 'host':
-                'localhost'}
+            {'delay': 30, 'class': 'Azure', 'host': 'localhost'}
         ],
         'init_gcp': [GCP, [], [],
                      'support for GCP will be added in the future',
@@ -370,7 +369,8 @@ def create_parser_dict(conf):
              'AWS sub-credentials file path', 'AWS sub-credentials IAM',
              'AWS sub-credentials STS role',
              'AWS sub-credentials STS external id', 'communities',
-             'sync gateway', 'sync vpn', 'sync load balancers'],
+             'sync gateway', 'sync vpn', 'sync load balancers',
+             'deletion-tolerance'],
             'add AWS Controller',
             'usage examples: \n' + '\n'.join(
                 USAGE_EXAMPLES['add_controller_AWS']),
@@ -382,14 +382,16 @@ def create_parser_dict(conf):
              'Service Principal credentials tenant',
              'Service Principal credentials client id',
              'Service Principal credentials client secret',
-             'Azure username', 'Azure password'], 'add Azure controller',
+             'Azure username', 'Azure password', 'deletion-tolerance'],
+            'add Azure controller',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES[
                                              'add_controller_Azure']),
             {'class': 'Azure'}
         ],
         'add_controller_gcp': [
             GCP, [CONTROLLER_NAME, 'GCP project', 'GCP credentials'],
-            ['controller templates', 'controller domain'],
+            ['controller templates', 'controller domain',
+             'deletion-tolerance'],
             'add GCP Controller',
             'usage examples: \n' + '\n'.join(
                 USAGE_EXAMPLES['add_controller_GCP']),
@@ -433,6 +435,7 @@ def create_parser_dict(conf):
             ['controller templates', 'controller domain',
              'regions', 'AWS access key', 'AWS secret key', 'AWS IAM',
              'AWS credentials file path', 'STS role', 'STS external id',
+             'deletion-tolerance',
              SUBCREDENTIALS_NAME, 'AWS sub-credentials access key',
              'AWS sub-credentials secret key',
              'AWS sub-credentials file path', 'AWS sub-credentials IAM',
@@ -452,7 +455,7 @@ def create_parser_dict(conf):
              'environment', 'Service Principal credentials tenant',
              'Service Principal credentials client id',
              'Service Principal credentials client secret',
-             'Azure username', 'Azure password'],
+             'Azure username', 'Azure password', 'deletion-tolerance'],
             'set Azure controller values',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES[
                                              'set_controller_Azure']),
@@ -462,7 +465,8 @@ def create_parser_dict(conf):
             GCP, [(CONTROLLER_NAME, {'choices': get_controllers(conf, GCP),
                                      'dest': CONTROLLER_NAME})],
             ['controller templates', 'controller domain', 'GCP project',
-             'GCP credentials'], 'set GCP controller values',
+             'GCP credentials', 'deletion-tolerance'],
+            'set GCP controller values',
             'usage examples: \n' + '\n'.join(
                 USAGE_EXAMPLES['set_controller_GCP']),
             None
@@ -536,6 +540,7 @@ def create_parser_dict(conf):
              ('AWS credentials file path', {'action': 'store_true'}),
              ('STS role', {'action': 'store_true'}),
              ('STS external id', {'action': 'store_true'}),
+             ('deletion-tolerance', {'action': 'store_true'}),
              SUBCREDENTIALS_NAME,
              ('AWS sub-credentials access key', {'action': 'store_true'}),
              ('AWS sub-credentials secret key', {'action': 'store_true'}),
@@ -566,6 +571,7 @@ def create_parser_dict(conf):
               {'action': 'store_true'}),
              ('Service Principal credentials client secret',
               {'action': 'store_true'}),
+             ('deletion-tolerance', {'action': 'store_true'}),
              ('Azure username', {'action': 'store_true'}),
              ('Azure password', {'action': 'store_true'})],
             'delete an Azure controller or its values',
@@ -578,6 +584,7 @@ def create_parser_dict(conf):
             [('controller templates', {'action': 'store_true'}),
              ('controller domain', {'action': 'store_true'}),
              ('GCP project', {'action': 'store_true'}),
+             ('deletion-tolerance', {'action': 'store_true'}),
              ('GCP credentials', {'action': 'store_true'})],
             'delete a GCP controller or its values',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES[
@@ -1069,6 +1076,11 @@ ARGUMENTS = {
         'or "IAM" for automatic retrieval of the service account '
         'credentials from the VM instance metadata. Default: "IAM"',
         {'type': validate_iam_or_filepath, 'default': 'IAM'}
+    ],
+    'deletion-tolerance': [
+        '-dto', [CONTROLLERS, CONTROLLER_NAME, 'deletion-tolerance'],
+        'number of cycles until GW object in SmartConsole is deleted',
+        {'type': int}
     ],
 
 }

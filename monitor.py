@@ -50,6 +50,7 @@ CIDRS_REGEX = (r'^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}'
                r'([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])'
                r'(\/([0-9]|[1-2][0-9]|3[0-2]))$')
 
+pending_delete_gws = collections.OrderedDict()
 conf = collections.OrderedDict()
 log_buffer = [None]
 
@@ -282,6 +283,7 @@ class AWS(Controller):
 
     def __init__(self, **options):
         super(AWS, self).__init__(**options)
+        self.deletion_tolerance = int(options.get('deletion-tolerance', '0'))
         self.regions = options['regions']
         sts_session = 'autoprovision-%s' % (
             datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ'))
@@ -343,6 +345,8 @@ class AWS(Controller):
             retry = (headers.get('_code', ' ')[0] == '5' or
                      code and code.lower() == 'throttling')
             if not delays or not retry:
+                if sub_cred is not None:
+                    log('\nrequest failed for sub account: %s' % sub_cred)
                 raise Exception(msg)
             log('\n%s request failed: %s [%s]' % (service, msg, len(delays)))
             time.sleep(delays.pop(0))
@@ -1033,6 +1037,8 @@ class AWS(Controller):
             cgw_ids = self.get_parameter(stack, 'cgws', ',')
             cidrs = self.get_parameter(stack, 'cidrs', ',')
             for i, cgw_id in enumerate(cgw_ids):
+                if cgw_id not in cgws:
+                    continue
                 used_cgws.add(cgw_id)
                 for j in xrange(2):
                     sub_cidr = self.get_sub_cidr(cidrs[2 * i + j])
@@ -1734,6 +1740,7 @@ class AWS(Controller):
 class Azure(Controller):
     def __init__(self, **options):
         super(Azure, self).__init__(**options)
+        self.deletion_tolerance = int(options.get('deletion-tolerance', '3'))
         self.sub = '/subscriptions/' + options['subscription']
         self.azure = azure.Azure(subscription=options['subscription'],
                                  environment=options.get('environment'),
@@ -2004,6 +2011,7 @@ class Azure(Controller):
 class GCP(Controller):
     def __init__(self, **options):
         super(GCP, self).__init__(**options)
+        self.deletion_tolerance = int(options.get('deletion-tolerance', '0'))
         self.project = options['project']
         self.gcp = gcp.GCP(
             project=options['project'], credentials=options.get('credentials'))
@@ -2185,12 +2193,14 @@ class Management(object):
     GATEWAY_PREFIX = '__gateway__'
     VSEC_DUMMY_HOST = DUMMY_PREFIX + 'vsec_internal_host'
     CONTROLLER_PREFIX = '__controller__'
-    TVPC_PREFIX = '__tvpc__'
+    DEPLOYMENT_PREFIX = '__deployment__'
     CIDR_PREFIX = '__cidr__'
     VPN_PREFIX = '__vpn__'
     COMMUNITY_PREFIX = '__community__'
     SPOKE_ROUTES = 'spoke-routes'
     EXPORT_ROUTES = 'export-routes'
+    DEPLOYMENT_TVPC = 'tvpc'
+    DEPLOYMENT_TGW = 'tgw'
 
     CPMI_IDENTITY_AWARE_BLADE = (
         'com.checkpoint.objects.classes.dummy.CpmiIdentityAwareBlade')
@@ -3560,7 +3570,8 @@ class Management(object):
 
     def delete_vpn(self, iod):
         iod_name = iod['name']
-        tvpc_mode = self.get_object_tag_value(iod, self.TVPC_PREFIX)
+        deployment_mode = self.get_object_tag_value(
+            iod, self.DEPLOYMENT_PREFIX)
         gw_name = self.get_object_tag_value(iod, self.GATEWAY_PREFIX)
         cidr = self.get_object_tag_value(iod, self.CIDR_PREFIX)
         log('\ndeleting vpn for: %s (%s %s)' % (iod_name, gw_name, cidr))
@@ -3576,7 +3587,19 @@ class Management(object):
         if gw_uid:
             log('\ngoing to deprovision "%s":' % gw_name)
             operation = 'delete'
-            if not tvpc_mode:
+            if deployment_mode is None:
+                gw_generic = self('show-generic-object', {'uid': gw_uid})
+                eth_num = sum(interface['officialname'].startswith('eth')
+                              for interface in gw_generic['interfaces'])
+                log('\nnum of eth interfaces: %s' % eth_num)
+                if eth_num == 2:
+                    deployment_mode = self.DEPLOYMENT_TVPC
+                else:
+                    deployment_mode = self.DEPLOYMENT_TGW
+                log('\nThere is no tag on the interoperable device')
+                log('\nAccording to the number of interfaces tvpc mode is: %s'
+                    % deployment_mode)
+            if deployment_mode == self.DEPLOYMENT_TGW:
                 operation = 'delete-tgw'
 
             out = self.run_script(gw_name, 'config-vpn %s \'%s\' \'%s\'' % (
@@ -3586,7 +3609,7 @@ class Management(object):
             self(self.get_interfaces_command_version[0],
                  {'target-name': gw_name},
                  version=self.get_interfaces_command_version[1])
-            if not tvpc_mode:
+            if deployment_mode == self.DEPLOYMENT_TGW:
                 log('\nupdating vpn interfaces...')
                 gw_generic = self('show-generic-object', {'uid': gw_uid})
                 self.update_vti_antispoof_and_lead_to_inet(
@@ -3654,7 +3677,11 @@ class Management(object):
         self.put_object_tag_value(obj, self.CONTROLLER_PREFIX,
                                   vpn_conn.controller)
         if not vpn_conn.tgw_id:
-            self.put_object_tag_value(obj, self.TVPC_PREFIX, str(True))
+            self.put_object_tag_value(obj, self.DEPLOYMENT_PREFIX,
+                                      self.DEPLOYMENT_TVPC)
+        else:
+            self.put_object_tag_value(obj, self.DEPLOYMENT_PREFIX,
+                                      self.DEPLOYMENT_TGW)
         self.put_object_tag_value(obj, self.VPN_PREFIX, vpn_conn.name)
 
         obj = self('add-generic-object', obj)
@@ -3816,8 +3843,18 @@ def sync(controller, management, gateways):
                                 controller.name + controller.SEPARATOR))
     for name in filtered_gateways - set(instances):
         try:
-            management.set_state(name, 'DELETING')
-            management.reset_gateway(name, delete_gw=True)
+            if name not in pending_delete_gws:
+                pending_delete_gws[name] = controller.deletion_tolerance
+            if pending_delete_gws.get(name) <= 0:
+                log('\ngateway %s found only in Smart Console. '
+                    'deleting' % name)
+                management.set_state(name, 'DELETING')
+                management.reset_gateway(name, delete_gw=True)
+            else:
+                log('\ngateway %s found only in Smart Console. '
+                    '(delete in %s cycles)'
+                    % (name, pending_delete_gws[name]))
+                pending_delete_gws[name] -= 1
         except Exception:
             log('\n%s' % traceback.format_exc())
         finally:
@@ -3830,6 +3867,8 @@ def sync(controller, management, gateways):
             if not is_SIC_open(instances[name]):
                 management.set_state(name, 'INITIALIZING')
                 continue
+        elif name in pending_delete_gws:
+            pending_delete_gws.pop(name)
         try:
             management.set_gateway(instances[name], gw)
             management.set_state(name, 'COMPLETE')
