@@ -2130,7 +2130,6 @@ class Management(object):
     DEPLOYMENT_TVPC = 'tvpc'
     DEPLOYMENT_TGW = 'tgw'
 
-
     CPMI_IDENTITY_AWARE_BLADE = (
         'com.checkpoint.objects.classes.dummy.CpmiIdentityAwareBlade')
     CPMI_PORTAL_SETTINGS = (
@@ -3519,7 +3518,7 @@ class Management(object):
             if deployment_mode is None:
                 gw_generic = self('show-generic-object', {'uid': gw_uid})
                 eth_num = sum(interface['officialname'].startswith('eth')
-                                for interface in gw_generic['interfaces'])
+                              for interface in gw_generic['interfaces'])
                 log('\nnum of eth interfaces: %s' % eth_num)
                 if eth_num == 2:
                     deployment_mode = self.DEPLOYMENT_TVPC
@@ -3770,18 +3769,16 @@ def sync(controller, management, gateways):
         try:
             if name not in pending_delete_gws:
                 pending_delete_gws[name] = controller.deletion_tolerance
-            if controller.deletion_tolerance > 0:
-                log('\ngateway %s found only in Smart Console. '
-                    '(delete in %s cycles)'
-                    % (name, controller.deletion_tolerance))
-            current_count = pending_delete_gws.get(name)
-            if current_count <= 0:
+            if pending_delete_gws.get(name) <= 0:
                 log('\ngateway %s found only in Smart Console. '
                     'deleting' % name)
                 management.set_state(name, 'DELETING')
                 management.reset_gateway(name, delete_gw=True)
             else:
-                pending_delete_gws[name] = current_count - 1
+                log('\ngateway %s found only in Smart Console. '
+                    '(delete in %s cycles)'
+                    % (name, pending_delete_gws[name]))
+                pending_delete_gws[name] -= 1
         except Exception:
             log('\n%s' % traceback.format_exc())
         finally:
