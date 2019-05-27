@@ -275,6 +275,7 @@ class AWS(Controller):
 
     def __init__(self, **options):
         super(AWS, self).__init__(**options)
+        self.deletion_tolerance = int(options.get('deletion-tolerance', '0'))
         self.regions = options['regions']
         sts_session = 'autoprovision-%s' % (
             datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ'))
@@ -1667,6 +1668,7 @@ class AWS(Controller):
 class Azure(Controller):
     def __init__(self, **options):
         super(Azure, self).__init__(**options)
+        self.deletion_tolerance = int(options.get('deletion-tolerance', '3'))
         self.sub = '/subscriptions/' + options['subscription']
         self.azure = azure.Azure(subscription=options['subscription'],
                                  environment=options.get('environment'),
@@ -1937,6 +1939,7 @@ class Azure(Controller):
 class GCP(Controller):
     def __init__(self, **options):
         super(GCP, self).__init__(**options)
+        self.deletion_tolerance = int(options.get('deletion-tolerance', '0'))
         self.project = options['project']
         self.gcp = gcp.GCP(
             project=options['project'], credentials=options.get('credentials'))
@@ -2185,7 +2188,6 @@ class Management(object):
         self.local_host_uid = None
         self.targets = {}
         self.get_interfaces_command_version = None
-        self.deletion_tolerance = int(options.get('deletion-tolerance', '3'))
 
         if 'proxy' in options:
             os.environ['https_proxy'] = options['proxy']
@@ -3766,11 +3768,14 @@ def sync(controller, management, gateways):
                                 controller.name + controller.SEPARATOR))
     for name in filtered_gateways - set(instances):
         try:
-            if name not in pending_delete_gws:
-                pending_delete_gws[name] = management.deletion_tolerance
+            if controller.deletion_tolerance <= 0:
+                management.set_state(name, 'DELETING')
+                management.reset_gateway(name, delete_gw=True)
+            elif name not in pending_delete_gws:
+                pending_delete_gws[name] = controller.deletion_tolerance
                 log('\ngateway %s found only in Smart Console. '
                     '(delete in %s cycles)'
-                    % (name, management.deletion_tolerance - 1))
+                    % (name, controller.deletion_tolerance - 1))
             else:
                 current_count = pending_delete_gws.get(name) - 1
                 if current_count <= 1:

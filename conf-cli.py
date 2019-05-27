@@ -94,7 +94,7 @@ USAGE_EXAMPLES = {
         ','.join(AVAILABLE_VERSIONS) + '} -po <POLICY-NAME>',
         'add template -tn <TEMPLATE-NAME> -otp <SIC-KEY> -ver {' +
         ','.join(AVAILABLE_VERSIONS) + '} -po <POLICY-NAME> [-hi] [-ia] '
-        '[-appi] [-dth]'
+        '[-appi]'
     ],
     'add_controller_AWS': [
         'add controller AWS -cn <NAME> -r eu-west-1,us-east-1,eu-central-1  '
@@ -116,7 +116,6 @@ USAGE_EXAMPLES = {
         'add controller GCP -cn <NAME> -proj <PROJECT> -cr <FILE-PATH>'
     ],
     'set_delay': ['set delay 60'],
-    'set_deletion_tolerance': ['set deletion-tolerance 3'],
     'set_management': [
         'set management [-mn <NEW-NAME>] [-mh <NEW-HOST> [-d <DOMAIN>] [-fp '
         '<FINGERPRINT>] [-u <USER>] [-pass <PASSWORD>] [-pr <PROXY>] [-cs '
@@ -125,7 +124,7 @@ USAGE_EXAMPLES = {
     'set_template': [
         'set template -tn <NAME> [-otp <SIC-KEY>] [-ver {' +
         ','.join(AVAILABLE_VERSIONS) + '}]',
-        '[-po <POLICY>]', 'set template -tn <NAME> [-hi] [-ia] [-appi] [-dth]'
+        '[-po <POLICY>]', 'set template -tn <NAME> [-hi] [-ia] [-appi]'
     ],
     'set_controller_AWS': [
         'set controller AWS -cn <NAME> '
@@ -321,8 +320,7 @@ def create_parser_dict(conf):
              'deployment type', 'vpn', 'community name', 'vpn-domain'],
             'initialize autoprovision settings for AWS',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['init_aws']),
-            {'delay': 30, 'class': 'AWS', 'host': 'localhost',
-             'deletion-tolerance': 3}],
+            {'delay': 30, 'class': 'AWS', 'host': 'localhost'}],
         'init_azure': [
             AZURE, ['Management name', TEMPLATE_NAME, 'one time password',
                     'version', 'policy', CONTROLLER_NAME, 'subscription'],
@@ -332,8 +330,7 @@ def create_parser_dict(conf):
              'Azure password'],
             'initialize autoprovision settings for Azure',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['init_azure']),
-            {'delay': 30, 'class': 'Azure', 'host': 'localhost',
-             'deletion-tolerance': 3}
+            {'delay': 30, 'class': 'Azure', 'host': 'localhost'}
         ],
         'init_gcp': [GCP, [], [],
                      'support for GCP will be added in the future',
@@ -371,7 +368,8 @@ def create_parser_dict(conf):
              'AWS sub-credentials file path', 'AWS sub-credentials IAM',
              'AWS sub-credentials STS role',
              'AWS sub-credentials STS external id', 'communities',
-             'sync gateway', 'sync vpn', 'sync load balancers'],
+             'sync gateway', 'sync vpn', 'sync load balancers',
+             'deletion-tolerance'],
             'add AWS Controller',
             'usage examples: \n' + '\n'.join(
                 USAGE_EXAMPLES['add_controller_AWS']),
@@ -383,23 +381,20 @@ def create_parser_dict(conf):
              'Service Principal credentials tenant',
              'Service Principal credentials client id',
              'Service Principal credentials client secret',
-             'Azure username', 'Azure password'], 'add Azure controller',
+             'Azure username', 'Azure password', 'deletion-tolerance'],
+            'add Azure controller',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES[
                                              'add_controller_Azure']),
             {'class': 'Azure'}
         ],
         'add_controller_gcp': [
             GCP, [CONTROLLER_NAME, 'GCP project', 'GCP credentials'],
-            ['controller templates', 'controller domain'],
+            ['controller templates', 'controller domain',
+             'deletion-tolerance'],
             'add GCP Controller',
             'usage examples: \n' + '\n'.join(
                 USAGE_EXAMPLES['add_controller_GCP']),
             {'class': 'GCP'}
-        ],
-        'set_deletion_tolerance': [
-            'deletion-tolerance', [], ['deletion-tolerance'],
-            'set deletion-tolerance', 'usage examples: \n' + '\n'.join(
-                USAGE_EXAMPLES['set_deletion_tolerance']), None
         ],
         'set_delay': [
             DELAY, [], [DELAY], 'set delay',
@@ -409,8 +404,7 @@ def create_parser_dict(conf):
             MANAGEMENT, [],
             ['Management name', 'host', 'domain', 'fingerprint', 'user',
              'Management password', 'Management password 64bit', 'proxy',
-             'custom script', 'deletion-tolerance'],
-            'set management arguments',
+             'custom script'], 'set management arguments',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES['set_management']),
             None
         ],
@@ -440,10 +434,11 @@ def create_parser_dict(conf):
             ['controller templates', 'controller domain',
              'regions', 'AWS access key', 'AWS secret key', 'AWS IAM',
              'AWS credentials file path', 'STS role', 'STS external id',
+             'deletion-tolerance',
              SUBCREDENTIALS_NAME, 'AWS sub-credentials access key',
              'AWS sub-credentials secret key',
              'AWS sub-credentials file path', 'AWS sub-credentials IAM',
-             'AWS sub-credentials STS role',
+             'AWS sub-credentials STS role',  
              'AWS sub-credentials STS external id', 'communities',
              'sync gateway', 'sync vpn', 'sync load balancers'],
             'set AWS controller values',
@@ -459,7 +454,7 @@ def create_parser_dict(conf):
              'environment', 'Service Principal credentials tenant',
              'Service Principal credentials client id',
              'Service Principal credentials client secret',
-             'Azure username', 'Azure password'],
+             'Azure username', 'Azure password', 'deletion-tolerance'],
             'set Azure controller values',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES[
                                              'set_controller_Azure']),
@@ -469,7 +464,8 @@ def create_parser_dict(conf):
             GCP, [(CONTROLLER_NAME, {'choices': get_controllers(conf, GCP),
                                      'dest': CONTROLLER_NAME})],
             ['controller templates', 'controller domain', 'GCP project',
-             'GCP credentials'], 'set GCP controller values',
+             'GCP credentials', 'deletion-tolerance'],
+            'set GCP controller values',
             'usage examples: \n' + '\n'.join(
                 USAGE_EXAMPLES['set_controller_GCP']),
             None
@@ -484,8 +480,7 @@ def create_parser_dict(conf):
              ('Management password', {'action': 'store_true'}),
              ('Management password 64bit', {'action': 'store_true'}),
              ('proxy', {'action': 'store_true'}),
-             ('custom script', {'action': 'store_true'}),
-             ('deletion-tolerance', {'action': 'store_true'})],
+             ('custom script', {'action': 'store_true'})],
             'delete management arguments',
             'usage examples: \n' + '\n'.join(
                 USAGE_EXAMPLES['delete_management']),
@@ -543,6 +538,7 @@ def create_parser_dict(conf):
              ('AWS credentials file path', {'action': 'store_true'}),
              ('STS role', {'action': 'store_true'}),
              ('STS external id', {'action': 'store_true'}),
+             ('deletion-tolerance', {'action': 'store_true'}),
              SUBCREDENTIALS_NAME,
              ('AWS sub-credentials access key', {'action': 'store_true'}),
              ('AWS sub-credentials secret key', {'action': 'store_true'}),
@@ -573,6 +569,7 @@ def create_parser_dict(conf):
               {'action': 'store_true'}),
              ('Service Principal credentials client secret',
               {'action': 'store_true'}),
+             ('deletion-tolerance', {'action': 'store_true'}),
              ('Azure username', {'action': 'store_true'}),
              ('Azure password', {'action': 'store_true'})],
             'delete an Azure controller or its values',
@@ -585,6 +582,7 @@ def create_parser_dict(conf):
             [('controller templates', {'action': 'store_true'}),
              ('controller domain', {'action': 'store_true'}),
              ('GCP project', {'action': 'store_true'}),
+             ('deletion-tolerance', {'action': 'store_true'}),
              ('GCP credentials', {'action': 'store_true'})],
             'delete a GCP controller or its values',
             'usage examples: \n' + '\n'.join(USAGE_EXAMPLES[
@@ -753,11 +751,6 @@ ARGUMENTS = {
         'or a template/generation change), '
         'the custom script will be run with "delete" '
         'and later again with "add" and the custom parameters', None
-    ],
-    'deletion-tolerance': [
-        'deletion-tolerance', [MANAGEMENT, 'deletion-tolerance'],
-        'number of cycles until GW object in SmartConsole is deleted',
-        {'type': int}
     ],
     TEMPLATE_NAME: [
         '-tn', [TEMPLATES],
@@ -1075,6 +1068,11 @@ ARGUMENTS = {
         'or "IAM" for automatic retrieval of the service account '
         'credentials from the VM instance metadata. Default: "IAM"',
         {'type': validate_iam_or_filepath, 'default': 'IAM'}
+    ],
+    'deletion-tolerance': [
+        '-dto', [CONTROLLERS, CONTROLLER_NAME, 'deletion-tolerance'],
+        'number of cycles until GW object in SmartConsole is deleted',
+        {'type': int}
     ],
 
 }
@@ -1903,7 +1901,6 @@ def build_parsers(conf):
 
     set_subparsers = set_subparser.add_subparsers(dest='branch')
     add_parser(conf, set_subparsers, 'set_delay')
-    add_parser(conf, set_subparsers, 'set_deletion_tolerance')
     add_parser(conf, set_subparsers, 'set_management')
     add_parser(conf, set_subparsers, 'set_template')
     set_controller_subparser = add_parser(conf, set_subparsers,
