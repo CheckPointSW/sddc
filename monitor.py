@@ -538,6 +538,8 @@ class AWS(Controller):
             '/?Version=2015-12-01&Action=DescribeTargetGroups',
             'DescribeTargetGroupsResult', 'TargetGroups')
         for target_group in target_groups:
+            if target_group['TargetType'] == 'lambda':
+                continue
             default_port = target_group['Port']
             for i in i2target_groups:
                 if target_group['TargetGroupArn'] in i2target_groups[i]:
@@ -934,8 +936,8 @@ class AWS(Controller):
                     stacks['vpc'][region][vpc_id] = stack
 
                 log('\n%s: %s' % (stack['StackName'], stack['StackStatus']))
+                stack[self.CREDENTIAL] = cred
                 if '_FAILED' not in stack['StackStatus']:
-                    stack[self.CREDENTIAL] = cred
                     continue
                 try:
                     reason = stack.get('StackStatusReason')
