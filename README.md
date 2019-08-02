@@ -1,3 +1,8 @@
+# Note
+
+The tools in this repository are now deprecated and have been replaced by CME (Cloud Management Extension). Refer to https://supportcenter.checkpoint.com/supportcenter/portal?eventSubmit_doGoviewsolutiondetails=&solutionid=sk157492 for more information.
+
+
 # Overview
 
 Tools for integration with the Software Defined Data Center (SDDC).
